@@ -72,7 +72,7 @@ const expiry = new Date(Date.now() + 5 * 60 * 1000);
   });
 
   await sendEmail(
-  data.email,
+  email,
   "Verify Your Account",
   `
     <h2>Orange Tree LMS</h2>
