@@ -70,17 +70,23 @@ const expiry = new Date(Date.now() + 5 * 60 * 1000);
     
     }
   });
+  const { sendEmail } = require("../utils/sendEmail");
 
-  await sendEmail(
-  email,
+await sendEmail(
+  data.email,
   "Verify Your Account",
-  `
-    <h2>Orange Tree LMS</h2>
-    <p>Your OTP is:</p>
-    <h1>${otp}</h1>
-    <p>Valid for 5 minutes</p>
-  `
+  "<h1>Welcome</h1>"
 );
+//   await sendEmail(
+//   data.email,
+//   "Verify Your Account",
+//   `
+//     <h2>Orange Tree LMS</h2>
+//     <p>Your OTP is:</p>
+//     <h1>${otp}</h1>
+//     <p>Valid for 5 minutes</p>
+//   `
+// );
 return {
   message: "OTP sent to email"
 };
