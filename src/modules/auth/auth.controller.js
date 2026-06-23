@@ -145,6 +145,20 @@ const profile = async (
 /**
  * Forgot Password
  */
+const verifyOtp = async (req, res, next) => {
+  try {
+    const result = await authService.verifyOtp(req.body);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = {
+  register,
+  login,
+  verifyOtp
+};
 const forgotPassword =
   async (
     req,
@@ -263,5 +277,6 @@ module.exports = {
   forgotPassword,
   resetPassword,
   refreshToken,
-  changePassword
+  changePassword,
+  verifyOtp
 };

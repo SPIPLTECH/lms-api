@@ -51,6 +51,9 @@ address     String?
   reviews              Review[]
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
+  otp          String?
+otpExpiresAt DateTime?
+isVerified   Boolean?   @default(false)
 }
 
 model Course {
