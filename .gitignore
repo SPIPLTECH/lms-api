@@ -1,12 +1,4 @@
-<<<<<<< HEAD
-node_modules
-# Keep environment variables out of version control
-.env
-
-/generated/prisma
-=======
-
 /src/generated/prisma
 node_modules
 /frontend
->>>>>>> 1210ca0a6fe82fbf019120d8013880cdb08781e9
+
