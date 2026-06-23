@@ -206,7 +206,30 @@ const refreshToken =
       next(error);
     }
   };
+const changePassword = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const { currentPassword, newPassword } =
+      req.body;
 
+    const result =
+      await authService.changePassword(
+        req.user.id,
+        currentPassword,
+        newPassword
+      );
+
+    res.json({
+      success: true,
+      message: result.message
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 module.exports = {
   register,
   login,
@@ -215,5 +238,6 @@ module.exports = {
   //verifyEmail,
   forgotPassword,
   resetPassword,
-  refreshToken
+  refreshToken,
+  changePassword
 };
