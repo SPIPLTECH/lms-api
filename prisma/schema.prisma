@@ -239,4 +239,6 @@ model Certificate {
   course         Course @relation(fields: [courseId], references: [id])
 
   issuedAt       DateTime @default(now())
+
+  @@unique([userId, courseId])
 }

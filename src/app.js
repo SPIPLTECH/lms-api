@@ -19,6 +19,8 @@ const progressRoutes = require("./modules/progress/progress.routes");
 const quizRoutes = require("./modules/quizzes/quiz.routes");
 const questionRoutes = require("./modules/questions/question.routes");
 const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
+const reviewRoutes = require("./modules/reviews/review.routes");
+const certificateRoutes = require("./modules/certificates/certificate.routes");
 const app = express();
 
 
@@ -49,6 +51,8 @@ app.use("/progress", progressRoutes);
 app.use("/quizzes", quizRoutes);
 app.use("/questions", questionRoutes);
 app.use("/dashboard", dashboardRoutes);
+app.use("/reviews", reviewRoutes);
+app.use("/certificates", certificateRoutes);
 
 app.use(errorHandler);
 
