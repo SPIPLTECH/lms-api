@@ -70,7 +70,7 @@ const expiry = new Date(Date.now() + 5 * 60 * 1000);
     
     }
   });
-  const { sendEmail } = require("../utils/sendEmail");
+  //const { sendEmail } = require("../utils/mail");
 
 await sendEmail(
   data.email,
