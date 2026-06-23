@@ -55,6 +55,7 @@ const register = async (data) => {
   const hashedPassword = await bcrypt.hash(data.password, 10);
 
   const token = crypto.randomBytes(32).toString("hex");
+  
 const otp = generateOTP();
 const expiry = new Date(Date.now() + 5 * 60 * 1000);
   const user = await prisma.user.create({
