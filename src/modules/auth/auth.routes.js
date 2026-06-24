@@ -22,6 +22,11 @@ router.post(
 router.post("/verify-otp", authController.verifyOtp);
 
 router.post(
+  "/resend-verification",
+  authController.resendVerification
+);
+
+router.post(
   "/forgot-password",
   authController.forgotPassword
 );

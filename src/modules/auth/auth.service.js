@@ -383,6 +383,48 @@ const changePassword = async (
       "Password changed successfully"
   };
 };
+const resendVerification = async (email) => {
+  const user = await prisma.user.findUnique({
+    where: { email }
+  });
+
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  if (user.isVerified) {
+    throw new Error("Email already verified");
+  }
+
+  const otp = generateOTP();
+  const otpExpiry = new Date(
+    Date.now() + 5 * 60 * 1000
+  );
+
+  await prisma.user.update({
+    where: { email },
+    data: {
+      otp,
+      otpExpiresAt: otpExpiry
+    }
+  });
+
+  await sendEmail(
+    email,
+    "Verify Your Orange Tree LMS Account",
+    `
+    <h2>Orange Tree LMS</h2>
+    <p>Your verification OTP:</p>
+    <h1>${otp}</h1>
+    <p>Valid for 5 minutes</p>
+    `
+  );
+
+  return {
+    message:
+      "Verification email sent successfully"
+  };
+};
 
 module.exports = {
   register,
@@ -392,5 +434,6 @@ module.exports = {
   resetPassword,
   refreshToken,
   changePassword,
-  verifyOtp
+  verifyOtp,
+  resendVerification
 };

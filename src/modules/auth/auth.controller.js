@@ -240,6 +240,27 @@ const changePassword = async (
     next(error);
   }
 };
+const resendVerification = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const { email } = req.body;
+
+    const result =
+      await authService.resendVerification(
+        email
+      );
+
+    res.status(200).json({
+      success: true,
+      message: result.message
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 module.exports = {
   register,
   login,
@@ -249,5 +270,6 @@ module.exports = {
   resetPassword,
   refreshToken,
   changePassword,
-  verifyOtp
+  verifyOtp,
+  resendVerification
 };
