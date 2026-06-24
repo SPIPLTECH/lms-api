@@ -3,16 +3,6 @@ const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const prisma = require("../../config/database");
 const { sendEmail } = require("../../utils/mail");
-// const {
-//   sendVerificationEmail
-// } = require("../../services/email.service");
-
-// console.log(
-//   "sendVerificationEmail:",
-//   sendVerificationEmail
-// );
-
-
 /**
  * Generate Access Token
  */
@@ -70,13 +60,6 @@ const expiry = new Date(Date.now() + 5 * 60 * 1000);
     
     }
   });
-  //const { sendEmail } = require("../utils/mail");
-
-// await sendEmail(
-//   data.email,
-//   "Verify Your Account",
-//   "<h1>Welcome</h1>"
-// );
   await sendEmail(
   data.email,
   "Verify Your Account",
@@ -175,37 +158,7 @@ const login = async (
   };
 };
 
-/**
- * Verify Email
- */
-// const verifyEmail = async (req, res) => {
-//   const { token } = req.query;
-
-//   const user = await prisma.user.findFirst({
-//     where: {
-//       verificationToken: token
-//     }
-//   });
-
-//   if (!user) {
-//     return res.status(400).json({
-//       message: "Invalid token"
-//     });
-//   }
-
-//   await prisma.user.update({
-//     where: { id: user.id },
-//     data: {
-//       isEmailVerified: true,
-//       verificationToken: null
-//     }
-//   });
-
-//   res.json({
-//     message: "Email verified successfully"
-//   });
-// };
-/**
+/** 
  * Forgot Password
  */
 const generateOTP = () => {

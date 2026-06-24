@@ -3,11 +3,9 @@ const express = require("express");
 const router = express.Router();
 
 const authController = require("./auth.controller");
-//const verifyOtp = require ("./auth.controller");
 const verifyToken = require(
   "../../middleware/auth.middleware"
 );
-const { verifyOtp } = require("./auth.service");
 
 /**
  * Public Routes
@@ -21,13 +19,7 @@ router.post(
   "/login",
   authController.login
 );
-
-// router.get(
-//   "/verify-email",
-//   authController.verifyEmail
-// );
-
-router.post("/verify-otp", verifyOtp);
+router.post("/verify-otp", authController.verifyOtp);
 
 router.post(
   "/forgot-password",

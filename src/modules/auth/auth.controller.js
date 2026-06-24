@@ -115,50 +115,20 @@ const profile = async (
 };
 
 /**
- * Verify Email
- */
-// const verifyEmail =
-//   async (
-//     req,
-//     res,
-//     next
-//   ) => {
-//     try {
-//       const { token } =
-//         req.params;
-
-//       const result =
-//         await authService.verifyEmail(
-//           token
-//         );
-
-//       res.json({
-//         success: true,
-//         message:
-//           result.message
-//       });
-//     } catch (error) {
-//       next(error);
-//     }
-//   };
-
-/**
  * Forgot Password
  */
 const verifyOtp = async (req, res, next) => {
   try {
-    const result = await authService.verifyOtp(req.body);
+    const { email, otp } = req.body;
+
+    const result = await authService.verifyOtp(email, otp);
+
     res.status(200).json(result);
   } catch (error) {
     next(error);
   }
 };
 
-module.exports = {
-  register,
-  login,
-  verifyOtp
-};
 const forgotPassword =
   async (
     req,
@@ -273,7 +243,6 @@ module.exports = {
   login,
   logout,
   profile,
-  //verifyEmail,
   forgotPassword,
   resetPassword,
   refreshToken,
