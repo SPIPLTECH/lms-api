@@ -97,7 +97,7 @@ const verifyOtp = async (email, otp) => {
     }
   });
 
-  return { message: "Email verified" };
+  return { message: " Verified" };
 };
 /**
  * Login User
@@ -176,32 +176,46 @@ const forgotPassword =
         "User not found"
       );
     }
+    if(!user.isVerified){
+      throw new Error(
+       "Yo are not verified");}
+    const Newotp = generateOTP();
+    // const resetToken =
+    //   crypto.randomBytes(32)
+    //     .toString("hex");
 
-    const resetToken =
-      crypto.randomBytes(32)
-        .toString("hex");
-
-    const resetExpiry =
-      new Date(
-        Date.now() +
-          15 * 60 * 1000
-      );
+    // const resetExpiry =
+    //   new Date(
+    //     Date.now() +
+    //       15 * 60 * 1000
+    //   );
 
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        resetPasswordToken:
-          resetToken,
-        resetPasswordExpires:
-          resetExpiry
+        otp : Newotp
+        // resetPasswordToken:
+        //   resetToken,
+        // resetPasswordExpires:
+        //   resetExpiry
+
       }
     });
-
-    return {
-      message:
-        "Password reset token generated",
-      resetToken
+    await sendEmail(
+     data.email,
+     "OTP for Update password of Your Account",
+  `
+    <h2>Orange Tree LMS</h2>
+    <p>Your OTP is:</p>
+    <h1>${otp}</h1>
+    <p>Valid for 5 minutes</p>
+  `
+     );
+     return {
+     message: "OTP sent to email"
     };
+
+  
   };
 
 /**
@@ -209,24 +223,27 @@ const forgotPassword =
  */
 const resetPassword =
   async (
-    token,
+    otp,
+    email,
     newPassword
   ) => {
     const user =
       await prisma.user.findFirst({
         where: {
-          resetPasswordToken:
-            token,
-          resetPasswordExpires:
-            {
-              gt: new Date()
-            }
+          email:email
         }
       });
 
     if (!user) {
       throw new Error(
-        "Invalid or expired token"
+        "Invalid User"
+      );
+    }
+
+    if(otp!=user.otp)
+    {
+      throw new Error(
+        "Invalid OTP"
       );
     }
 
@@ -243,10 +260,10 @@ const resetPassword =
       data: {
         password:
           hashedPassword,
-        resetPasswordToken:
-          null,
-        resetPasswordExpires:
-          null
+        // resetPasswordToken:
+        //   null,
+        // resetPasswordExpires:
+        //   nul
       }
     });
 

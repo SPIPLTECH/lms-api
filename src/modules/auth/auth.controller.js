@@ -166,13 +166,15 @@ const resetPassword =
   ) => {
     try {
       const {
-        token,
+        otp,
+        email,
         newPassword
       } = req.body;
 
       const result =
         await authService.resetPassword(
-          token,
+          otp,
+          email,
           newPassword
         );
 
