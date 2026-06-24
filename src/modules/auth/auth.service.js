@@ -193,7 +193,8 @@ const forgotPassword =
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        otp : Newotp
+        otp : Newotp,
+        otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
         // resetPasswordToken:
         //   resetToken,
         // resetPasswordExpires:
@@ -202,12 +203,12 @@ const forgotPassword =
       }
     });
     await sendEmail(
-     data.email,
+     email,
      "OTP for Update password of Your Account",
   `
     <h2>Orange Tree LMS</h2>
     <p>Your OTP is:</p>
-    <h1>${otp}</h1>
+    <h1>${Newotp}</h1>
     <p>Valid for 5 minutes</p>
   `
      );
