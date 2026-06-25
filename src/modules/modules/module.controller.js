@@ -63,12 +63,15 @@ const updateModule = async (
 ) => {
   try {
     const module =
-      await moduleService.updateModule(
-        req.params.moduleId,
-        req.body
-      );
+  await moduleService.updateModule(
+    req.params.moduleId,
+    req.body
+  );
 
-   res.json(modules);
+res.json({
+  success: true,
+  data: module,
+});
   } catch (error) {
     next(error);
   }
