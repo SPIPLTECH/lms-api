@@ -2,6 +2,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const prisma = require("../../config/database");
+const { sendEmail } = require("../../utils/mail");
 // const {
 //   sendVerificationEmail
 // } = require("../../services/email.service");
@@ -54,7 +55,8 @@ const register = async (data) => {
   const hashedPassword = await bcrypt.hash(data.password, 10);
 
   const token = crypto.randomBytes(32).toString("hex");
-
+const otp = generateOTP();
+const expiry = new Date(Date.now() + 5 * 60 * 1000);
   const user = await prisma.user.create({
     data: {
       name: data.name,
@@ -62,16 +64,50 @@ const register = async (data) => {
       phoneNumber : data.phoneNumber,
       address : data.address,
       password: hashedPassword,
+      otp,
+    otpExpiresAt: expiry
     
     }
   });
 
-  // await sendVerificationEmail(user.email, token);
+  await sendEmail(
+  data.email,
+  "Verify Your Account",
+  `
+    <h2>Orange Tree LMS</h2>
+    <p>Your OTP is:</p>
+    <h1>${otp}</h1>
+    <p>Valid for 5 minutes</p>
+  `
+);
+return {
+  message: "OTP sent to email"
+};
+};
 
-  // return {
-  //   message:
-  //     "Registration successful."
-  // };
+const verifyOtp = async (email, otp) => {
+  const user = await prisma.user.findUnique({
+    where: { email }
+  });
+
+  if (!user) throw new Error("User not found");
+
+  if (user.otp !== otp)
+    throw new Error("Invalid OTP");
+
+  if (new Date() > user.otpExpiresAt)
+    throw new Error("OTP expired");
+
+  await prisma.user.update({
+    where: { email },
+    data: {
+      isVerified: true,
+      otp: null,
+      otpExpiresAt: null
+    }
+  });
+
+  return { message: "Email verified" };
 };
 /**
  * Login User
@@ -103,13 +139,9 @@ const login = async (
     );
   }
 
-  // if (
-  //   user.isVerified === false
-  // ) {
-  //   throw new Error(
-  //     "Please verify your email first"
-  //   );
-  // }
+  if (!user.isVerified) {
+  throw new Error("Verify email first");
+}
 
   const accessToken =
     generateAccessToken(user);
@@ -169,6 +201,9 @@ const login = async (
 /**
  * Forgot Password
  */
+const generateOTP = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+};
 const forgotPassword =
   async (email) => {
     const user =
@@ -378,5 +413,6 @@ module.exports = {
   forgotPassword,
   resetPassword,
   refreshToken,
-  changePassword
+  changePassword,
+  verifyOtp
 };
