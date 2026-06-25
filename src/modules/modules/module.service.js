@@ -64,7 +64,7 @@ const reorderModules = async (
     (module) =>
       prisma.module.update({
         where: {
-          id: module.moduleId
+          id: module.id
         },
         data: {
           order: module.order

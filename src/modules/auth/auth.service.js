@@ -44,35 +44,44 @@ const generateRefreshToken = (user) => {
 const register = async (data) => {
   const hashedPassword = await bcrypt.hash(data.password, 10);
 
-  const token = crypto.randomBytes(32).toString("hex");
-  
-const otp = generateOTP();
-const expiry = new Date(Date.now() + 5 * 60 * 1000);
+  const otp = generateOTP();
+  const expiry = new Date(Date.now() + 5 * 60 * 1000);
+
   const user = await prisma.user.create({
     data: {
       name: data.name,
       email: data.email,
-      phoneNumber : data.phoneNumber,
-      address : data.address,
+      phoneNumber: data.phoneNumber,
+      address: data.address,
       password: hashedPassword,
+      role: "STUDENT", // force default role
       otp,
-    otpExpiresAt: expiry
-    
+      otpExpiresAt: expiry
     }
   });
+
+  // NEW: create student profile automatically
+  await prisma.studentProfile.create({
+    data: {
+      userId: user.id,
+      phone: data.phoneNumber || null
+    }
+  });
+
   await sendEmail(
-  data.email,
-  "Verify Your Account",
-  `
+    data.email,
+    "Verify Your Account",
+    `
     <h2>Orange Tree LMS</h2>
     <p>Your OTP is:</p>
     <h1>${otp}</h1>
     <p>Valid for 5 minutes</p>
-  `
-);
-return {
-  message: "OTP sent to email"
-};
+    `
+  );
+
+  return {
+    message: "OTP sent to email"
+  };
 };
 
 const verifyOtp = async (email, otp) => {
@@ -106,10 +115,14 @@ const login = async (
   email,
   password
 ) => {
-  const user =
-    await prisma.user.findUnique({
-      where: { email }
-    });
+  const user = await prisma.user.findUnique({
+  where: { email },
+  include: {
+    studentProfile: true,
+    teacherProfile: true,
+    adminProfile: true
+  }
+});
 
   if (!user) {
     throw new Error(
@@ -150,12 +163,16 @@ const login = async (
     accessToken,
     refreshToken,
     user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role
+  id: user.id,
+  name: user.name,
+  email: user.email,
+  role: user.role,
+  studentProfile: user.studentProfile,
+  teacherProfile: user.teacherProfile,
+  adminProfile: user.adminProfile
+}
     }
-  };
+  
 };
 
 /** 
@@ -180,26 +197,13 @@ const forgotPassword =
       throw new Error(
        "Yo are not verified");}
     const Newotp = generateOTP();
-    // const resetToken =
-    //   crypto.randomBytes(32)
-    //     .toString("hex");
-
-    // const resetExpiry =
-    //   new Date(
-    //     Date.now() +
-    //       15 * 60 * 1000
-    //   );
-
+  
     await prisma.user.update({
       where: { id: user.id },
       data: {
         otp : Newotp,
         otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
-        // resetPasswordToken:
-        //   resetToken,
-        // resetPasswordExpires:
-        //   resetExpiry
-
+     
       }
     });
     await sendEmail(
@@ -261,10 +265,6 @@ const resetPassword =
       data: {
         password:
           hashedPassword,
-        // resetPasswordToken:
-        //   null,
-        // resetPasswordExpires:
-        //   nul
       }
     });
 

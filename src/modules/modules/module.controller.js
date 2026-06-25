@@ -68,7 +68,7 @@ const updateModule = async (
         req.body
       );
 
-   res.json(modules);
+   res.json(module);
   } catch (error) {
     next(error);
   }

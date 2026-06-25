@@ -8,9 +8,14 @@ const getEnrollments = async (
   next
 ) => {
   try {
+    const studentId =
+      req.user.role === "ADMIN"
+        ? req.query.studentId
+        : req.studentId;
+
     const enrollments =
       await enrollmentService.getEnrollments(
-        req.query.userId,
+        studentId,
         req.query.courseId
       );
 
@@ -31,7 +36,7 @@ const createEnrollment = async (
   try {
     const enrollment =
       await enrollmentService.createEnrollment(
-        req.user.id,
+        req.studentId,
         req.body.courseId
       );
 
@@ -40,6 +45,16 @@ const createEnrollment = async (
       data: enrollment
     });
   } catch (error) {
+    if (
+      error.message ===
+      "Already enrolled in this course"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+
     next(error);
   }
 };

@@ -31,7 +31,7 @@ const verifyContentOwnership =
 
       if (
         req.user.role !==
-          "ADMIN" &&
+          ("INSTRUCTOR" || "ADMIN") &&
         content.lesson.module.course
           .creatorId !==
           req.user.id

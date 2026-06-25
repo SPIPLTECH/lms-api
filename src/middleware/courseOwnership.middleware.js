@@ -22,7 +22,7 @@ const verifyCourseOwnership = async (
     }
 
     if (
-      req.user.role !== "ADMIN" &&
+      req.user.role !== ("INSTRUCTOR" || "ADMIN") &&
       course.creatorId !== req.user.id
     ) {
       return res.status(403).json({

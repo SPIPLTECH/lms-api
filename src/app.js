@@ -8,8 +8,10 @@ const verifyModuleOwnership =
   require(
     "../src/middleware/moduleOwnership.middleware"
   );
+const teacherRoutes = require("./modules/teacher/teacher.route");
 const authRoutes = require("./modules/auth/auth.routes");
 const userRoutes = require("./modules/users/user.routes");
+const studentRoutes =require("./modules/students/student.route")
 const courseRoutes = require("./modules/courses/course.routes");
 const moduleRoutes = require("./modules/modules/module.routes");
 const lessonRoutes = require("./modules/lessons/lesson.routes");
@@ -39,9 +41,10 @@ app.get("/", (req, res) => {
   });
 });
 
-
+app.use("/teachers", teacherRoutes);
 app.use("/auth", authRoutes);
 app.use("/users", userRoutes);
+app.use("/students",studentRoutes)
 app.use("/courses", courseRoutes);
 app.use("/modules", moduleRoutes);
 app.use("/lessons", lessonRoutes);

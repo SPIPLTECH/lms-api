@@ -1,29 +1,28 @@
 const courseService = require("./course.service");
 
-const getCourses = async (req, res, next) => {
+const getCourses = async (req, res) => {
   try {
-    const page =
-      Number(req.query.page) || 1;
+    const search = req.query.search || "";
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
 
-    const limit =
-      Number(req.query.limit) || 10;
+    const courses = await courseService.getCourses(
+      search,
+      page,
+      limit
+    );
 
-    const search =
-      req.query.search || "";
-
-    const courses =
-      await courseService.getCourses(
-        search,
-        page,
-        limit
-      );
-
-    res.json(courses);
+    res.status(200).json({
+      success: true,
+      data: courses
+    });
   } catch (error) {
-    next(error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
   }
 };
-
 const getCourseById = async (
   req,
   res,

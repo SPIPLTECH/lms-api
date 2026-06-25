@@ -23,7 +23,7 @@ const verifyModuleOwnership = async (
     }
 
     if (
-      req.user.role !== "ADMIN" &&
+      req.user.role !==("INSTRUCTOR" || "ADMIN") &&
       module.course.creatorId !==
         req.user.id
     ) {

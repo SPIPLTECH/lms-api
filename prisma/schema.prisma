@@ -26,222 +26,267 @@ enum ContentType {
   LINK
   PRESENTATION
 }
+
 enum UserStatus {
   ACTIVE
   INACTIVE
   SUSPENDED
   BLOCKED
 }
+
 model User {
-  id                   String        @id @default(cuid())
-  name                 String
-  email                String        @unique
- phoneNumber String? @unique
-address     String?
-  password             String
-  role                 Role          @default(STUDENT)
-  refreshToken         String?
-  resetPasswordExpires DateTime?
-  resetPasswordToken   String?
-  status               UserStatus    @default(ACTIVE)
-  certificates         Certificate[]
-  courses              Course[]
-  enrollments          Enrollment[]
-  progress             Progress[]
-  reviews              Review[]
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
+  id          String  @id @default(cuid())
+  name        String
+  email       String  @unique
+  phoneNumber String? @unique
+  address     String?
+  password    String
+
+  role   Role       @default(STUDENT)
+  status UserStatus @default(ACTIVE)
+
+  refreshToken String?
+  // resetPasswordExpires DateTime?
+  // resetPasswordToken   String?
+
   otp          String?
-otpExpiresAt DateTime?
-isVerified   Boolean?   @default(false)
+  otpExpiresAt DateTime?
+  isVerified   Boolean   @default(false)
+
+  studentProfile StudentProfile?
+  teacherProfile TeacherProfile?
+  adminProfile   AdminProfile?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model StudentProfile {
+  id           String    @id @default(cuid())
+  userId       String    @unique
+  education    String?
+  phone        String?
+  guardianName String?
+  dateOfBirth  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  enrollments  Enrollment[]
+  progress     Progress[]
+  reviews      Review[]
+  certificates Certificate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TeacherProfile {
+  id             String  @id @default(cuid())
+  userId         String  @unique
+  specialization String?
+  qualification  String?
+  experience     Int?
+  bio            String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  courses Course[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AdminProfile {
+  id          String  @id @default(cuid())
+  userId      String  @unique
+  department  String?
+  designation String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Course {
-  id            String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  title         String
-  description   String?
-  category      String?
-  level         String?
-  thumbnailUrl  String?
+  title        String
+  description  String?
+  category     String?
+  level        String?
+  thumbnailUrl String?
 
-  status        CourseStatus @default(DRAFT)
-  publishedAt DateTime? 
-  creatorId     String
-  creator       User @relation(fields: [creatorId], references: [id])
+  status      CourseStatus @default(DRAFT)
+  publishedAt DateTime?
 
-  modules       Module[]
-  quizzes       Quiz[]
-  enrollments   Enrollment[]
-  reviews       Review[]
-  certificates  Certificate[]
+  creatorId String
+  creator   TeacherProfile @relation(fields: [creatorId], references: [id], onDelete: Cascade)
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  modules      Module[]
+  quizzes      Quiz[]
+  enrollments  Enrollment[]
+  reviews      Review[]
+  certificates Certificate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Module {
-  id          String @id @default(cuid())
+  id String @id @default(cuid())
 
   title       String
   description String?
 
   order       Int
-
   isPublished Boolean @default(false)
 
-  courseId    String
-  course      Course @relation(fields: [courseId], references: [id])
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
-  lessons     Lesson[]
+  lessons Lesson[]
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([courseId, order])
 }
 
 model Lesson {
-  id          String @id @default(cuid())
+  id String @id @default(cuid())
 
   title       String
   description String?
 
   order       Int
-
   isPublished Boolean @default(false)
 
-  moduleId    String
-  module      Module @relation(fields: [moduleId], references: [id])
+  moduleId String
+  module   Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
 
-  contents    Content[]
-  progress    Progress[]
+  contents Content[]
+  progress Progress[]
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([moduleId, order])
 }
 
 model Content {
-  id            String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  order         Int
+  order Int
 
-  lessonId      String
-  lesson        Lesson @relation(fields: [lessonId], references: [id])
+  lessonId String
+  lesson   Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
 
-  type          ContentType
+  type ContentType
 
-  title         String?
+  title String?
 
-  videoUrl      String?
-  fileUrl       String?
-  htmlContent   String?
-  externalUrl   String?
+  videoUrl    String?
+  fileUrl     String?
+  htmlContent String?
+  externalUrl String?
 
-  duration      Int?
+  duration Int?
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([lessonId, order])
 }
 
 model Enrollment {
-  id         String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  userId     String
-  courseId   String
+  studentId String
+  courseId  String
 
-  user       User @relation(fields: [userId], references: [id])
-  course     Course @relation(fields: [courseId], references: [id])
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course  Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
   enrolledAt DateTime @default(now())
 
-  @@unique([userId, courseId])
+  @@unique([studentId, courseId])
 }
 
 model Progress {
-  id            String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  userId        String
-  lessonId      String
+  studentId String
+  lessonId  String
 
-  completed     Boolean  @default(false)
+  completed   Boolean   @default(false)
+  completedAt DateTime?
 
-  completedAt   DateTime?
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lesson  Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
 
-  user          User @relation(fields: [userId], references: [id])
-  lesson        Lesson @relation(fields: [lessonId], references: [id])
-
-  @@unique([userId, lessonId])
+  @@unique([studentId, lessonId])
 }
 
 model Quiz {
-  id            String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  title         String
-  description   String?
+  title       String
+  description String?
 
-  passingScore  Int
+  passingScore Int
+  timeLimit    Int?
 
-  timeLimit     Int?
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
-  courseId      String
-  course        Course @relation(fields: [courseId], references: [id])
+  questions Question[]
 
-  questions     Question[]
-
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Question {
-  id            String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  quizId        String
-  quiz          Quiz @relation(fields: [quizId], references: [id])
+  quizId String
+  quiz   Quiz   @relation(fields: [quizId], references: [id], onDelete: Cascade)
 
   question      String
-
   options       Json
-
   correctAnswer String
 
-  marks         Int @default(1)
+  marks Int @default(1)
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 }
+
 model Review {
-  id            String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  rating        Int
-  review        String?
+  rating Int
+  review String?
 
-  userId        String
-  courseId      String
+  studentId String
+  courseId  String
 
-  user          User @relation(fields: [userId], references: [id])
-  course        Course @relation(fields: [courseId], references: [id])
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course  Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 
-  @@unique([userId, courseId])
+  @@unique([studentId, courseId])
 }
 
 model Certificate {
-  id             String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  certificateNo  String   @unique
+  certificateNo String @unique
 
-  userId         String
-  courseId       String
+  studentId String
+  courseId  String
 
-  user           User @relation(fields: [userId], references: [id])
-  course         Course @relation(fields: [courseId], references: [id])
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course  Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
-  issuedAt       DateTime @default(now())
+  issuedAt DateTime @default(now())
 
-  @@unique([userId, courseId])
+  @@unique([studentId, courseId])
 }

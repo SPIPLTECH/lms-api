@@ -22,7 +22,11 @@ const getCourses = async (
       creator: {
         select: {
           id: true,
-          name: true
+          user:{
+            select :{
+              name : true,
+            }
+          }
         }
       }
     },
@@ -45,8 +49,12 @@ const getCourseById = async (
       creator: {
         select: {
           id: true,
+          user :{ 
+          select :{
           name: true,
-          email: true
+          email: true,
+          }
+        }
         }
       },
 
@@ -77,14 +85,21 @@ const getCourseById = async (
   });
 };
 
-const createCourse = async (
-  data,
-  userId
-) => {
+const createCourse = async (data, userId) => {
+  const teacher = await prisma.teacherProfile.findUnique({
+    where: {
+      userId: userId
+    }
+  });
+
+  if (!teacher) {
+    throw new Error("Teacher profile not found for this user");
+  }
+
   return await prisma.course.create({
     data: {
       ...data,
-      creatorId: userId
+      creatorId: teacher.id
     }
   });
 };
@@ -133,13 +148,20 @@ const getCourseStudents = async (
         courseId
       },
       include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true
-          }
-        }
+           student :{
+            select:{
+              id : true,
+              user:
+              {
+                select :
+                {
+                  // id: true,
+                   name: true,
+                   email: true,
+                }
+              }
+            }
+           }
       }
     });
 

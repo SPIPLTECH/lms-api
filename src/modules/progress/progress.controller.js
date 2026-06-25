@@ -1,3 +1,4 @@
+const prisma = require("../../config/database");
 const progressService = require(
   "./progress.service"
 );
@@ -8,9 +9,23 @@ const completeLesson = async (
   next
 ) => {
   try {
+    const student =
+      await prisma.studentProfile.findUnique({
+        where: {
+          userId: req.user.id
+        }
+      });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found"
+      });
+    }
+
     const progress =
       await progressService.completeLesson(
-        req.user.id,
+        student.id,
         req.body.lessonId
       );
 
@@ -29,9 +44,23 @@ const getProgress = async (
   next
 ) => {
   try {
+    const student =
+      await prisma.studentProfile.findUnique({
+        where: {
+          userId: req.user.id
+        }
+      });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found"
+      });
+    }
+
     const result =
       await progressService.getCourseProgress(
-        req.user.id,
+        student.id,
         req.query.courseId
       );
 
