@@ -118,9 +118,9 @@ const login = async (
   const user = await prisma.user.findUnique({
   where: { email },
   include: {
-    studentProfile: true,
-    teacherProfile: true,
-    adminProfile: true
+    studentProfile: false,
+    teacherProfile: false,
+    adminProfile: false
   }
 });
 
