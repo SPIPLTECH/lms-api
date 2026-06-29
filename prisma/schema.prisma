@@ -22,6 +22,7 @@ model User {
   isVerified     Boolean         @default(false)
   otp            String?
   otpExpiresAt   DateTime?
+  courses        Course[]
   adminProfile   AdminProfile?
   studentProfile StudentProfile?
   teacherProfile TeacherProfile?
@@ -52,7 +53,7 @@ model TeacherProfile {
   bio            String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  courses        Course[]
+  //courses        Course[]
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -66,19 +67,19 @@ model AdminProfile {
 }
 
 model Course {
-  id           String         @id @default(cuid())
+  id           String        @id @default(cuid())
   title        String
   description  String?
   category     String?
   level        String?
   thumbnailUrl String?
-  status       CourseStatus   @default(DRAFT)
+  status       CourseStatus  @default(DRAFT)
   publishedAt  DateTime?
   creatorId    String
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
   certificates Certificate[]
-  creator      TeacherProfile @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  creator      User          @relation(fields: [creatorId], references: [id], onDelete: Cascade)
   enrollments  Enrollment[]
   modules      Module[]
   quizzes      Quiz[]

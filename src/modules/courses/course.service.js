@@ -1,12 +1,6 @@
-const prisma = require(
-  "../../config/database"
-);
+const prisma = require("../../config/database");
 
-const getCourses = async (
-  search = "",
-  page = 1,
-  limit = 10
-) => {
+const getCourses = async (search = "", page = 1, limit = 10) => {
   return await prisma.course.findMany({
     where: {
       title: {
@@ -14,47 +8,40 @@ const getCourses = async (
         mode: "insensitive"
       }
     },
-
     skip: (page - 1) * limit,
     take: limit,
-
     include: {
       creator: {
         select: {
           id: true,
-          user:{
-            select :{
-              name : true,
-            }
-          }
+          name: true,
+          email: true,
+          role: true,
+          teacherProfile: true,
+          adminProfile: true
         }
       }
     },
-
     orderBy: {
       createdAt: "desc"
     }
   });
 };
 
-const getCourseById = async (
-  courseId
-) => {
+const getCourseById = async (courseId) => {
   return await prisma.course.findUnique({
     where: {
       id: courseId
     },
-
     include: {
       creator: {
         select: {
           id: true,
-          user :{ 
-          select :{
           name: true,
           email: true,
-          }
-        }
+          role: true,
+          teacherProfile: true,
+          adminProfile: true
         }
       },
 
@@ -62,13 +49,11 @@ const getCourseById = async (
         orderBy: {
           order: "asc"
         },
-
         include: {
           lessons: {
             orderBy: {
               order: "asc"
             },
-
             include: {
               contents: true
             }
@@ -86,33 +71,15 @@ const getCourseById = async (
 };
 
 const createCourse = async (data, userId) => {
-  const teacher = await prisma.teacherProfile.findUnique({
-    where: { userId }
-  });
-
-  const admin = await prisma.adminProfile.findUnique({
-    where: { userId }
-  });
-
-  // Error only if neither exists
-  if (!teacher && !admin) {
-    throw new Error("Neither Teacher nor Admin profile found for this user");
-  }
-
-  const creatorId = admin ? admin.id : teacher.id;
-
   return await prisma.course.create({
     data: {
       ...data,
-      creatorId
+      creatorId: userId
     }
   });
 };
 
-const updateCourse = async (
-  courseId,
-  data
-) => {
+const updateCourse = async (courseId, data) => {
   return await prisma.course.update({
     where: {
       id: courseId
@@ -121,10 +88,7 @@ const updateCourse = async (
   });
 };
 
-const updateStatus = async (
-  courseId,
-  status
-) => {
+const updateStatus = async (courseId, status) => {
   return await prisma.course.update({
     where: {
       id: courseId
@@ -135,49 +99,42 @@ const updateStatus = async (
   });
 };
 
-const deleteCourse = async (
-  courseId
-) => {
+const deleteCourse = async (courseId) => {
   return await prisma.course.delete({
     where: {
       id: courseId
     }
   });
 };
-const getCourseStudents = async (
-  courseId
-) => {
-  const enrollments =
-    await prisma.enrollment.findMany({
-      where: {
-        courseId
-      },
-      include: {
-           student :{
-            select:{
-              id : true,
-              user:
-              {
-                select :
-                {
-                  // id: true,
-                   name: true,
-                   email: true,
-                }
-              }
-            }
-           }
-      }
-    });
 
-  return enrollments.map(
-    (enrollment) => ({
-      ...enrollment.user,
-      enrolledAt:
-        enrollment.enrolledAt
-    })
-  );
+const getCourseStudents = async (courseId) => {
+  const enrollments = await prisma.enrollment.findMany({
+    where: {
+      courseId
+    },
+    include: {
+      student: {
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          }
+        }
+      }
+    }
+  });
+
+  return enrollments.map((enrollment) => ({
+    id: enrollment.student.user.id,
+    name: enrollment.student.user.name,
+    email: enrollment.student.user.email,
+    enrolledAt: enrollment.enrolledAt
+  }));
 };
+
 module.exports = {
   getCourses,
   getCourseById,
