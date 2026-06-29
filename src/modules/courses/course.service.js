@@ -87,28 +87,26 @@ const getCourseById = async (
 
 const createCourse = async (data, userId) => {
   const teacher = await prisma.teacherProfile.findUnique({
-    where: {
-      userId: userId
-    }
-  });
-  const admin = await prisma.adminProfile.findUnique({
-    where: {
-      userId: userId
-    }
+    where: { userId }
   });
 
-  if (!teacher || !admin) {
-    throw new Error("Teacher or Admin profile not found for this user");
+  const admin = await prisma.adminProfile.findUnique({
+    where: { userId }
+  });
+
+  // Error only if neither exists
+  if (!teacher && !admin) {
+    throw new Error("Neither Teacher nor Admin profile found for this user");
   }
 
   const creatorId = admin ? admin.id : teacher.id;
 
-   return await prisma.course.create({
+  return await prisma.course.create({
     data: {
-    ...data,
-    creatorId
-  }
-});
+      ...data,
+      creatorId
+    }
+  });
 };
 
 const updateCourse = async (
