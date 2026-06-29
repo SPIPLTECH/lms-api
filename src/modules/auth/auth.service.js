@@ -45,7 +45,7 @@ const register = async (data) => {
   const hashedPassword = await bcrypt.hash(data.password, 10);
 
   const otp = generateOTP();
-  const expiry = new Date(Date.now() + 5 * 60 * 1000);
+  const expiry = new Date(Date.now() + 10 * 60 * 1000);
 
   const user = await prisma.user.create({
     data: {
@@ -118,9 +118,9 @@ const login = async (
   const user = await prisma.user.findUnique({
   where: { email },
   include: {
-    studentProfile: false,
-    teacherProfile: false,
-    adminProfile: false
+    studentProfile: true,
+    teacherProfile: true,
+    adminProfile: true
   }
 });
 

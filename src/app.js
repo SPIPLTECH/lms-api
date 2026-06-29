@@ -23,6 +23,7 @@ const questionRoutes = require("./modules/questions/question.routes");
 const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
 const reviewRoutes = require("./modules/reviews/review.routes");
 const certificateRoutes = require("./modules/certificates/certificate.routes");
+const adminRoutes = require("./modules/admin/admin.route");
 const app = express();
 
 
@@ -56,7 +57,7 @@ app.use("/questions", questionRoutes);
 app.use("/dashboard", dashboardRoutes);
 app.use("/reviews", reviewRoutes);
 app.use("/certificates", certificateRoutes);
-
+app.use("/admin", adminRoutes);
 app.use(errorHandler);
 
 module.exports = app;

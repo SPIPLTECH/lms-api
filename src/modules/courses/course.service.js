@@ -91,17 +91,24 @@ const createCourse = async (data, userId) => {
       userId: userId
     }
   });
-
-  if (!teacher) {
-    throw new Error("Teacher profile not found for this user");
-  }
-
-  return await prisma.course.create({
-    data: {
-      ...data,
-      creatorId: teacher.id
+  const admin = await prisma.adminProfile.findUnique({
+    where: {
+      userId: userId
     }
   });
+
+  if (!teacher || !admin) {
+    throw new Error("Teacher or Admin profile not found for this user");
+  }
+
+  const creatorId = admin ? admin.id : teacher.id;
+
+   return await prisma.course.create({
+    data: {
+    ...data,
+    creatorId
+  }
+});
 };
 
 const updateCourse = async (
