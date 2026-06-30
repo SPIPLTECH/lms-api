@@ -22,6 +22,26 @@ const getQuestions = async (
   }
 };
 
+const getQuestionsByQuizId = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const questions =
+      await questionService.getQuestionsByQuizId(
+        req.params.quizId
+      );
+
+    res.json({
+      success: true,
+      data: questions
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getQuestionById = async (
   req,
   res,
@@ -105,6 +125,7 @@ const deleteQuestion = async (
 
 module.exports = {
   getQuestions,
+  getQuestionsByQuizId,
   getQuestionById,
   createQuestion,
   updateQuestion,

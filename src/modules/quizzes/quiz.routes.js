@@ -54,4 +54,10 @@ router.delete(
   controller.deleteQuiz
 );
 
+router.post(
+  "/:quizId/submit",
+  verifyToken,
+  controller.submitQuiz
+);
+
 module.exports = router;

@@ -135,55 +135,174 @@ const getInstructorDashboard =
       totalStudents,
       totalModules,
       totalQuizzes
-    };
+     };
   };
-const getStudentDashboard =
-  async (studentId) => {
-    const enrolledCourses =
-      await prisma.enrollment.count({
-        where: {
-          userId: studentId
-        }
-      });
+const getStudentDashboard = async (userId) => {
+  const student = await prisma.studentProfile.findUnique({
+    where: { userId },
+    select: {
+      id: true,
+      enrollments: {
+        include: {
+          course: {
+            include: {
+              creator: {
+                select: {
+                  name: true,
+                  email: true,
+                },
+              },
+              modules: {
+                include: {
+                  lessons: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      certificates: {
+        include: {
+          course: {
+            select: {
+              id: true,
+              title: true,
+            },
+          },
+        },
+      },
+      reviews: {
+        include: {
+          course: {
+            select: {
+              id: true,
+              title: true,
+            },
+          },
+        },
+      },
+    },
+  });
 
-    const completedLessons =
-      await prisma.progress.count({
-        where: {
-          userId: studentId,
-          completed: true
-        }
-      });
+  if (!student) {
+    throw new Error("Student not found");
+  }
 
-    const totalProgress =
-      await prisma.progress.count({
-        where: {
-          userId: studentId
-        }
-      });
+  const studentId = student.id;
 
-    const certificates =
-      await prisma.certificate.count({
-        where: {
-          userId: studentId
-        }
-      });
+  const progress = await prisma.progress.findMany({
+    where: { studentId },
+    include: {
+      lesson: {
+        select: {
+          id: true,
+          title: true,
+          module: {
+            select: {
+              courseId: true,
+            },
+          },
+        },
+      },
+    },
+  });
 
-    const completionRate =
-      totalProgress === 0
-        ? 0
-        : Math.round(
-            (completedLessons /
-              totalProgress) *
-              100
-          );
+  // Total lessons from all enrolled courses
+  const totalLessons = student.enrollments.reduce(
+    (courseTotal, enrollment) =>
+      courseTotal +
+      enrollment.course.modules.reduce(
+        (moduleTotal, module) =>
+          moduleTotal + module.lessons.length,
+        0
+      ),
+    0
+  );
 
-    return {
-      enrolledCourses,
+  const completedLessons = progress.filter(
+    (p) => p.completed
+  ).length;
+
+  const completionRate =
+    totalLessons === 0
+      ? 0
+      : Math.round(
+          (completedLessons / totalLessons) * 100
+        );
+
+  // Format enrolled courses for frontend
+  const enrolledCoursesList = student.enrollments.map(
+    (enrollment) => {
+      const totalCourseLessons =
+        enrollment.course.modules.reduce(
+          (sum, module) =>
+            sum + module.lessons.length,
+          0
+        );
+
+      const completedCourseLessons =
+        progress.filter(
+          (p) =>
+            p.completed &&
+            p.lesson.module.courseId ===
+              enrollment.course.id
+        ).length;
+
+      const progressPercent =
+        totalCourseLessons === 0
+          ? 0
+          : Math.round(
+              (completedCourseLessons /
+                totalCourseLessons) *
+                100
+            );
+
+      return {
+        id: enrollment.id,
+        courseId: enrollment.courseId,
+        enrolledAt: enrollment.enrolledAt,
+        studentId: enrollment.studentId,
+
+        course: {
+          id: enrollment.course.id,
+          title: enrollment.course.title,
+          description:
+            enrollment.course.description,
+          category:
+            enrollment.course.category,
+          level: enrollment.course.level,
+          thumbnailUrl:
+            enrollment.course.thumbnailUrl,
+          instructor:
+            enrollment.course.creator?.name ||
+            "Unknown",
+          lessons: totalCourseLessons,
+        },
+
+        completedLessons:
+          completedCourseLessons,
+        progress: progressPercent,
+      };
+    }
+  );
+
+  return {
+    stats: {
+      enrolledCourses:
+        student.enrollments.length,
       completedLessons,
-      certificates,
-      completionRate
-    };
+      certificates:
+        student.certificates.length,
+      reviews: student.reviews.length,
+      completionRate,
+    },
+
+    enrolledCoursesList,
+    certificatesList: student.certificates,
+    reviewsList: student.reviews,
+    progressList: progress,
   };
+};
 
 module.exports = {
   getAdminDashboard,

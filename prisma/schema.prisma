@@ -29,19 +29,20 @@ model User {
 }
 
 model StudentProfile {
-  id           String        @id @default(cuid())
-  userId       String        @unique
-  education    String?
-  phone        String?
-  createdAt    DateTime      @default(now())
-  dateOfBirth  DateTime?
-  guardianName String?
-  updatedAt    DateTime      @updatedAt
-  certificates Certificate[]
-  enrollments  Enrollment[]
-  progress     Progress[]
-  reviews      Review[]
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id              String           @id @default(cuid())
+  userId          String           @unique
+  education       String?
+  phone           String?
+  createdAt       DateTime         @default(now())
+  dateOfBirth     DateTime?
+  guardianName    String?
+  updatedAt       DateTime         @updatedAt
+  certificates    Certificate[]
+  enrollments     Enrollment[]
+  progress        Progress[]
+  reviews         Review[]
+  quizSubmissions QuizSubmission[]
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model TeacherProfile {
@@ -159,16 +160,17 @@ model Progress {
 }
 
 model Quiz {
-  id           String     @id @default(cuid())
-  title        String
-  description  String?
-  passingScore Int
-  timeLimit    Int?
-  courseId     String
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-  questions    Question[]
-  course       Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  id              String           @id @default(cuid())
+  title           String
+  description     String?
+  passingScore    Int
+  timeLimit       Int?
+  courseId        String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  questions       Question[]
+  quizSubmissions QuizSubmission[]
+  course          Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
 }
 
 model Question {
@@ -193,6 +195,22 @@ model Review {
   student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, courseId])
+}
+
+model QuizSubmission {
+  id          String         @id @default(cuid())
+  quizId      String
+  studentId   String
+  answers     Json
+  score       Int
+  totalMarks  Int
+  percentage  Int
+  passed      Boolean        @default(false)
+  submittedAt DateTime       @default(now())
+  quiz        Quiz           @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, quizId])
 }
 
 model Certificate {
