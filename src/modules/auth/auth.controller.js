@@ -104,14 +104,17 @@ const logout = async (
 /**
  * Profile
  */
-const profile = async (
-  req,
-  res
-) => {
-  res.json({
-    success: true,
-    data: req.user
-  });
+const profile = async (req, res, next) => {
+  try {
+    const user = await authService.getProfile(req.user.id);
+
+    res.json({
+      success: true,
+      data: user,
+    });
+  } catch (error) {
+    next(error);
+  }
 };
 
 /**

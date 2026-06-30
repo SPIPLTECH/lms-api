@@ -426,6 +426,37 @@ const resendVerification = async (email) => {
   };
 };
 
+const getProfile = async (userId) => {
+  const user = await prisma.user.findUnique({
+    where: {
+      id: userId,
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      studentProfile: {
+        select: {
+          id: true,
+          phone: true,
+          education: true,
+          guardianName: true,
+          dateOfBirth: true,
+        },
+      },
+      teacherProfile: true,
+      adminProfile: true,
+    },
+  });
+
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  return user;
+};
+
 module.exports = {
   register,
   login,
@@ -435,5 +466,6 @@ module.exports = {
   refreshToken,
   changePassword,
   verifyOtp,
-  resendVerification
+  resendVerification,
+  getProfile
 };
