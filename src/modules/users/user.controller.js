@@ -111,8 +111,22 @@ const deleteUser = async (
   next
 ) => {
   try {
+    const targetUserId =
+      req.params.userId;
+
+    // Prevent self-delete
+    if (
+      req.user.id === targetUserId
+    ) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "You cannot delete your own account"
+      });
+    }
+
     await userService.deleteUser(
-      req.params.userId
+      targetUserId
     );
 
     res.json({
@@ -124,7 +138,6 @@ const deleteUser = async (
     next(error);
   }
 };
-
 const getMyProfile = async (req, res, next) => {
   try {
     const user = await userService.getUserById(req.user.id);
