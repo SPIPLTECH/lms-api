@@ -11,9 +11,7 @@ const controller = require(
 const verifyToken = require(
   "../../middleware/auth.middleware"
 );
-const optionalAuth = require(
-  "../../middleware/optionalAuth.middleware"
-);
+
 const checkRole = require(
   "../../middleware/role.middleware"
 );
