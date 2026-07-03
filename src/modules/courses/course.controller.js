@@ -7,7 +7,7 @@ const getCourses = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
 
     const courses = await courseService.getCourses(
-      req.user.role,
+       req.user.role,
       search,
       page,
       limit

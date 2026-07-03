@@ -11,7 +11,9 @@ const controller = require(
 const verifyToken = require(
   "../../middleware/auth.middleware"
 );
-
+const optionalAuth = require(
+  "../../middleware/optionalAuth.middleware"
+);
 const checkRole = require(
   "../../middleware/role.middleware"
 );
@@ -22,13 +24,14 @@ const verifyCourseOwnership = require(
 
 router.get(
   "/",
-   verifyToken,
+
+  verifyToken,
   checkRole([
     "ADMIN",
     "INSTRUCTOR",
-    "STUDENT"
+    "STUDENT",
+    "GUEST",
   ]),
- 
   controller.getCourses
 );
 

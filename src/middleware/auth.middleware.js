@@ -5,10 +5,14 @@ const verifyToken = (req, res, next) => {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({
-        success: false,
-        message: "Token required",
-      });
+      // return res.status(401).json({
+      //   success: false,
+      //   message: "Token required",
+      // });
+      req.user = {
+        role: "GUEST",
+      };
+      return next();
     }
 
     const token = authHeader.split(" ")[1];

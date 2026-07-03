@@ -1,4 +1,8 @@
 const prisma = require("../../config/database");
+// const verifyToken = require(
+//   "../../middleware/auth.middleware"
+// );
+
 
 const getCourses = async (
   role,
@@ -19,17 +23,11 @@ const getCourses = async (
       createdAt: "desc",
     },
   };
-
   // Student should see only published courses
-  if (role === "STUDENT" || role === "null") {
-    query.where.status = "PUBLISHED";
 
-  }
 
   // Admin should get creator details
-  if (role === "ADMIN" || role === "INSTRUCTOR"
-    
-  ) {
+  if (role === "ADMIN" || role === "INSTRUCTOR") {
     query.include = {
       creator: {
         select: {
@@ -43,7 +41,9 @@ const getCourses = async (
       },
     };
   }
-
+  else if (role === "GUEST" || role === "STUDENT") {
+  query.where.status = "PUBLISHED";
+   }
   return await prisma.course.findMany(query);
 };
 
