@@ -21,13 +21,15 @@ const getCourses = async (
   };
 
   // Student should see only published courses
-  if (role === "STUDENT") {
+  if (role === "STUDENT" || role === "null") {
     query.where.status = "PUBLISHED";
 
   }
 
   // Admin should get creator details
-  if (role === "ADMIN") {
+  if (role === "ADMIN" || role === "INSTRUCTOR"
+    
+  ) {
     query.include = {
       creator: {
         select: {
