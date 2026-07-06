@@ -8,24 +8,29 @@ datasource db {
 }
 
 model User {
-  id             String          @id @default(cuid())
-  name           String
-  email          String          @unique
-  phoneNumber    String?         @unique
-  address        String?
-  password       String
-  role           Role            @default(STUDENT)
-  refreshToken   String?
-  status         UserStatus      @default(ACTIVE)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  isVerified     Boolean         @default(false)
-  otp            String?
-  otpExpiresAt   DateTime?
-  courses        Course[]
-  adminProfile   AdminProfile?
-  studentProfile StudentProfile?
-  teacherProfile TeacherProfile?
+  id                   String          @id @default(cuid())
+  name                 String
+  email                String          @unique
+  phoneNumber          String?         @unique
+  address              String?
+  password             String
+  role                 Role            @default(STUDENT)
+  refreshToken         String?
+  status               UserStatus      @default(ACTIVE)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  isVerified           Boolean         @default(false)
+  otp                  String?
+  otpExpiresAt         DateTime?
+  adminProfile         AdminProfile?
+  courses              Course[]
+  studentProfile       StudentProfile?
+  teacherProfile       TeacherProfile?
+  createdConversations Conversation[]  @relation("ConversationCreator")
+
+  conversations ConversationParticipant[] @relation("ConversationParticipant")
+
+  sentMessages Message[] @relation("MessageSender")
 }
 
 model StudentProfile {
@@ -40,8 +45,9 @@ model StudentProfile {
   certificates    Certificate[]
   enrollments     Enrollment[]
   progress        Progress[]
-  reviews         Review[]
   quizSubmissions QuizSubmission[]
+  reviews         Review[]
+  StickyNote      StickyNote[]
   user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -54,7 +60,6 @@ model TeacherProfile {
   bio            String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  //courses        Course[]
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -103,17 +108,18 @@ model Module {
 }
 
 model Lesson {
-  id          String     @id @default(cuid())
+  id          String       @id @default(cuid())
   title       String
   description String?
   order       Int
-  isPublished Boolean    @default(false)
+  isPublished Boolean      @default(false)
   moduleId    String
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
   contents    Content[]
-  module      Module     @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  module      Module       @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   progress    Progress[]
+  StickyNote  StickyNote[]
 
   @@unique([moduleId, order])
 }
@@ -169,8 +175,8 @@ model Quiz {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   questions       Question[]
-  quizSubmissions QuizSubmission[]
   course          Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  quizSubmissions QuizSubmission[]
 }
 
 model Question {
@@ -225,6 +231,24 @@ model Certificate {
   @@unique([studentId, courseId])
 }
 
+model StickyNote {
+  id             String         @id
+  content        String
+  color          String?        @default("yellow")
+  isPinned       Boolean        @default(false)
+  timestamp      Int?
+  studentId      String
+  lessonId       String
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime
+  Lesson         Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  StudentProfile StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([lessonId])
+  @@index([studentId])
+  @@index([studentId, lessonId])
+}
+
 enum Role {
   ADMIN
   INSTRUCTOR
@@ -250,4 +274,94 @@ enum UserStatus {
   INACTIVE
   SUSPENDED
   BLOCKED
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+}
+
+enum AttachmentType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+  AUDIO
+  OTHER
+}
+
+model Conversation {
+  id    String           @id @default(cuid())
+  type  ConversationType
+  name  String?
+  image String?
+
+  createdById String
+  createdBy   User   @relation("ConversationCreator", fields: [createdById], references: [id])
+
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdById])
+  @@index([updatedAt])
+}
+
+model ConversationParticipant {
+  id String @id @default(cuid())
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation("ConversationParticipant", fields: [userId], references: [id], onDelete: Cascade)
+
+  joinedAt   DateTime  @default(now())
+  lastReadAt DateTime?
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id String @id @default(cuid())
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  senderId String
+  sender   User   @relation("MessageSender", fields: [senderId], references: [id])
+
+  content String @db.Text
+
+  isEdited Boolean   @default(false)
+  editedAt DateTime?
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  messageAttachments MessageAttachment[]
+
+  @@index([conversationId])
+  @@index([senderId])
+}
+
+model MessageAttachment {
+  id String @id @default(cuid())
+
+  messageId String
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  fileName String
+  fileUrl  String
+  mimeType String
+  size     Int
+  type     AttachmentType
+
+  createdAt DateTime @default(now())
+
+  @@index([messageId])
 }

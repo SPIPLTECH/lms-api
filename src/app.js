@@ -4,14 +4,11 @@ const helmet = require("helmet");
 const morgan = require("morgan");
 
 const errorHandler = require("./middleware/error.middleware");
-const verifyModuleOwnership =
-  require(
-    "../src/middleware/moduleOwnership.middleware"
-  );
+
 const teacherRoutes = require("./modules/teacher/teacher.route");
 const authRoutes = require("./modules/auth/auth.routes");
 const userRoutes = require("./modules/users/user.routes");
-const studentRoutes =require("./modules/students/student.route")
+const studentRoutes = require("./modules/students/student.route");
 const courseRoutes = require("./modules/courses/course.routes");
 const moduleRoutes = require("./modules/modules/module.routes");
 const lessonRoutes = require("./modules/lessons/lesson.routes");
@@ -24,28 +21,52 @@ const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
 const reviewRoutes = require("./modules/reviews/review.routes");
 const certificateRoutes = require("./modules/certificates/certificate.routes");
 const adminRoutes = require("./modules/admin/admin.route");
+const messageRoutes = require("./modules/messages/message.routes");
+
 const app = express();
 
+/*
+|--------------------------------------------------------------------------
+| Global Middlewares
+|--------------------------------------------------------------------------
+*/
 
-app.use(cors());
+app.use(
+    cors({
+      origin: ["http://localhost:3000"],
+      credentials: true,
+    })
+);
+
 app.use(helmet());
 app.use(morgan("dev"));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+/*
+|--------------------------------------------------------------------------
+| Health Check
+|--------------------------------------------------------------------------
+*/
 
 app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
-    message: "Orange LMS API Running"
+    message: "Orange LMS API Running",
   });
 });
+
+/*
+|--------------------------------------------------------------------------
+| Routes
+|--------------------------------------------------------------------------
+*/
 
 app.use("/teachers", teacherRoutes);
 app.use("/auth", authRoutes);
 app.use("/users", userRoutes);
-app.use("/students",studentRoutes)
+app.use("/students", studentRoutes);
 app.use("/courses", courseRoutes);
 app.use("/modules", moduleRoutes);
 app.use("/lessons", lessonRoutes);
@@ -58,6 +79,14 @@ app.use("/dashboard", dashboardRoutes);
 app.use("/reviews", reviewRoutes);
 app.use("/certificates", certificateRoutes);
 app.use("/admin", adminRoutes);
+app.use("/messages", messageRoutes);
+
+/*
+|--------------------------------------------------------------------------
+| Global Error Handler
+|--------------------------------------------------------------------------
+*/
+
 app.use(errorHandler);
 
 module.exports = app;
