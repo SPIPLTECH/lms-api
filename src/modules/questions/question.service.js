@@ -10,7 +10,29 @@ const getQuestions = async (
   }
 
   return prisma.question.findMany({
-    where
+    where,
+    orderBy: {
+      createdAt: "asc"
+    }
+  });
+};
+
+const getQuestionsByQuizId = async (quizId) => {
+  return prisma.question.findMany({
+    where: {
+      quizId,
+    },
+    select: {
+      id: true,
+      quizId: true,
+      question: true,
+      options: true,
+      marks: true,
+      createdAt: true,
+    },
+    orderBy: {
+      createdAt: "asc",
+    },
   });
 };
 
@@ -56,6 +78,7 @@ const deleteQuestion = async (
 
 module.exports = {
   getQuestions,
+  getQuestionsByQuizId,
   getQuestionById,
   createQuestion,
   updateQuestion,

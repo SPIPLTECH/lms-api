@@ -1,52 +1,66 @@
-const prisma = require(
-  "../../config/database"
-);
+const prisma = require("../../config/database");
+// const verifyToken = require(
+//   "../../middleware/auth.middleware"
+// );
+
 
 const getCourses = async (
+  role,
   search = "",
   page = 1,
   limit = 10
 ) => {
-  return await prisma.course.findMany({
+  const query = {
     where: {
       title: {
         contains: search,
-        mode: "insensitive"
-      }
+        mode: "insensitive",
+      },
     },
-
     skip: (page - 1) * limit,
     take: limit,
+    orderBy: {
+      createdAt: "desc",
+    },
+  };
+  // Student should see only published courses
 
-    include: {
+
+  // Admin should get creator details
+  if (role === "ADMIN" || role === "INSTRUCTOR") {
+    query.include = {
       creator: {
         select: {
           id: true,
-          name: true
-        }
-      }
-    },
-
-    orderBy: {
-      createdAt: "desc"
-    }
-  });
+          name: true,
+          email: true,
+          role: true,
+          teacherProfile: true,
+          adminProfile: true,
+        },
+      },
+    };
+  }
+  else if (role === "GUEST" || role === "STUDENT") {
+  query.where.status = "PUBLISHED";
+   }
+  return await prisma.course.findMany(query);
 };
 
-const getCourseById = async (
-  courseId
-) => {
+const getCourseById = async (courseId) => {
   return await prisma.course.findUnique({
     where: {
       id: courseId
     },
-
     include: {
       creator: {
         select: {
           id: true,
           name: true,
-          email: true
+          email: true,
+          role: true,
+          teacherProfile: true,
+          adminProfile: true
         }
       },
 
@@ -54,13 +68,11 @@ const getCourseById = async (
         orderBy: {
           order: "asc"
         },
-
         include: {
           lessons: {
             orderBy: {
               order: "asc"
             },
-
             include: {
               contents: true
             }
@@ -77,10 +89,7 @@ const getCourseById = async (
   });
 };
 
-const createCourse = async (
-  data,
-  userId
-) => {
+const createCourse = async (data, userId) => {
   return await prisma.course.create({
     data: {
       ...data,
@@ -89,10 +98,7 @@ const createCourse = async (
   });
 };
 
-const updateCourse = async (
-  courseId,
-  data
-) => {
+const updateCourse = async (courseId, data) => {
   return await prisma.course.update({
     where: {
       id: courseId
@@ -101,10 +107,7 @@ const updateCourse = async (
   });
 };
 
-const updateStatus = async (
-  courseId,
-  status
-) => {
+const updateStatus = async (courseId, status) => {
   return await prisma.course.update({
     where: {
       id: courseId
@@ -115,42 +118,42 @@ const updateStatus = async (
   });
 };
 
-const deleteCourse = async (
-  courseId
-) => {
+const deleteCourse = async (courseId) => {
   return await prisma.course.delete({
     where: {
       id: courseId
     }
   });
 };
-const getCourseStudents = async (
-  courseId
-) => {
-  const enrollments =
-    await prisma.enrollment.findMany({
-      where: {
-        courseId
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true
+
+const getCourseStudents = async (courseId) => {
+  const enrollments = await prisma.enrollment.findMany({
+    where: {
+      courseId
+    },
+    include: {
+      student: {
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
           }
         }
       }
-    });
+    }
+  });
 
-  return enrollments.map(
-    (enrollment) => ({
-      ...enrollment.user,
-      enrolledAt:
-        enrollment.enrolledAt
-    })
-  );
+  return enrollments.map((enrollment) => ({
+    id: enrollment.student.user.id,
+    name: enrollment.student.user.name,
+    email: enrollment.student.user.email,
+    enrolledAt: enrollment.enrolledAt
+  }));
 };
+
 module.exports = {
   getCourses,
   getCourseById,

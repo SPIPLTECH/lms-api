@@ -1,17 +1,14 @@
-// const prisma = require("../../config/database");
-
 const prisma = require("../../config/database");
 
 const completeLesson = async (
-  userId,
+  studentId,
   lessonId
 ) => {
-
   const progress =
     await prisma.progress.upsert({
       where: {
-        userId_lessonId: {
-          userId,
+        studentId_lessonId: {
+          studentId,
           lessonId
         }
       },
@@ -20,14 +17,13 @@ const completeLesson = async (
         completedAt: new Date()
       },
       create: {
-        userId,
+        studentId,
         lessonId,
         completed: true,
         completedAt: new Date()
       }
     });
 
-  // Get lesson
   const lesson =
     await prisma.lesson.findUnique({
       where: {
@@ -41,7 +37,6 @@ const completeLesson = async (
   const courseId =
     lesson.module.courseId;
 
-  // Get all lessons in course
   const lessons =
     await prisma.lesson.findMany({
       where: {
@@ -62,7 +57,7 @@ const completeLesson = async (
   const completedLessons =
     await prisma.progress.count({
       where: {
-        userId,
+        studentId,
         lessonId: {
           in: lessonIds
         },
@@ -82,28 +77,24 @@ const completeLesson = async (
             100
         );
 
-  // Generate certificate automatically
   if (percentage === 100) {
-
     const existingCertificate =
       await prisma.certificate.findFirst({
         where: {
-          userId,
+          studentId,
           courseId
         }
       });
 
     if (!existingCertificate) {
-
       await prisma.certificate.create({
         data: {
           certificateNo:
             `CERT-${Date.now()}`,
-          userId,
+          studentId,
           courseId
         }
       });
-
     }
   }
 
@@ -111,7 +102,7 @@ const completeLesson = async (
 };
 
 const getCourseProgress = async (
-  userId,
+  studentId,
   courseId
 ) => {
   const lessons =
@@ -126,14 +117,15 @@ const getCourseProgress = async (
       }
     });
 
-  const lessonIds = lessons.map(
-    (lesson) => lesson.id
-  );
+  const lessonIds =
+    lessons.map(
+      (lesson) => lesson.id
+    );
 
   const completedLessons =
     await prisma.progress.count({
       where: {
-        userId,
+        studentId,
         lessonId: {
           in: lessonIds
         },

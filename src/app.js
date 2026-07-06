@@ -8,8 +8,10 @@ const verifyModuleOwnership =
   require(
     "../src/middleware/moduleOwnership.middleware"
   );
+const teacherRoutes = require("./modules/teacher/teacher.route");
 const authRoutes = require("./modules/auth/auth.routes");
 const userRoutes = require("./modules/users/user.routes");
+const studentRoutes =require("./modules/students/student.route")
 const courseRoutes = require("./modules/courses/course.routes");
 const moduleRoutes = require("./modules/modules/module.routes");
 const lessonRoutes = require("./modules/lessons/lesson.routes");
@@ -21,6 +23,7 @@ const questionRoutes = require("./modules/questions/question.routes");
 const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
 const reviewRoutes = require("./modules/reviews/review.routes");
 const certificateRoutes = require("./modules/certificates/certificate.routes");
+const adminRoutes = require("./modules/admin/admin.route");
 const app = express();
 
 
@@ -39,9 +42,10 @@ app.get("/", (req, res) => {
   });
 });
 
-
+app.use("/teachers", teacherRoutes);
 app.use("/auth", authRoutes);
 app.use("/users", userRoutes);
+app.use("/students",studentRoutes)
 app.use("/courses", courseRoutes);
 app.use("/modules", moduleRoutes);
 app.use("/lessons", lessonRoutes);
@@ -53,7 +57,7 @@ app.use("/questions", questionRoutes);
 app.use("/dashboard", dashboardRoutes);
 app.use("/reviews", reviewRoutes);
 app.use("/certificates", certificateRoutes);
-
+app.use("/admin", adminRoutes);
 app.use(errorHandler);
 
 module.exports = app;

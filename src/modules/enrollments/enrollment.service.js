@@ -1,33 +1,38 @@
 const prisma = require("../../config/database");
 
 const getEnrollments = async (
-  userId,
+  studentId,
   courseId
 ) => {
   const where = {};
 
-  if (userId) {
-    where.userId = userId;
+  if (studentId) {
+    where.studentId = studentId;
   }
 
   if (courseId) {
     where.courseId = courseId;
   }
 
-  return prisma.enrollment.findMany({
+  return await prisma.enrollment.findMany({
     where,
     include: {
-      user: {
-        select: {
-          id: true,
-          name: true,
-          email: true
+      student: {
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          }
         }
       },
       course: {
         select: {
           id: true,
-          title: true
+          title: true,
+          description: true
         }
       }
     }
@@ -35,12 +40,26 @@ const getEnrollments = async (
 };
 
 const createEnrollment = async (
-  userId,
+  studentId,
   courseId
 ) => {
-  return prisma.enrollment.create({
+  const existing =
+    await prisma.enrollment.findFirst({
+      where: {
+        studentId,
+        courseId
+      }
+    });
+
+  if (existing) {
+    throw new Error(
+      "Already enrolled in this course"
+    );
+  }
+
+  return await prisma.enrollment.create({
     data: {
-      userId,
+      studentId,
       courseId
     }
   });
@@ -49,7 +68,7 @@ const createEnrollment = async (
 const deleteEnrollment = async (
   enrollmentId
 ) => {
-  return prisma.enrollment.delete({
+  return await prisma.enrollment.delete({
     where: {
       id: enrollmentId
     }

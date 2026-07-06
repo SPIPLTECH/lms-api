@@ -104,61 +104,34 @@ const logout = async (
 /**
  * Profile
  */
-const profile = async (
-  req,
-  res
-) => {
-  res.json({
-    success: true,
-    data: req.user
-  });
+const profile = async (req, res, next) => {
+  try {
+    const user = await authService.getProfile(req.user.id);
+
+    res.json({
+      success: true,
+      data: user,
+    });
+  } catch (error) {
+    next(error);
+  }
 };
-
-/**
- * Verify Email
- */
-// const verifyEmail =
-//   async (
-//     req,
-//     res,
-//     next
-//   ) => {
-//     try {
-//       const { token } =
-//         req.params;
-
-//       const result =
-//         await authService.verifyEmail(
-//           token
-//         );
-
-//       res.json({
-//         success: true,
-//         message:
-//           result.message
-//       });
-//     } catch (error) {
-//       next(error);
-//     }
-//   };
 
 /**
  * Forgot Password
  */
 const verifyOtp = async (req, res, next) => {
   try {
-    const result = await authService.verifyOtp(req.body);
+    const { email, otp } = req.body;
+
+    const result = await authService.verifyOtp(email, otp);
+
     res.status(200).json(result);
   } catch (error) {
     next(error);
   }
 };
 
-module.exports = {
-  register,
-  login,
-  verifyOtp
-};
 const forgotPassword =
   async (
     req,
@@ -196,13 +169,15 @@ const resetPassword =
   ) => {
     try {
       const {
-        token,
+        otp,
+        email,
         newPassword
       } = req.body;
 
       const result =
         await authService.resetPassword(
-          token,
+          otp,
+          email,
           newPassword
         );
 
@@ -268,15 +243,36 @@ const changePassword = async (
     next(error);
   }
 };
+const resendVerification = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const { email } = req.body;
+
+    const result =
+      await authService.resendVerification(
+        email
+      );
+
+    res.status(200).json({
+      success: true,
+      message: result.message
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 module.exports = {
   register,
   login,
   logout,
   profile,
-  //verifyEmail,
   forgotPassword,
   resetPassword,
   refreshToken,
   changePassword,
-  verifyOtp
+  verifyOtp,
+  resendVerification
 };

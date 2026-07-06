@@ -20,7 +20,12 @@ router.get(
 );
 
 router.get(
-  "/:questionId",
+  "/:quizId",
+  controller.getQuestionsByQuizId
+);
+
+router.get(
+  "/question/:questionId",
   controller.getQuestionById
 );
 

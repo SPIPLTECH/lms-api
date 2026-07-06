@@ -55,4 +55,16 @@ router.patch(
   userController.updateUserRole
 );
 
+router.get(
+  "/profile/me",
+  verifyToken,
+  userController.getMyProfile
+);
+
+router.put(
+  "/profile/me",
+  verifyToken,
+  userController.updateUser
+);
+
 module.exports = router;

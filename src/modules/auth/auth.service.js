@@ -3,16 +3,6 @@ const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const prisma = require("../../config/database");
 const { sendEmail } = require("../../utils/mail");
-// const {
-//   sendVerificationEmail
-// } = require("../../services/email.service");
-
-// console.log(
-//   "sendVerificationEmail:",
-//   sendVerificationEmail
-// );
-
-
 /**
  * Generate Access Token
  */
@@ -54,35 +44,44 @@ const generateRefreshToken = (user) => {
 const register = async (data) => {
   const hashedPassword = await bcrypt.hash(data.password, 10);
 
-  const token = crypto.randomBytes(32).toString("hex");
-const otp = generateOTP();
-const expiry = new Date(Date.now() + 5 * 60 * 1000);
+  const otp = generateOTP();
+  const expiry = new Date(Date.now() + 10 * 60 * 1000);
+
   const user = await prisma.user.create({
     data: {
       name: data.name,
       email: data.email,
-      phoneNumber : data.phoneNumber,
-      address : data.address,
+      phoneNumber: data.phoneNumber,
+      address: data.address,
       password: hashedPassword,
+      role: "STUDENT", // force default role
       otp,
-    otpExpiresAt: expiry
-    
+      otpExpiresAt: expiry
+    }
+  });
+
+  // NEW: create student profile automatically
+  await prisma.studentProfile.create({
+    data: {
+      userId: user.id,
+      phone: data.phoneNumber || null
     }
   });
 
   await sendEmail(
-  data.email,
-  "Verify Your Account",
-  `
+    data.email,
+    "Verify Your Account",
+    `
     <h2>Orange Tree LMS</h2>
     <p>Your OTP is:</p>
     <h1>${otp}</h1>
     <p>Valid for 5 minutes</p>
-  `
-);
-return {
-  message: "OTP sent to email"
-};
+    `
+  );
+
+  return {
+    message: "OTP sent to email"
+  };
 };
 
 const verifyOtp = async (email, otp) => {
@@ -107,7 +106,7 @@ const verifyOtp = async (email, otp) => {
     }
   });
 
-  return { message: "Email verified" };
+  return { message: " Verified" };
 };
 /**
  * Login User
@@ -116,10 +115,14 @@ const login = async (
   email,
   password
 ) => {
-  const user =
-    await prisma.user.findUnique({
-      where: { email }
-    });
+  const user = await prisma.user.findUnique({
+  where: { email },
+  include: {
+    studentProfile: true,
+    teacherProfile: true,
+    adminProfile: true
+  }
+});
 
   if (!user) {
     throw new Error(
@@ -160,45 +163,19 @@ const login = async (
     accessToken,
     refreshToken,
     user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role
+  id: user.id,
+  name: user.name,
+  email: user.email,
+  role: user.role,
+  studentProfile: user.studentProfile,
+  teacherProfile: user.teacherProfile,
+  adminProfile: user.adminProfile
+}
     }
-  };
+  
 };
 
-/**
- * Verify Email
- */
-// const verifyEmail = async (req, res) => {
-//   const { token } = req.query;
-
-//   const user = await prisma.user.findFirst({
-//     where: {
-//       verificationToken: token
-//     }
-//   });
-
-//   if (!user) {
-//     return res.status(400).json({
-//       message: "Invalid token"
-//     });
-//   }
-
-//   await prisma.user.update({
-//     where: { id: user.id },
-//     data: {
-//       isEmailVerified: true,
-//       verificationToken: null
-//     }
-//   });
-
-//   res.json({
-//     message: "Email verified successfully"
-//   });
-// };
-/**
+/** 
  * Forgot Password
  */
 const generateOTP = () => {
@@ -216,32 +193,34 @@ const forgotPassword =
         "User not found"
       );
     }
-
-    const resetToken =
-      crypto.randomBytes(32)
-        .toString("hex");
-
-    const resetExpiry =
-      new Date(
-        Date.now() +
-          15 * 60 * 1000
-      );
-
+    if(!user.isVerified){
+      throw new Error(
+       "Yo are not verified");}
+    const Newotp = generateOTP();
+  
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        resetPasswordToken:
-          resetToken,
-        resetPasswordExpires:
-          resetExpiry
+        otp : Newotp,
+        otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+     
       }
     });
-
-    return {
-      message:
-        "Password reset token generated",
-      resetToken
+    await sendEmail(
+     email,
+     "OTP for Update password of Your Account",
+  `
+    <h2>Orange Tree LMS</h2>
+    <p>Your OTP is:</p>
+    <h1>${Newotp}</h1>
+    <p>Valid for 5 minutes</p>
+  `
+     );
+     return {
+     message: "OTP sent to email"
     };
+
+  
   };
 
 /**
@@ -249,24 +228,27 @@ const forgotPassword =
  */
 const resetPassword =
   async (
-    token,
+    otp,
+    email,
     newPassword
   ) => {
     const user =
       await prisma.user.findFirst({
         where: {
-          resetPasswordToken:
-            token,
-          resetPasswordExpires:
-            {
-              gt: new Date()
-            }
+          email:email
         }
       });
 
     if (!user) {
       throw new Error(
-        "Invalid or expired token"
+        "Invalid User"
+      );
+    }
+
+    if(otp!=user.otp)
+    {
+      throw new Error(
+        "Invalid OTP"
       );
     }
 
@@ -283,10 +265,6 @@ const resetPassword =
       data: {
         password:
           hashedPassword,
-        resetPasswordToken:
-          null,
-        resetPasswordExpires:
-          null
       }
     });
 
@@ -405,6 +383,79 @@ const changePassword = async (
       "Password changed successfully"
   };
 };
+const resendVerification = async (email) => {
+  const user = await prisma.user.findUnique({
+    where: { email }
+  });
+
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  if (user.isVerified) {
+    throw new Error("Email already verified");
+  }
+
+  const otp = generateOTP();
+  const otpExpiry = new Date(
+    Date.now() + 5 * 60 * 1000
+  );
+
+  await prisma.user.update({
+    where: { email },
+    data: {
+      otp,
+      otpExpiresAt: otpExpiry
+    }
+  });
+
+  await sendEmail(
+    email,
+    "Verify Your Orange Tree LMS Account",
+    `
+    <h2>Orange Tree LMS</h2>
+    <p>Your verification OTP:</p>
+    <h1>${otp}</h1>
+    <p>Valid for 5 minutes</p>
+    `
+  );
+
+  return {
+    message:
+      "Verification email sent successfully"
+  };
+};
+
+const getProfile = async (userId) => {
+  const user = await prisma.user.findUnique({
+    where: {
+      id: userId,
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      studentProfile: {
+        select: {
+          id: true,
+          phone: true,
+          education: true,
+          guardianName: true,
+          dateOfBirth: true,
+        },
+      },
+      teacherProfile: true,
+      adminProfile: true,
+    },
+  });
+
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  return user;
+};
 
 module.exports = {
   register,
@@ -414,5 +465,7 @@ module.exports = {
   resetPassword,
   refreshToken,
   changePassword,
-  verifyOtp
+  verifyOtp,
+  resendVerification,
+  getProfile
 };

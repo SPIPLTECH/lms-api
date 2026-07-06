@@ -103,10 +103,45 @@ const deleteQuiz = async (
   }
 };
 
+const submitQuiz = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const student = await require("../../config/database").studentProfile.findUnique({
+      where: {
+        userId: req.user.id
+      }
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found"
+      });
+    }
+
+    const submission = await quizService.submitQuiz(
+      student.id,
+      req.params.quizId,
+      req.body.answers || []
+    );
+
+    res.status(201).json({
+      success: true,
+      data: submission
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getQuizzes,
   getQuizById,
   createQuiz,
   updateQuiz,
-  deleteQuiz
+  deleteQuiz,
+  submitQuiz
 };
