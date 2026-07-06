@@ -61,10 +61,10 @@ router.get(
   userController.getMyProfile
 );
 
-// router.put(
-//   "/profile/me",
-//   verifyToken,
-//   userController.updateMyProfile
-// );
+router.put(
+  "/profile/me",
+  verifyToken,
+  userController.updateUser
+);
 
 module.exports = router;
