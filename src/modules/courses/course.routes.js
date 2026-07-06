@@ -22,6 +22,14 @@ const verifyCourseOwnership = require(
 
 router.get(
   "/",
+
+  verifyToken,
+  checkRole([
+    "ADMIN",
+    "INSTRUCTOR",
+    "STUDENT",
+    "GUEST",
+  ]),
   controller.getCourses
 );
 

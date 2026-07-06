@@ -1,16 +1,34 @@
 const prisma = require("../../config/database");
+// const verifyToken = require(
+//   "../../middleware/auth.middleware"
+// );
 
-const getCourses = async (search = "", page = 1, limit = 10) => {
-  return await prisma.course.findMany({
+
+const getCourses = async (
+  role,
+  search = "",
+  page = 1,
+  limit = 10
+) => {
+  const query = {
     where: {
       title: {
         contains: search,
-        mode: "insensitive"
-      }
+        mode: "insensitive",
+      },
     },
     skip: (page - 1) * limit,
     take: limit,
-    include: {
+    orderBy: {
+      createdAt: "desc",
+    },
+  };
+  // Student should see only published courses
+
+
+  // Admin should get creator details
+  if (role === "ADMIN" || role === "INSTRUCTOR") {
+    query.include = {
       creator: {
         select: {
           id: true,
@@ -18,14 +36,15 @@ const getCourses = async (search = "", page = 1, limit = 10) => {
           email: true,
           role: true,
           teacherProfile: true,
-          adminProfile: true
-        }
-      }
-    },
-    orderBy: {
-      createdAt: "desc"
-    }
-  });
+          adminProfile: true,
+        },
+      },
+    };
+  }
+  else if (role === "GUEST" || role === "STUDENT") {
+  query.where.status = "PUBLISHED";
+   }
+  return await prisma.course.findMany(query);
 };
 
 const getCourseById = async (courseId) => {
