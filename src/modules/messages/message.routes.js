@@ -1,68 +1,41 @@
 const express = require("express");
-const validate = require("../../middleware/validate.middleware");
 
-const {
-    createConversationSchema,
-    updateConversationSchema,
-    sendMessageSchema,
-} = require("./message.validation");
 const messageController = require("./message.controller");
 const verifyToken = require("../../middleware/auth.middleware");
+const validate = require("../../middleware/joiValidation.middleware");
+
+const {
+    sendMessageSchema,
+} = require("./message.validation");
 
 const router = express.Router();
 
-/*
-|--------------------------------------------------------------------------
-| Conversation Routes
-|--------------------------------------------------------------------------
-*/
-
+/**
+ * GET /messages?conversationId=...
+ */
 router.get(
-    "/conversations",
-    verifyToken,
-    messageController.getConversations
-);
-router.get(
-    "/conversations/:conversationId",
-    verifyToken,
-    messageController.getConversationById
-);
-router.post(
-    "/conversations",
-    verifyToken,
-    validate(createConversationSchema),
-    messageController.createConversation
-);
-router.patch(
-    "/conversations/:conversationId",
-    verifyToken,
-    validate(updateConversationSchema),
-    messageController.updateConversation
-);
-router.delete(
-    "/conversations/:conversationId",
-    verifyToken,
-    messageController.deleteConversation
-);
-router.get(
-    "/conversations/:conversationId/messages",
+    "/",
     verifyToken,
     messageController.getMessages
 );
+
+/**
+ * POST /messages
+ */
 router.post(
-    "/conversations/:conversationId/messages",
+    "/",
     verifyToken,
     validate(sendMessageSchema),
     messageController.sendMessage
 );
-router.patch(
-    "/conversations/:conversationId/read",
-    verifyToken,
-    messageController.markConversationAsRead
-);
+
+/**
+ * DELETE /messages/:messageId
+ */
 router.delete(
     "/:messageId",
     verifyToken,
     messageController.deleteMessage
 );
+
 module.exports = router;

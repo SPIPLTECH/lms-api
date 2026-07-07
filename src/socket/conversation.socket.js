@@ -1,4 +1,4 @@
-const prisma = require("../config/database");
+const conversationService = require("../modules/conversations/conversation.service");
 
 const registerConversationEvents = (io, socket) => {
 
@@ -8,15 +8,13 @@ const registerConversationEvents = (io, socket) => {
     socket.on("join_conversation", async (conversationId) => {
         try {
 
-            const participant =
-                await prisma.conversationParticipant.findFirst({
-                    where: {
-                        conversationId,
-                        userId: socket.user.id,
-                    },
-                });
+            const isParticipant =
+                await conversationService.isParticipant(
+                    conversationId,
+                    socket.user.id
+                );
 
-            if (!participant) {
+            if (!isParticipant) {
                 return socket.emit("error", {
                     message: "You are not a participant of this conversation.",
                 });

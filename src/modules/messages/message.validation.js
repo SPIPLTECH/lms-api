@@ -1,23 +1,9 @@
 const Joi = require("joi");
 
-const createConversationSchema = Joi.object({
-    type: Joi.string()
-        .valid("DIRECT", "GROUP")
-        .required(),
-
-    name: Joi.when("type", {
-        is: "GROUP",
-        then: Joi.string().trim().min(3).max(100).required(),
-        otherwise: Joi.forbidden(),
-    }),
-
-    participantIds: Joi.array()
-        .items(Joi.string().required())
-        .min(1)
-        .required(),
-});
-
 const sendMessageSchema = Joi.object({
+    conversationId: Joi.string()
+        .required(),
+
     content: Joi.string()
         .trim()
         .min(1)
@@ -25,17 +11,15 @@ const sendMessageSchema = Joi.object({
         .required(),
 });
 
-const updateConversationSchema = Joi.object({
-    name: Joi.string()
+const updateMessageSchema = Joi.object({
+    content: Joi.string()
         .trim()
-        .min(3)
-        .max(100),
-
-    image: Joi.string().uri(),
-}).min(1);
+        .min(1)
+        .max(5000)
+        .required(),
+});
 
 module.exports = {
-    createConversationSchema,
     sendMessageSchema,
-    updateConversationSchema,
+    updateMessageSchema,
 };
