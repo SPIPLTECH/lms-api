@@ -1,5 +1,7 @@
 const prisma = require("../../config/database");
 
+const MESSAGE_EXPIRY_DAYS = 7;
+
 const getMessages = async (conversationId, userId) => {
     const conversation = await prisma.conversation.findFirst({
         where: {
@@ -19,6 +21,17 @@ const getMessages = async (conversationId, userId) => {
     return await prisma.message.findMany({
         where: {
             conversationId,
+            isDeleted: false,
+            OR: [
+                {
+                    isStarred: true,
+                },
+                {
+                    expiresAt: {
+                        gt: new Date(),
+                    },
+                },
+            ],
         },
         include: {
             sender: {
@@ -47,11 +60,7 @@ const getMessages = async (conversationId, userId) => {
     });
 };
 
-const sendMessage = async (
-    conversationId,
-    senderId,
-    data
-) => {
+const sendMessage = async (conversationId, senderId, data) => {
     const conversation = await prisma.conversation.findFirst({
         where: {
             id: conversationId,
@@ -67,11 +76,15 @@ const sendMessage = async (
         throw new Error("Conversation not found.");
     }
 
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + MESSAGE_EXPIRY_DAYS);
+
     return await prisma.message.create({
         data: {
             conversationId,
             senderId,
             content: data.content,
+            expiresAt,
         },
         include: {
             sender: {
@@ -82,21 +95,18 @@ const sendMessage = async (
                     role: true,
                 },
             },
+            messageAttachments: true,
         },
     });
 };
 
-const markConversationAsRead = async (
-    conversationId,
-    userId
-) => {
-    const participant =
-        await prisma.conversationParticipant.findFirst({
-            where: {
-                conversationId,
-                userId,
-            },
-        });
+const markConversationAsRead = async (conversationId, userId) => {
+    const participant = await prisma.conversationParticipant.findFirst({
+        where: {
+            conversationId,
+            userId,
+        },
+    });
 
     if (!participant) {
         throw new Error("Conversation not found.");
@@ -112,10 +122,7 @@ const markConversationAsRead = async (
     });
 };
 
-const deleteMessage = async (
-    messageId,
-    userId
-) => {
+const deleteMessage = async (messageId, userId) => {
     const message = await prisma.message.findUnique({
         where: {
             id: messageId,
@@ -127,9 +134,7 @@ const deleteMessage = async (
     }
 
     if (message.senderId !== userId) {
-        throw new Error(
-            "You can delete only your own messages."
-        );
+        throw new Error("You can delete only your own messages.");
     }
 
     return await prisma.message.update({
@@ -139,7 +144,6 @@ const deleteMessage = async (
         data: {
             isDeleted: true,
             deletedAt: new Date(),
-            content: "This message was deleted.",
         },
     });
 };

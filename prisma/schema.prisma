@@ -290,13 +290,14 @@ enum AttachmentType {
 }
 
 model Conversation {
-  id    String           @id @default(cuid())
-  type  ConversationType
-  name  String?
-  image String?
+  id          String           @id @default(cuid())
+  type        ConversationType
+  name        String?
+  description String?
+  image       String?
 
   createdById String
-  createdBy   User   @relation("ConversationCreator", fields: [createdById], references: [id])
+  createdBy   User   @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: Cascade)
 
   participants ConversationParticipant[]
   messages     Message[]
@@ -320,6 +321,9 @@ model ConversationParticipant {
   joinedAt   DateTime  @default(now())
   lastReadAt DateTime?
 
+  isPinned Boolean @default(false)
+  isMuted  Boolean @default(false)
+
   @@unique([conversationId, userId])
   @@index([userId])
 }
@@ -328,27 +332,32 @@ model Message {
   id String @id @default(cuid())
 
   conversationId String
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   senderId String
-  sender   User   @relation("MessageSender", fields: [senderId], references: [id])
+  sender User @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
 
   content String @db.Text
 
-  isEdited Boolean   @default(false)
+  isEdited Boolean @default(false)
   editedAt DateTime?
 
-  isDeleted Boolean   @default(false)
+  isDeleted Boolean @default(false)
   deletedAt DateTime?
 
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  // NEW
+  isStarred Boolean @default(false)
+  expiresAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   messageAttachments MessageAttachment[]
 
   @@index([conversationId])
   @@index([senderId])
+  @@index([expiresAt])
 }
-
 model MessageAttachment {
   id String @id @default(cuid())
 

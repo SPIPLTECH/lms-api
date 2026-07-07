@@ -1,8 +1,46 @@
 const prisma = require("../../config/database");
 const messagingPermissionService = require("../permissions/messagingPermission.service");
+const formatConversation = (conversation, currentUserId) => {
+    const lastMessage = conversation.messages[0] || null;
+
+    let name = conversation.name;
+    let image = conversation.image;
+
+    // For DIRECT conversations, use the other participant's details
+    if (conversation.type === "DIRECT") {
+        const otherParticipant = conversation.participants.find(
+            (participant) => participant.userId !== currentUserId
+        );
+
+        if (otherParticipant) {
+            name = otherParticipant.user.name;
+            image = conversation.image;
+        }
+    }
+
+    return {
+        ...conversation,
+        name,
+        image,
+        lastMessage,
+        messages: undefined,
+    };
+};
+const participantInclude = {
+    include: {
+        user: {
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+            },
+        },
+    },
+};
 
 const getConversations = async (userId) => {
-    return await prisma.conversation.findMany({
+    const conversations = await prisma.conversation.findMany({
         where: {
             participants: {
                 some: {
@@ -12,18 +50,43 @@ const getConversations = async (userId) => {
         },
 
         include: {
+            participants: participantInclude,
+        },
+
+        orderBy: {
+            updatedAt: "desc",
+        },
+    });
+
+    return conversations.map((conversation) => {
+        if (conversation.type === "DIRECT") {
+            const otherParticipant = conversation.participants.find(
+                (participant) => participant.userId !== userId
+            );
+
+            return {
+                ...conversation,
+                name: otherParticipant?.user?.name || conversation.name,
+            };
+        }
+
+        return conversation;
+    });
+};
+
+const getConversationById = async (conversationId, userId) => {
+    return await prisma.conversation.findFirst({
+        where: {
+            id: conversationId,
             participants: {
-                include: {
-                    user: {
-                        select: {
-                            id: true,
-                            name: true,
-                            email: true,
-                            role: true,
-                        },
-                    },
+                some: {
+                    userId,
                 },
             },
+        },
+
+        include: {
+            participants: participantInclude,
 
             messages: {
                 orderBy: {
@@ -40,41 +103,10 @@ const getConversations = async (userId) => {
                 },
             },
         },
-
-        orderBy: {
-            updatedAt: "desc",
-        },
     });
 };
 
-const getConversationById = async (conversationId, userId) => {
-    return await prisma.conversation.findFirst({
-        where: {
-            id: conversationId,
-            participants: {
-                some: {
-                    userId,
-                },
-            },
-        },
-        include: {
-            participants: {
-                include: {
-                    user: {
-                        select: {
-                            id: true,
-                            name: true,
-                            email: true,
-                            role: true,
-                        },
-                    },
-                },
-            },
-        },
-    });
-};
-
-   const createConversation = async (data, userId) => {
+const createConversation = async (data, userId) => {
     const participantIds = [...new Set([userId, ...data.participantIds])];
 
     if (
@@ -85,7 +117,6 @@ const getConversationById = async (conversationId, userId) => {
     }
 
     if (data.type === "DIRECT") {
-
         if (participantIds.length !== 2) {
             throw new Error(
                 "Direct conversation must have exactly two participants."
@@ -97,35 +128,42 @@ const getConversationById = async (conversationId, userId) => {
             participantIds[1]
         );
 
-        const existingConversation =
-            await prisma.conversation.findFirst({
-                where: {
-                    type: "DIRECT",
-                    AND: participantIds.map((participantId) => ({
-                        participants: {
-                            some: {
-                                userId: participantId,
-                            },
-                        },
-                    })),
-                },
-                include: {
+        const existingConversation = await prisma.conversation.findFirst({
+            where: {
+                type: "DIRECT",
+                AND: participantIds.map((participantId) => ({
                     participants: {
-                        include: {
-                            user: {
-                                select: {
-                                    id: true,
-                                    name: true,
-                                    email: true,
-                                    role: true,
-                                },
+                        some: {
+                            userId: participantId,
+                        },
+                    },
+                })),
+            },
+
+            include: {
+                participants: participantInclude,
+
+                messages: {
+                    orderBy: {
+                        createdAt: "desc",
+                    },
+                    take: 1,
+                    include: {
+                        sender: {
+                            select: {
+                                id: true,
+                                name: true,
                             },
                         },
                     },
                 },
-            });
+            },
+        });
 
-        if (existingConversation) {
+        if (
+            existingConversation &&
+            existingConversation.participants.length === 2
+        ) {
             return existingConversation;
         }
     }
@@ -134,6 +172,8 @@ const getConversationById = async (conversationId, userId) => {
         data: {
             type: data.type,
             name: data.type === "GROUP" ? data.name : null,
+            description: data.type === "GROUP" ? data.description : null,
+            image: data.type === "GROUP" ? data.image : null,
             createdById: userId,
 
             participants: {
@@ -144,18 +184,7 @@ const getConversationById = async (conversationId, userId) => {
         },
 
         include: {
-            participants: {
-                include: {
-                    user: {
-                        select: {
-                            id: true,
-                            name: true,
-                            email: true,
-                            role: true,
-                        },
-                    },
-                },
-            },
+            participants: participantInclude,
         },
     });
 };
@@ -167,6 +196,7 @@ const updateConversation = async (conversationId, data) => {
         },
         data: {
             name: data.name,
+            description: data.description,
             image: data.image,
         },
     });
@@ -179,6 +209,7 @@ const deleteConversation = async (conversationId) => {
         },
     });
 };
+
 const isParticipant = async (conversationId, userId) => {
     const participant = await prisma.conversationParticipant.findFirst({
         where: {
@@ -196,5 +227,5 @@ module.exports = {
     createConversation,
     updateConversation,
     deleteConversation,
-    isParticipant
+    isParticipant,
 };
