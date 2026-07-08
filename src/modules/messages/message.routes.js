@@ -30,6 +30,15 @@ router.post(
 );
 
 /**
+ * PATCH /messages/read/:conversationId
+ */
+router.patch(
+    "/read/:conversationId",
+    verifyToken,
+    messageController.markConversationAsRead
+);
+
+/**
  * DELETE /messages/:messageId
  */
 router.delete(

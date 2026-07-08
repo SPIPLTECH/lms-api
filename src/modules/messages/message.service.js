@@ -27,6 +27,9 @@ const getMessages = async (conversationId, userId) => {
                     isStarred: true,
                 },
                 {
+                    expiresAt: null,
+                },
+                {
                     expiresAt: {
                         gt: new Date(),
                     },
@@ -60,6 +63,62 @@ const getMessages = async (conversationId, userId) => {
     });
 };
 
+const getMessageById = async (messageId, userId) => {
+    const message = await prisma.message.findFirst({
+        where: {
+            id: messageId,
+            conversation: {
+                participants: {
+                    some: {
+                        userId,
+                    },
+                },
+            },
+            isDeleted: false,
+            OR: [
+                {
+                    isStarred: true,
+                },
+                {
+                    expiresAt: null,
+                },
+                {
+                    expiresAt: {
+                        gt: new Date(),
+                    },
+                },
+            ],
+        },
+        include: {
+            sender: {
+                select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    role: true,
+                },
+            },
+            messageAttachments: {
+                select: {
+                    id: true,
+                    fileName: true,
+                    fileUrl: true,
+                    mimeType: true,
+                    size: true,
+                    type: true,
+                    createdAt: true,
+                },
+            },
+        },
+    });
+
+    if (!message) {
+        throw new Error("Message not found.");
+    }
+
+    return message;
+};
+
 const sendMessage = async (conversationId, senderId, data) => {
     const conversation = await prisma.conversation.findFirst({
         where: {
@@ -79,27 +138,49 @@ const sendMessage = async (conversationId, senderId, data) => {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + MESSAGE_EXPIRY_DAYS);
 
-    return await prisma.message.create({
-        data: {
-            conversationId,
-            senderId,
-            content: data.content,
-            expiresAt,
-        },
-        include: {
-            sender: {
-                select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    role: true,
+    return await prisma.$transaction(async (tx) => {
+        const message = await tx.message.create({
+            data: {
+                conversationId,
+                senderId,
+                content: data.content,
+                expiresAt,
+            },
+            include: {
+                sender: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        role: true,
+                    },
+                },
+                messageAttachments: {
+                    select: {
+                        id: true,
+                        fileName: true,
+                        fileUrl: true,
+                        mimeType: true,
+                        size: true,
+                        type: true,
+                        createdAt: true,
+                    },
                 },
             },
-            messageAttachments: true,
-        },
+        });
+
+        await tx.conversation.update({
+            where: {
+                id: conversationId,
+            },
+            data: {
+                updatedAt: new Date(),
+            },
+        });
+
+        return message;
     });
 };
-
 const markConversationAsRead = async (conversationId, userId) => {
     const participant = await prisma.conversationParticipant.findFirst({
         where: {
@@ -121,6 +202,7 @@ const markConversationAsRead = async (conversationId, userId) => {
         },
     });
 };
+
 
 const deleteMessage = async (messageId, userId) => {
     const message = await prisma.message.findUnique({
@@ -150,6 +232,7 @@ const deleteMessage = async (messageId, userId) => {
 
 module.exports = {
     getMessages,
+    getMessageById,
     sendMessage,
     markConversationAsRead,
     deleteMessage,

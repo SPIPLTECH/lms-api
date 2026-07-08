@@ -17,6 +17,23 @@ const getMessages = async (req, res, next) => {
     }
 };
 
+const getMessageById = async (req, res, next) => {
+    try {
+        const message = await messageService.getMessageById(
+            req.params.messageId,
+            req.user.id
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Message fetched successfully.",
+            data: message,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 const sendMessage = async (req, res, next) => {
     try {
         const message = await messageService.sendMessage(
@@ -35,16 +52,16 @@ const sendMessage = async (req, res, next) => {
     }
 };
 
-const markMessageAsRead = async (req, res, next) => {
+const markConversationAsRead = async (req, res, next) => {
     try {
-        await messageService.markMessageAsRead(
-            req.params.messageId,
+        await messageService.markConversationAsRead(
+            req.params.conversationId,
             req.user.id
         );
 
         return res.status(200).json({
             success: true,
-            message: "Message marked as read.",
+            message: "Conversation marked as read.",
         });
     } catch (error) {
         next(error);
@@ -69,7 +86,8 @@ const deleteMessage = async (req, res, next) => {
 
 module.exports = {
     getMessages,
+    getMessageById,
     sendMessage,
-    markMessageAsRead,
+    markConversationAsRead,
     deleteMessage,
 };
