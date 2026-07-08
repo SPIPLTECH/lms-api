@@ -11,7 +11,7 @@ const prisma = require("../../config/database");
  * 5. Instructor -> Instructor (Not Allowed)
  */
 
-const canCommunicate = async (senderId, receiverId) => {
+const canCreateConversation = async (senderId, receiverId) => {
     if (senderId === receiverId) {
         throw new Error("You cannot communicate with yourself.");
     }
@@ -172,5 +172,5 @@ const canCommunicate = async (senderId, receiverId) => {
 };
 
 module.exports = {
-    canCommunicate,
+    canCreateConversation,
 };

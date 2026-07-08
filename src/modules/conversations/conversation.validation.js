@@ -22,13 +22,10 @@ const createConversationSchema = Joi.object({
 });
 
 const updateConversationSchema = Joi.object({
-    name: Joi.string()
-        .trim()
-        .min(3)
-        .max(100),
-
-    image: Joi.string().uri(),
-}).min(1);
+    name: Joi.string().trim().optional(),
+    description: Joi.string().trim().allow("").optional(),
+    image: Joi.string().uri().allow(null, "").optional(),
+});
 
 module.exports = {
     createConversationSchema,

@@ -32,8 +32,6 @@ const participantInclude = {
             select: {
                 id: true,
                 name: true,
-                email: true,
-                role: true,
             },
         },
     },
@@ -87,21 +85,6 @@ const getConversationById = async (conversationId, userId) => {
 
         include: {
             participants: participantInclude,
-
-            messages: {
-                orderBy: {
-                    createdAt: "desc",
-                },
-                take: 1,
-                include: {
-                    sender: {
-                        select: {
-                            id: true,
-                            name: true,
-                        },
-                    },
-                },
-            },
         },
     });
 };
