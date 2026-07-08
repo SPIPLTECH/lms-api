@@ -1,30 +1,26 @@
 const prisma = require("../../config/database");
 const messagingPermissionService = require("../permissions/messagingPermission.service");
+
+
 const formatConversation = (conversation, currentUserId) => {
-    const lastMessage = conversation.messages[0] || null;
+    
+    const formattedConversation = { ...conversation };
 
-    let name = conversation.name;
-    let image = conversation.image;
-
-    // For DIRECT conversations, use the other participant's details
     if (conversation.type === "DIRECT") {
         const otherParticipant = conversation.participants.find(
             (participant) => participant.userId !== currentUserId
         );
 
+        console.log("Other Participant:", otherParticipant);
+
         if (otherParticipant) {
-            name = otherParticipant.user.name;
-            image = conversation.image;
+            formattedConversation.name = otherParticipant.user.name;
         }
     }
 
-    return {
-        ...conversation,
-        name,
-        image,
-        lastMessage,
-        messages: undefined,
-    };
+    console.log("Formatted Name:", formattedConversation.name);
+
+    return formattedConversation;
 };
 const participantInclude = {
     include: {
@@ -56,24 +52,13 @@ const getConversations = async (userId) => {
         },
     });
 
-    return conversations.map((conversation) => {
-        if (conversation.type === "DIRECT") {
-            const otherParticipant = conversation.participants.find(
-                (participant) => participant.userId !== userId
-            );
-
-            return {
-                ...conversation,
-                name: otherParticipant?.user?.name || conversation.name,
-            };
-        }
-
-        return conversation;
-    });
+    return conversations.map((conversation) =>
+        formatConversation(conversation, userId)
+    );
 };
 
 const getConversationById = async (conversationId, userId) => {
-    return await prisma.conversation.findFirst({
+    const conversation = await prisma.conversation.findFirst({
         where: {
             id: conversationId,
             participants: {
@@ -87,6 +72,12 @@ const getConversationById = async (conversationId, userId) => {
             participants: participantInclude,
         },
     });
+
+    if (!conversation) {
+        return null;
+    }
+
+    return formatConversation(conversation, userId);
 };
 
 const createConversation = async (data, userId) => {
@@ -125,21 +116,6 @@ const createConversation = async (data, userId) => {
 
             include: {
                 participants: participantInclude,
-
-                messages: {
-                    orderBy: {
-                        createdAt: "desc",
-                    },
-                    take: 1,
-                    include: {
-                        sender: {
-                            select: {
-                                id: true,
-                                name: true,
-                            },
-                        },
-                    },
-                },
             },
         });
 
@@ -147,11 +123,11 @@ const createConversation = async (data, userId) => {
             existingConversation &&
             existingConversation.participants.length === 2
         ) {
-            return existingConversation;
+            return formatConversation(existingConversation, userId);
         }
     }
 
-    return await prisma.conversation.create({
+    const conversation = await prisma.conversation.create({
         data: {
             type: data.type,
             name: data.type === "GROUP" ? data.name : null,
@@ -170,6 +146,13 @@ const createConversation = async (data, userId) => {
             participants: participantInclude,
         },
     });
+
+    const formattedConversation = formatConversation(conversation, userId);
+
+    // console.log("Returning Conversation:");
+    // console.log(formattedConversation);
+
+    return formattedConversation;
 };
 
 const updateConversation = async (conversationId, data) => {
