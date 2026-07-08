@@ -24,8 +24,10 @@ const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
 const reviewRoutes = require("./modules/reviews/review.routes");
 const certificateRoutes = require("./modules/certificates/certificate.routes");
 const adminRoutes = require("./modules/admin/admin.route");
+const stickyNoteRoutes = require(
+  "./modules/sticky-note/sticky-note.routes"
+);
 const app = express();
-
 
 app.use(cors());
 app.use(helmet());
@@ -58,6 +60,10 @@ app.use("/dashboard", dashboardRoutes);
 app.use("/reviews", reviewRoutes);
 app.use("/certificates", certificateRoutes);
 app.use("/admin", adminRoutes);
+app.use(
+  "/sticky-notes",
+  stickyNoteRoutes
+);
 app.use(errorHandler);
 
 module.exports = app;
