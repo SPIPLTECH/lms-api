@@ -43,6 +43,13 @@ const getCourses = async (
   }
   else if (role === "GUEST" || role === "STUDENT") {
   query.where.status = "PUBLISHED";
+  query.include={
+    creator:{
+      select:{
+        name:true,
+      }
+    }
+  }
    }
   return await prisma.course.findMany(query);
 };
