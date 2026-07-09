@@ -42,6 +42,15 @@ const sendMessage = async (req, res, next) => {
             req.body
         );
 
+        try {
+            const { getIO } = require("../../socket");
+            const io = getIO();
+            io.to(req.body.conversationId).emit("receive_message", message);
+            io.to(req.body.conversationId).emit("message:new", message);
+        } catch (socketError) {
+            console.error("Failed to broadcast message via socket:", socketError);
+        }
+
         return res.status(201).json({
             success: true,
             message: "Message sent successfully.",

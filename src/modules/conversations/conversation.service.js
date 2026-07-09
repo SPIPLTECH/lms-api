@@ -11,7 +11,7 @@ const formatConversation = (conversation, currentUserId) => {
             (participant) => participant.userId !== currentUserId
         );
 
-        console.log("Other Participant:", otherParticipant);
+        // console.log("Other Participant:", otherParticipant);
 
         if (otherParticipant) {
             formattedConversation.name = otherParticipant.user.name;
