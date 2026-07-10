@@ -1,4 +1,5 @@
 const prisma = require("../../config/database");
+const notificationService = require("../notifications/notification.service");
 
 const calculateSubmissionResult = (quiz, answers = []) => {
   const totalMarks = quiz.questions.reduce((sum, question) => sum + (question.marks || 1), 0);
@@ -61,9 +62,29 @@ const getQuizById = async (
 const createQuiz = async (
   data
 ) => {
-  return prisma.quiz.create({
+  const quiz = await prisma.quiz.create({
     data
   });
+
+  try {
+    const course = await prisma.course.findUnique({
+      where: { id: quiz.courseId },
+      select: { title: true }
+    });
+
+    if (course) {
+      await notificationService.notifyEnrolledStudents(quiz.courseId, {
+        title: "New Quiz Available 📝",
+        message: `A new quiz "${quiz.title}" has been added to your course "${course.title}".`,
+        type: "QUIZ_PUBLISHED",
+        link: `/courses/${quiz.courseId}/quizzes`
+      });
+    }
+  } catch (error) {
+    console.error("Error sending quiz creation notification:", error.message);
+  }
+
+  return quiz;
 };
 
 const updateQuiz = async (
@@ -102,7 +123,7 @@ const submitQuiz = async (studentId, quizId, answers = []) => {
 
   const result = calculateSubmissionResult(quiz, answers);
 
-  return prisma.quizSubmission.upsert({
+  const submission = await prisma.quizSubmission.upsert({
     where: {
       studentId_quizId: {
         studentId,
@@ -127,6 +148,38 @@ const submitQuiz = async (studentId, quizId, answers = []) => {
       passed: result.passed
     }
   });
+
+  // Notify the instructor
+  try {
+    const course = await prisma.course.findUnique({
+      where: { id: quiz.courseId },
+      select: { title: true, creatorId: true }
+    });
+
+    const student = await prisma.studentProfile.findUnique({
+      where: { id: studentId },
+      include: {
+        user: {
+          select: {
+            name: true
+          }
+        }
+      }
+    });
+
+    if (course && student) {
+      await notificationService.createNotification(course.creatorId, {
+        title: "Quiz Submitted 📝",
+        message: `${student.user.name} submitted the quiz "${quiz.title}" for "${course.title}" (Score: ${result.percentage}%).`,
+        type: "QUIZ_SUBMISSION",
+        link: `/courses/${quiz.courseId}/quizzes`
+      });
+    }
+  } catch (error) {
+    console.error("Error creating quiz submission notification:", error.message);
+  }
+
+  return submission;
 };
 
 module.exports = {

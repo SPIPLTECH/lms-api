@@ -23,6 +23,7 @@ const certificateRoutes = require("./modules/certificates/certificate.routes");
 const adminRoutes = require("./modules/admin/admin.route");
 const conversationRoutes = require("./modules/conversations/conversation.routes");
 const messageRoutes = require("./modules/messages/message.routes");
+const notificationRoutes = require("./modules/notifications/notification.routes");
 
 const app = express();
 
@@ -82,6 +83,7 @@ app.use("/certificates", certificateRoutes);
 app.use("/admin", adminRoutes);
 app.use("/conversations", conversationRoutes);
 app.use("/messages", messageRoutes);
+app.use("/notifications", notificationRoutes);
 
 /*
 |--------------------------------------------------------------------------

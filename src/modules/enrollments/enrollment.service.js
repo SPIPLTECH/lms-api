@@ -1,4 +1,5 @@
 const prisma = require("../../config/database");
+const notificationService = require("../notifications/notification.service");
 
 const getEnrollments = async (
   studentId,
@@ -57,12 +58,42 @@ const createEnrollment = async (
     );
   }
 
-  return await prisma.enrollment.create({
+  const enrollment = await prisma.enrollment.create({
     data: {
       studentId,
       courseId
+    },
+    include: {
+      student: {
+        include: {
+          user: {
+            select: {
+              name: true
+            }
+          }
+        }
+      },
+      course: {
+        select: {
+          title: true,
+          creatorId: true
+        }
+      }
     }
   });
+
+  try {
+    await notificationService.createNotification(enrollment.course.creatorId, {
+      title: "New Student Enrolled 🎓",
+      message: `${enrollment.student.user.name} enrolled in your course "${enrollment.course.title}".`,
+      type: "ENROLLMENT",
+      link: `/courses/${courseId}/students`
+    });
+  } catch (error) {
+    console.error("Error creating enrollment notification:", error.message);
+  }
+
+  return enrollment;
 };
 
 const deleteEnrollment = async (

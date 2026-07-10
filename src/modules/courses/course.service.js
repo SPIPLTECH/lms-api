@@ -1,4 +1,5 @@
 const prisma = require("../../config/database");
+const notificationService = require("../notifications/notification.service");
 // const verifyToken = require(
 //   "../../middleware/auth.middleware"
 // );
@@ -115,7 +116,7 @@ const updateCourse = async (courseId, data) => {
 };
 
 const updateStatus = async (courseId, status) => {
-  return await prisma.course.update({
+  const course = await prisma.course.update({
     where: {
       id: courseId
     },
@@ -123,6 +124,19 @@ const updateStatus = async (courseId, status) => {
       status
     }
   });
+
+  try {
+    await notificationService.createNotification(course.creatorId, {
+      title: "Course Status Updated 📢",
+      message: `Your course "${course.title}" status has been updated to "${status}".`,
+      type: "COURSE_STATUS",
+      link: `/courses/${courseId}`
+    });
+  } catch (error) {
+    console.error("Error creating course status notification:", error.message);
+  }
+
+  return course;
 };
 
 const deleteCourse = async (courseId) => {

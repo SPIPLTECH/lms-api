@@ -24,6 +24,9 @@ const initializeSocket = (server) => {
             `✅ ${socket.user.name} connected (${socket.id})`
         );
 
+        // Join user-specific notification room
+        socket.join(`user_${socket.user.id}`);
+
         registerConversationEvents(io, socket);
 
         registerMessageEvents(io, socket);

@@ -31,6 +31,7 @@ model User {
   conversations ConversationParticipant[] @relation("ConversationParticipant")
 
   sentMessages Message[] @relation("MessageSender")
+  notifications Notification[]
 }
 
 model StudentProfile {
@@ -373,4 +374,20 @@ model MessageAttachment {
   createdAt DateTime @default(now())
 
   @@index([messageId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  type      String
+  isRead    Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
 }

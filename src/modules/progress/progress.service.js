@@ -1,4 +1,5 @@
 const prisma = require("../../config/database");
+const notificationService = require("../notifications/notification.service");
 
 const completeLesson = async (
   studentId,
@@ -87,14 +88,37 @@ const completeLesson = async (
       });
 
     if (!existingCertificate) {
-      await prisma.certificate.create({
+      const certificate = await prisma.certificate.create({
         data: {
           certificateNo:
             `CERT-${Date.now()}`,
           studentId,
           courseId
+        },
+        include: {
+          student: {
+            select: {
+              userId: true
+            }
+          },
+          course: {
+            select: {
+              title: true
+            }
+          }
         }
       });
+
+      try {
+        await notificationService.createNotification(certificate.student.userId, {
+          title: "Course Completed! 🎓",
+          message: `Congratulations! You have completed all lessons in the course "${certificate.course.title}". Your certificate is ready!`,
+          type: "CERTIFICATE",
+          link: `/certificates`
+        });
+      } catch (error) {
+        console.error("Error creating certificate notification:", error.message);
+      }
     }
   }
 

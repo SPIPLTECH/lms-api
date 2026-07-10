@@ -1,4 +1,5 @@
 const prisma = require("../../config/database");
+const notificationService = require("../notifications/notification.service");
 
 const getReviews = async (
   studentId,
@@ -117,7 +118,7 @@ const createReview = async (
     );
   }
 
-  return prisma.review.create({
+  const review = await prisma.review.create({
     data: {
       rating: data.rating,
       review: data.review,
@@ -143,6 +144,19 @@ const createReview = async (
       }
     }
   });
+
+  try {
+    await notificationService.createNotification(course.creatorId, {
+      title: "New Course Review 🌟",
+      message: `${review.student.user.name} reviewed your course "${review.course.title}" with a rating of ${review.rating}/5.`,
+      type: "COURSE_REVIEW",
+      link: `/courses/${review.courseId}/reviews`
+    });
+  } catch (error) {
+    console.error("Error creating course review notification:", error.message);
+  }
+
+  return review;
 };
 
 const updateReview = async (
