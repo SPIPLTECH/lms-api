@@ -1,16 +1,20 @@
 const prisma = require("../../config/database");
 const { getIO } = require("../../socket");
 
+const notificationsStore = [];
+
 const createNotification = async (userId, data) => {
-  const notification = await prisma.notification.create({
-    data: {
-      userId,
-      title: data.title,
-      message: data.message,
-      type: data.type,
-      link: data.link || null,
-    },
-  });
+  const notification = {
+    id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    userId,
+    title: data.title,
+    message: data.message,
+    type: data.type,
+    link: data.link || null,
+    isRead: false,
+    createdAt: new Date(),
+  };
+  notificationsStore.push(notification);
 
   // Real-time Push via Socket.io
   try {
@@ -24,17 +28,13 @@ const createNotification = async (userId, data) => {
 };
 
 const getNotifications = async (userId) => {
-  return prisma.notification.findMany({
-    where: { userId },
-    orderBy: { createdAt: "desc" },
-  });
+  return notificationsStore
+    .filter(n => n.userId === userId)
+    .sort((a, b) => b.createdAt - a.createdAt);
 };
 
 const markAsRead = async (notificationId, userId) => {
-  // Ensure the notification belongs to the user
-  const notification = await prisma.notification.findFirst({
-    where: { id: notificationId, userId },
-  });
+  const notification = notificationsStore.find(n => n.id === notificationId && n.userId === userId);
 
   if (!notification) {
     const error = new Error("Notification not found");
@@ -42,17 +42,17 @@ const markAsRead = async (notificationId, userId) => {
     throw error;
   }
 
-  return prisma.notification.update({
-    where: { id: notificationId },
-    data: { isRead: true },
-  });
+  notification.isRead = true;
+  return notification;
 };
 
 const markAllAsRead = async (userId) => {
-  return prisma.notification.updateMany({
-    where: { userId, isRead: false },
-    data: { isRead: true },
+  notificationsStore.forEach(n => {
+    if (n.userId === userId && !n.isRead) {
+      n.isRead = true;
+    }
   });
+  return { count: notificationsStore.filter(n => n.userId === userId).length };
 };
 
 const notifyEnrolledStudents = async (courseId, notificationData) => {

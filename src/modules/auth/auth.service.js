@@ -125,9 +125,9 @@ const login = async (
 });
 
   if (!user) {
-    throw new Error(
-      "Invalid credentials"
-    );
+    const error = new Error("Invalid credentials");
+    error.statusCode = 401;
+    throw error;
   }
 
   const isMatch =
@@ -137,9 +137,9 @@ const login = async (
     );
 
   if (!isMatch) {
-    throw new Error(
-      "Invalid credentials"
-    );
+    const error = new Error("Invalid credentials");
+    error.statusCode = 401;
+    throw error;
   }
 
   if (!user.isVerified) {

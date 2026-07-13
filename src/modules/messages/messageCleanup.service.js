@@ -7,16 +7,18 @@ const cleanupExpiredMessages = async () => {
     try {
         console.log("🧹 Running expired messages cleanup task...");
 
-        // 1. Find all messages that have expired and are not starred
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+        // 1. Find all messages that are older than 30 days
         const expiredMessages = await prisma.message.findMany({
             where: {
-                expiresAt: {
-                    lt: new Date(),
+                createdAt: {
+                    lt: thirtyDaysAgo,
                 },
-                isStarred: false,
             },
             include: {
-                messageAttachments: true,
+                MessageAttachment: true,
             },
         });
 
@@ -29,7 +31,7 @@ const cleanupExpiredMessages = async () => {
 
         // 2. Loop through messages and delete physical attachment files from disk
         for (const message of expiredMessages) {
-            for (const attachment of message.messageAttachments) {
+            for (const attachment of message.MessageAttachment) {
                 try {
                     // Extract relative path and build absolute path
                     // If fileUrl is /uploads/attachments/filename, the local path is:

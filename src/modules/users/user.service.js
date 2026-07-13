@@ -107,11 +107,92 @@ const deleteUser = async (userId) => {
   });
 };
 
+const updateMyProfile = async (userId, data) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { studentProfile: true, teacherProfile: true },
+  });
+
+  if (!user) {
+    const error = new Error("User not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  // Fields allowed to be updated on the User model
+  const userUpdate = {};
+  if (data.name) userUpdate.name = data.name;
+  if (data.phoneNumber) userUpdate.phoneNumber = data.phoneNumber;
+  if (data.address) userUpdate.address = data.address;
+
+  // Update User base fields
+  if (Object.keys(userUpdate).length > 0) {
+    await prisma.user.update({ where: { id: userId }, data: userUpdate });
+  }
+
+  // Update role-specific profile fields
+  if (user.role === "STUDENT" && user.studentProfile) {
+    const profileUpdate = {};
+    if (data.education !== undefined) profileUpdate.education = data.education;
+    if (data.dateOfBirth !== undefined) {
+      profileUpdate.dateOfBirth = data.dateOfBirth ? new Date(data.dateOfBirth) : null;
+    }
+    if (data.guardianName !== undefined) profileUpdate.guardianName = data.guardianName;
+    if (data.phone !== undefined) profileUpdate.phone = data.phone;
+    
+    if (data.profileVisibility !== undefined) profileUpdate.profileVisibility = data.profileVisibility;
+    if (data.focusTopics !== undefined) profileUpdate.focusTopics = data.focusTopics;
+    if (data.interests !== undefined) profileUpdate.interests = data.interests;
+    if (data.learningGoals !== undefined) profileUpdate.learningGoals = data.learningGoals;
+    if (data.videoQuality !== undefined) profileUpdate.videoQuality = data.videoQuality;
+    if (data.downloadOverWifi !== undefined) {
+      profileUpdate.downloadOverWifi = data.downloadOverWifi === true || data.downloadOverWifi === 'true';
+    }
+    if (data.language !== undefined) profileUpdate.language = data.language;
+    if (data.timezone !== undefined) profileUpdate.timezone = data.timezone;
+    if (data.themeMode !== undefined) profileUpdate.themeMode = data.themeMode;
+    if (data.plan !== undefined) profileUpdate.plan = data.plan;
+
+    if (Object.keys(profileUpdate).length > 0) {
+      await prisma.studentProfile.update({
+        where: { userId },
+        data: profileUpdate,
+      });
+    }
+  }
+
+  if (user.role === "INSTRUCTOR" && user.teacherProfile) {
+    const profileUpdate = {};
+    if (data.specialization !== undefined) profileUpdate.specialization = data.specialization;
+    if (data.qualification !== undefined) profileUpdate.qualification = data.qualification;
+    if (data.experience !== undefined) profileUpdate.experience = parseInt(data.experience);
+    if (data.bio !== undefined) profileUpdate.bio = data.bio;
+
+    if (Object.keys(profileUpdate).length > 0) {
+      await prisma.teacherProfile.update({
+        where: { userId },
+        data: profileUpdate,
+      });
+    }
+  }
+
+  // Return the fully updated user with profile
+  return prisma.user.findUnique({
+    where: { id: userId },
+    include: {
+      studentProfile: true,
+      teacherProfile: true,
+      adminProfile: true,
+    },
+  });
+};
+
 module.exports = {
   getUsers,
   getUserById,
   updateUser,
   deleteUser,
   updateUserRole,
-  updateUserStatus
-};
+  updateUserStatus,
+  updateMyProfile,
+};

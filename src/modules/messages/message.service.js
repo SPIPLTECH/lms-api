@@ -2,11 +2,21 @@ const prisma = require("../../config/database");
 
 const MESSAGE_EXPIRY_DAYS = 7;
 
+const formatMessage = (msg) => {
+    if (!msg) return msg;
+    const formatted = { ...msg };
+    if (msg.User) {
+        formatted.sender = msg.User;
+        delete formatted.User;
+    }
+    return formatted;
+};
+
 const getMessages = async (conversationId, userId) => {
     const conversation = await prisma.conversation.findFirst({
         where: {
             id: conversationId,
-            participants: {
+            ConversationParticipant: {
                 some: {
                     userId,
                 },
@@ -18,26 +28,13 @@ const getMessages = async (conversationId, userId) => {
         throw new Error("Conversation not found.");
     }
 
-    return await prisma.message.findMany({
+    const messages = await prisma.message.findMany({
         where: {
             conversationId,
             isDeleted: false,
-            OR: [
-                {
-                    isStarred: true,
-                },
-                {
-                    expiresAt: null,
-                },
-                {
-                    expiresAt: {
-                        gt: new Date(),
-                    },
-                },
-            ],
         },
         include: {
-            sender: {
+            User: {
                 select: {
                     id: true,
                     name: true,
@@ -45,7 +42,7 @@ const getMessages = async (conversationId, userId) => {
                     role: true,
                 },
             },
-            messageAttachments: {
+            MessageAttachment: {
                 select: {
                     id: true,
                     fileName: true,
@@ -61,36 +58,25 @@ const getMessages = async (conversationId, userId) => {
             createdAt: "asc",
         },
     });
+
+    return messages.map(formatMessage);
 };
 
 const getMessageById = async (messageId, userId) => {
     const message = await prisma.message.findFirst({
         where: {
             id: messageId,
-            conversation: {
-                participants: {
+            Conversation: {
+                ConversationParticipant: {
                     some: {
                         userId,
                     },
                 },
             },
             isDeleted: false,
-            OR: [
-                {
-                    isStarred: true,
-                },
-                {
-                    expiresAt: null,
-                },
-                {
-                    expiresAt: {
-                        gt: new Date(),
-                    },
-                },
-            ],
         },
         include: {
-            sender: {
+            User: {
                 select: {
                     id: true,
                     name: true,
@@ -98,7 +84,7 @@ const getMessageById = async (messageId, userId) => {
                     role: true,
                 },
             },
-            messageAttachments: {
+            MessageAttachment: {
                 select: {
                     id: true,
                     fileName: true,
@@ -116,14 +102,14 @@ const getMessageById = async (messageId, userId) => {
         throw new Error("Message not found.");
     }
 
-    return message;
+    return formatMessage(message);
 };
 
 const sendMessage = async (conversationId, senderId, data) => {
     const conversation = await prisma.conversation.findFirst({
         where: {
             id: conversationId,
-            participants: {
+            ConversationParticipant: {
                 some: {
                     userId: senderId,
                 },
@@ -135,17 +121,13 @@ const sendMessage = async (conversationId, senderId, data) => {
         throw new Error("Conversation not found.");
     }
 
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + MESSAGE_EXPIRY_DAYS);
-
     return await prisma.$transaction(async (tx) => {
         const message = await tx.message.create({
             data: {
                 conversationId,
                 senderId,
                 content: data.content || "",
-                expiresAt,
-                messageAttachments: data.attachments && data.attachments.length > 0 ? {
+                MessageAttachment: data.attachments && data.attachments.length > 0 ? {
                     create: data.attachments.map((att) => ({
                         fileName: att.fileName,
                         fileUrl: att.fileUrl,
@@ -156,7 +138,7 @@ const sendMessage = async (conversationId, senderId, data) => {
                 } : undefined,
             },
             include: {
-                sender: {
+                User: {
                     select: {
                         id: true,
                         name: true,
@@ -164,7 +146,7 @@ const sendMessage = async (conversationId, senderId, data) => {
                         role: true,
                     },
                 },
-                messageAttachments: {
+                MessageAttachment: {
                     select: {
                         id: true,
                         fileName: true,
@@ -187,7 +169,7 @@ const sendMessage = async (conversationId, senderId, data) => {
             },
         });
 
-        return message;
+        return formatMessage(message);
     });
 };
 const markConversationAsRead = async (conversationId, userId) => {
@@ -258,7 +240,7 @@ const editMessage = async (messageId, userId, content) => {
         throw new Error("You can edit only your own messages.");
     }
 
-    return await prisma.message.update({
+    const updatedMessage = await prisma.message.update({
         where: {
             id: messageId,
         },
@@ -268,7 +250,7 @@ const editMessage = async (messageId, userId, content) => {
             editedAt: new Date(),
         },
         include: {
-            sender: {
+            User: {
                 select: {
                     id: true,
                     name: true,
@@ -276,7 +258,7 @@ const editMessage = async (messageId, userId, content) => {
                     role: true,
                 },
             },
-            messageAttachments: {
+            MessageAttachment: {
                 select: {
                     id: true,
                     fileName: true,
@@ -289,67 +271,12 @@ const editMessage = async (messageId, userId, content) => {
             },
         },
     });
+
+    return formatMessage(updatedMessage);
 };
 
 const toggleStarMessage = async (messageId, userId) => {
-    const message = await prisma.message.findUnique({
-        where: {
-            id: messageId,
-        },
-        include: {
-            conversation: {
-                include: {
-                    participants: true,
-                },
-            },
-        },
-    });
-
-    if (!message) {
-        throw new Error("Message not found.");
-    }
-
-    if (message.isDeleted) {
-        throw new Error("Cannot star a deleted message.");
-    }
-
-    const isUserParticipant = message.conversation.participants.some(
-        (p) => p.userId === userId
-    );
-
-    if (!isUserParticipant) {
-        throw new Error("You are not authorized to star this message.");
-    }
-
-    return await prisma.message.update({
-        where: {
-            id: messageId,
-        },
-        data: {
-            isStarred: !message.isStarred,
-        },
-        include: {
-            sender: {
-                select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    role: true,
-                },
-            },
-            messageAttachments: {
-                select: {
-                    id: true,
-                    fileName: true,
-                    fileUrl: true,
-                    mimeType: true,
-                    size: true,
-                    type: true,
-                    createdAt: true,
-                },
-            },
-        },
-    });
+    throw new Error("Starring messages is not supported in this database schema configuration.");
 };
 
 module.exports = {

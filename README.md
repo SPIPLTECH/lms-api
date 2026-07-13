@@ -613,6 +613,3 @@ GET /api-docs
 ---
 
 END
-=======
-# Ayan-
->>>>>>> 1210ca0a6fe82fbf019120d8013880cdb08781e9

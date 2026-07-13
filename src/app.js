@@ -26,6 +26,16 @@ const adminRoutes = require("./modules/admin/admin.route");
 const stickyNoteRoutes = require(
   "./modules/sticky-note/sticky-note.routes"
 );
+const notificationRoutes = require("./modules/notifications/notification.routes");
+const conversationRoutes = require("./modules/conversations/conversation.routes");
+const messageRoutes = require("./modules/messages/message.routes");
+const noteRoutes = require("./modules/notes/note.routes");
+const bookmarkRoutes = require("./modules/bookmarks/bookmark.routes");
+const liveClassRoutes = require("./modules/live-classes/live-class.routes");
+const achievementRoutes = require("./modules/achievements/achievement.routes");
+const assignmentRoutes = require("./modules/assignments/assignment.routes");
+const calendarRoutes = require("./modules/calendar/calendar.routes");
+
 const app = express();
 
 app.use(cors());
@@ -75,6 +85,16 @@ app.use(
   "/sticky-notes",
   stickyNoteRoutes
 );
+app.use("/notifications", notificationRoutes);
+app.use("/conversations", conversationRoutes);
+app.use("/messages", messageRoutes);
+app.use("/notes", noteRoutes);
+app.use("/bookmarks", bookmarkRoutes);
+app.use("/live-classes", liveClassRoutes);
+app.use("/achievements", achievementRoutes);
+app.use("/assignments", assignmentRoutes);
+app.use("/calendar", calendarRoutes);
 app.use(errorHandler);
+
 
 module.exports = app;

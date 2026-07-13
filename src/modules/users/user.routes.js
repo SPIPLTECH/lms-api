@@ -64,7 +64,7 @@ router.get(
 router.put(
   "/profile/me",
   verifyToken,
-  userController.updateUser
+  userController.updateMyProfile
 );
 
 module.exports = router;

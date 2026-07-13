@@ -27,12 +27,12 @@ const formatConversation = async (conversation, currentUserId) => {
     const formattedConversation = { ...conversation };
 
     if (conversation.type === "DIRECT") {
-        const otherParticipant = conversation.participants.find(
+        const otherParticipant = conversation.ConversationParticipant.find(
             (participant) => participant.userId !== currentUserId
         );
 
         if (otherParticipant) {
-            formattedConversation.name = otherParticipant.user.name;
+            formattedConversation.name = otherParticipant.User.name;
         }
     }
 
@@ -46,7 +46,7 @@ const formatConversation = async (conversation, currentUserId) => {
             createdAt: "desc",
         },
         include: {
-            messageAttachments: {
+            MessageAttachment: {
                 take: 1,
             },
         },
@@ -56,8 +56,8 @@ const formatConversation = async (conversation, currentUserId) => {
         let text = "";
         if (lastMsg.content && lastMsg.content.trim()) {
             text = lastMsg.content;
-        } else if (lastMsg.messageAttachments && lastMsg.messageAttachments.length > 0) {
-            const type = lastMsg.messageAttachments[0].type;
+        } else if (lastMsg.MessageAttachment && lastMsg.MessageAttachment.length > 0) {
+            const type = lastMsg.MessageAttachment[0].type;
             if (type === "IMAGE") text = "📷 Photo";
             else if (type === "VIDEO") text = "🎥 Video";
             else if (type === "AUDIO") text = "🎵 Audio";
@@ -76,7 +76,7 @@ const formatConversation = async (conversation, currentUserId) => {
 
 const participantInclude = {
     include: {
-        user: {
+        User: {
             select: {
                 id: true,
                 name: true,
@@ -88,7 +88,7 @@ const participantInclude = {
 const getConversations = async (userId) => {
     const conversations = await prisma.conversation.findMany({
         where: {
-            participants: {
+            ConversationParticipant: {
                 some: {
                     userId,
                 },
@@ -96,7 +96,7 @@ const getConversations = async (userId) => {
         },
 
         include: {
-            participants: participantInclude,
+            ConversationParticipant: participantInclude,
         },
 
         orderBy: {
@@ -115,7 +115,7 @@ const getConversationById = async (conversationId, userId) => {
     const conversation = await prisma.conversation.findFirst({
         where: {
             id: conversationId,
-            participants: {
+            ConversationParticipant: {
                 some: {
                     userId,
                 },
@@ -123,7 +123,7 @@ const getConversationById = async (conversationId, userId) => {
         },
 
         include: {
-            participants: participantInclude,
+            ConversationParticipant: participantInclude,
         },
     });
 
@@ -160,7 +160,7 @@ const createConversation = async (data, userId) => {
             where: {
                 type: "DIRECT",
                 AND: participantIds.map((participantId) => ({
-                    participants: {
+                    ConversationParticipant: {
                         some: {
                             userId: participantId,
                         },
@@ -169,13 +169,13 @@ const createConversation = async (data, userId) => {
             },
 
             include: {
-                participants: participantInclude,
+                ConversationParticipant: participantInclude,
             },
         });
 
         if (
             existingConversation &&
-            existingConversation.participants.length === 2
+            existingConversation.ConversationParticipant.length === 2
         ) {
             return formatConversation(existingConversation, userId);
         }
@@ -189,7 +189,7 @@ const createConversation = async (data, userId) => {
             image: data.type === "GROUP" ? data.image : null,
             createdById: userId,
 
-            participants: {
+            ConversationParticipant: {
                 create: participantIds.map((participantId) => ({
                     userId: participantId,
                 })),
@@ -197,7 +197,7 @@ const createConversation = async (data, userId) => {
         },
 
         include: {
-            participants: participantInclude,
+            ConversationParticipant: participantInclude,
         },
     });
 

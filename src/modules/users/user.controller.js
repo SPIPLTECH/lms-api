@@ -151,6 +151,21 @@ const getMyProfile = async (req, res, next) => {
   }
 };
 
+const updateMyProfile = async (req, res, next) => {
+  try {
+    const user = await userService.updateMyProfile(req.user.id, req.body);
+
+    res.json({
+      success: true,
+      message: "Profile updated successfully",
+      data: user,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+
 module.exports = {
   getUsers,
   getUserById,
@@ -159,5 +174,5 @@ module.exports = {
   updateUserRole,
   updateUserStatus,
   getMyProfile,
-  
-};
+  updateMyProfile,
+};
