@@ -3,6 +3,8 @@ const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
 
+const path = require("path");
+
 const errorHandler = require("./middleware/error.middleware");
 
 const teacherRoutes = require("./modules/teacher/teacher.route");
@@ -40,11 +42,16 @@ app.use(
     })
 );
 
-app.use(helmet());
+app.use(
+    helmet({
+        crossOriginResourcePolicy: { policy: "cross-origin" },
+    })
+);
 app.use(morgan("dev"));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 /*
 |--------------------------------------------------------------------------

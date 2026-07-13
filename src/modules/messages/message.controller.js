@@ -93,10 +93,93 @@ const deleteMessage = async (req, res, next) => {
     }
 };
 
+const editMessage = async (req, res, next) => {
+    try {
+        const message = await messageService.editMessage(
+            req.params.messageId,
+            req.user.id,
+            req.body.content
+        );
+
+        try {
+            const { getIO } = require("../../socket");
+            const io = getIO();
+            io.to(message.conversationId).emit("message:edit", message);
+        } catch (socketError) {
+            console.error("Failed to broadcast message edit via socket:", socketError);
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Message edited successfully.",
+            data: message,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+const toggleStarMessage = async (req, res, next) => {
+    try {
+        const message = await messageService.toggleStarMessage(
+            req.params.messageId,
+            req.user.id
+        );
+
+        try {
+            const { getIO } = require("../../socket");
+            const io = getIO();
+            io.to(message.conversationId).emit("message:star", message);
+        } catch (socketError) {
+            console.error("Failed to broadcast message star via socket:", socketError);
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: message.isStarred ? "Message starred." : "Message unstarred.",
+            data: message,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+const uploadAttachment = async (req, res, next) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message: "No file uploaded.",
+            });
+        }
+
+        const { getAttachmentType } = require("../../middleware/upload.middleware");
+        const type = getAttachmentType(req.file.mimetype, req.file.originalname);
+        const fileUrl = `/uploads/attachments/${req.file.filename}`;
+
+        return res.status(200).json({
+            success: true,
+            message: "File uploaded successfully.",
+            data: {
+                fileName: req.file.originalname,
+                fileUrl,
+                mimeType: req.file.mimetype,
+                size: req.file.size,
+                type,
+            },
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     getMessages,
     getMessageById,
     sendMessage,
     markConversationAsRead,
     deleteMessage,
+    editMessage,
+    toggleStarMessage,
+    uploadAttachment,
 };

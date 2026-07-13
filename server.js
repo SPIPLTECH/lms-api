@@ -15,6 +15,10 @@ const server = http.createServer(app);
 // Initialize Socket.io
 initializeSocket(server);
 
+// Initialize Message Cleanup Cron Job
+const { initMessageCleanupCron } = require("./src/modules/messages/messageCleanup.service");
+initMessageCleanupCron();
+
 server.listen(PORT, () => {
     console.log(
         `🚀 Server running on port ${PORT}`

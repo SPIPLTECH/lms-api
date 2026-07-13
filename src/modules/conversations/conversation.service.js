@@ -2,8 +2,28 @@ const prisma = require("../../config/database");
 const messagingPermissionService = require("../permissions/messagingPermission.service");
 
 
-const formatConversation = (conversation, currentUserId) => {
+const formatLastSeen = (date) => {
+    if (!date) return "";
+    const now = new Date();
+    const d = new Date(date);
     
+    // Check if same day
+    if (d.toDateString() === now.toDateString()) {
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    
+    // Check if yesterday
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    if (d.toDateString() === yesterday.toDateString()) {
+        return "Yesterday";
+    }
+    
+    // Older
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+};
+
+const formatConversation = async (conversation, currentUserId) => {
     const formattedConversation = { ...conversation };
 
     if (conversation.type === "DIRECT") {
@@ -11,17 +31,49 @@ const formatConversation = (conversation, currentUserId) => {
             (participant) => participant.userId !== currentUserId
         );
 
-        // console.log("Other Participant:", otherParticipant);
-
         if (otherParticipant) {
             formattedConversation.name = otherParticipant.user.name;
         }
     }
 
-    console.log("Formatted Name:", formattedConversation.name);
+    // Fetch last message of this conversation
+    const lastMsg = await prisma.message.findFirst({
+        where: {
+            conversationId: conversation.id,
+            isDeleted: false,
+        },
+        orderBy: {
+            createdAt: "desc",
+        },
+        include: {
+            messageAttachments: {
+                take: 1,
+            },
+        },
+    });
+
+    if (lastMsg) {
+        let text = "";
+        if (lastMsg.content && lastMsg.content.trim()) {
+            text = lastMsg.content;
+        } else if (lastMsg.messageAttachments && lastMsg.messageAttachments.length > 0) {
+            const type = lastMsg.messageAttachments[0].type;
+            if (type === "IMAGE") text = "📷 Photo";
+            else if (type === "VIDEO") text = "🎥 Video";
+            else if (type === "AUDIO") text = "🎵 Audio";
+            else if (type === "DOCUMENT") text = "📄 Document";
+            else text = "📎 Attachment";
+        }
+        formattedConversation.lastMessage = text;
+        formattedConversation.lastSeen = formatLastSeen(lastMsg.createdAt);
+    } else {
+        formattedConversation.lastMessage = "";
+        formattedConversation.lastSeen = "";
+    }
 
     return formattedConversation;
 };
+
 const participantInclude = {
     include: {
         user: {
@@ -52,8 +104,10 @@ const getConversations = async (userId) => {
         },
     });
 
-    return conversations.map((conversation) =>
-        formatConversation(conversation, userId)
+    return await Promise.all(
+        conversations.map((conversation) =>
+            formatConversation(conversation, userId)
+        )
     );
 };
 
@@ -77,7 +131,7 @@ const getConversationById = async (conversationId, userId) => {
         return null;
     }
 
-    return formatConversation(conversation, userId);
+    return await formatConversation(conversation, userId);
 };
 
 const createConversation = async (data, userId) => {

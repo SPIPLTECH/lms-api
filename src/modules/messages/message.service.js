@@ -143,8 +143,17 @@ const sendMessage = async (conversationId, senderId, data) => {
             data: {
                 conversationId,
                 senderId,
-                content: data.content,
+                content: data.content || "",
                 expiresAt,
+                messageAttachments: data.attachments && data.attachments.length > 0 ? {
+                    create: data.attachments.map((att) => ({
+                        fileName: att.fileName,
+                        fileUrl: att.fileUrl,
+                        mimeType: att.mimeType,
+                        size: att.size,
+                        type: att.type,
+                    })),
+                } : undefined,
             },
             include: {
                 sender: {
@@ -230,10 +239,125 @@ const deleteMessage = async (messageId, userId) => {
     });
 };
 
+const editMessage = async (messageId, userId, content) => {
+    const message = await prisma.message.findUnique({
+        where: {
+            id: messageId,
+        },
+    });
+
+    if (!message) {
+        throw new Error("Message not found.");
+    }
+
+    if (message.isDeleted) {
+        throw new Error("Cannot edit a deleted message.");
+    }
+
+    if (message.senderId !== userId) {
+        throw new Error("You can edit only your own messages.");
+    }
+
+    return await prisma.message.update({
+        where: {
+            id: messageId,
+        },
+        data: {
+            content,
+            isEdited: true,
+            editedAt: new Date(),
+        },
+        include: {
+            sender: {
+                select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    role: true,
+                },
+            },
+            messageAttachments: {
+                select: {
+                    id: true,
+                    fileName: true,
+                    fileUrl: true,
+                    mimeType: true,
+                    size: true,
+                    type: true,
+                    createdAt: true,
+                },
+            },
+        },
+    });
+};
+
+const toggleStarMessage = async (messageId, userId) => {
+    const message = await prisma.message.findUnique({
+        where: {
+            id: messageId,
+        },
+        include: {
+            conversation: {
+                include: {
+                    participants: true,
+                },
+            },
+        },
+    });
+
+    if (!message) {
+        throw new Error("Message not found.");
+    }
+
+    if (message.isDeleted) {
+        throw new Error("Cannot star a deleted message.");
+    }
+
+    const isUserParticipant = message.conversation.participants.some(
+        (p) => p.userId === userId
+    );
+
+    if (!isUserParticipant) {
+        throw new Error("You are not authorized to star this message.");
+    }
+
+    return await prisma.message.update({
+        where: {
+            id: messageId,
+        },
+        data: {
+            isStarred: !message.isStarred,
+        },
+        include: {
+            sender: {
+                select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    role: true,
+                },
+            },
+            messageAttachments: {
+                select: {
+                    id: true,
+                    fileName: true,
+                    fileUrl: true,
+                    mimeType: true,
+                    size: true,
+                    type: true,
+                    createdAt: true,
+                },
+            },
+        },
+    });
+};
+
 module.exports = {
     getMessages,
     getMessageById,
     sendMessage,
     markConversationAsRead,
     deleteMessage,
+    editMessage,
+    toggleStarMessage,
 };
