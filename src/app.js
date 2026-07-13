@@ -26,10 +26,23 @@ const adminRoutes = require("./modules/admin/admin.route");
 const stickyNoteRoutes = require(
   "./modules/sticky-note/sticky-note.routes"
 );
+const notificationRoutes = require(
+  "./modules/notifications/notification.routes"
+);
+const conversationRoutes = require(
+  "./modules/conversations/conversation.routes"
+);
+const messageRoutes = require(
+  "./modules/messages/message.routes"
+);
 const app = express();
 
 app.use(cors());
-app.use(helmet());
+app.use(
+    helmet({
+        crossOriginResourcePolicy: { policy: "cross-origin" },
+    })
+);
 app.use(morgan("dev"));
 
 app.use(express.json());
@@ -75,6 +88,9 @@ app.use(
   "/sticky-notes",
   stickyNoteRoutes
 );
+app.use("/notifications", notificationRoutes);
+app.use("/conversations", conversationRoutes);
+app.use("/messages", messageRoutes);
 app.use(errorHandler);
 
 module.exports = app;

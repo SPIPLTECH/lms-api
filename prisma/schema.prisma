@@ -29,6 +29,7 @@ model User {
   Message                 Message[]
   studentProfile          StudentProfile?
   teacherProfile          TeacherProfile?
+  notifications           Notification[]
 }
 
 model StudentProfile {
@@ -248,15 +249,15 @@ model Certificate {
 }
 
 model Conversation {
-  id                      String                    @id
+  id                      String                    @id @default(cuid())
   type                    ConversationType
   name                    String?
   image                   String?
   createdById             String
   createdAt               DateTime                  @default(now())
-  updatedAt               DateTime
+  updatedAt               DateTime                  @updatedAt
   User                    User                      @relation(fields: [createdById], references: [id])
-  ConversationParticipant ConversationParticipant[]
+  participants            ConversationParticipant[]
   Message                 Message[]
 
   @@index([createdById])
@@ -264,20 +265,20 @@ model Conversation {
 }
 
 model ConversationParticipant {
-  id             String       @id
+  id             String       @id @default(cuid())
   conversationId String
   userId         String
   joinedAt       DateTime     @default(now())
   lastReadAt     DateTime?
-  Conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  User           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([conversationId, userId])
   @@index([userId])
 }
 
 model Message {
-  id                String              @id
+  id                String              @id @default(cuid())
   conversationId    String
   senderId          String
   content           String?
@@ -285,18 +286,20 @@ model Message {
   editedAt          DateTime?
   isDeleted         Boolean             @default(false)
   deletedAt         DateTime?
+  isStarred         Boolean             @default(false)
+  expiresAt         DateTime?
   createdAt         DateTime            @default(now())
-  updatedAt         DateTime
-  Conversation      Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  User              User                @relation(fields: [senderId], references: [id])
-  MessageAttachment MessageAttachment[]
+  updatedAt         DateTime            @updatedAt
+  conversation      Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender            User                @relation(fields: [senderId], references: [id])
+  messageAttachments MessageAttachment[]
 
   @@index([conversationId, createdAt])
   @@index([senderId])
 }
 
 model MessageAttachment {
-  id        String         @id
+  id        String         @id @default(cuid())
   messageId String
   fileName  String
   fileUrl   String
@@ -347,4 +350,19 @@ enum AttachmentType {
 enum ConversationType {
   DIRECT
   GROUP
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  type      String
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
