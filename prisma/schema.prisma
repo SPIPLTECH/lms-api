@@ -8,30 +8,27 @@ datasource db {
 }
 
 model User {
-  id                   String          @id @default(cuid())
-  name                 String
-  email                String          @unique
-  phoneNumber          String?         @unique
-  address              String?
-  password             String
-  role                 Role            @default(STUDENT)
-  refreshToken         String?
-  status               UserStatus      @default(ACTIVE)
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime        @updatedAt
-  isVerified           Boolean         @default(false)
-  otp                  String?
-  otpExpiresAt         DateTime?
-  adminProfile         AdminProfile?
-  courses              Course[]
-  studentProfile       StudentProfile?
-  teacherProfile       TeacherProfile?
-  createdConversations Conversation[]  @relation("ConversationCreator")
-
-  conversations ConversationParticipant[] @relation("ConversationParticipant")
-
-  sentMessages Message[] @relation("MessageSender")
-  notifications Notification[]
+  id                      String                    @id @default(cuid())
+  name                    String
+  email                   String                    @unique
+  phoneNumber             String?                   @unique
+  address                 String?
+  password                String
+  role                    Role                      @default(STUDENT)
+  refreshToken            String?
+  status                  UserStatus                @default(ACTIVE)
+  createdAt               DateTime                  @default(now())
+  updatedAt               DateTime                  @updatedAt
+  isVerified              Boolean                   @default(false)
+  otp                     String?
+  otpExpiresAt            DateTime?
+  adminProfile            AdminProfile?
+  Conversation            Conversation[]
+  ConversationParticipant ConversationParticipant[]
+  courses                 Course[]
+  Message                 Message[]
+  studentProfile          StudentProfile?
+  teacherProfile          TeacherProfile?
 }
 
 model StudentProfile {
@@ -48,7 +45,7 @@ model StudentProfile {
   progress        Progress[]
   quizSubmissions QuizSubmission[]
   reviews         Review[]
-  StickyNote      StickyNote[]
+  stickyNotes     StickyNote[]
   user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -120,7 +117,7 @@ model Lesson {
   contents    Content[]
   module      Module       @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   progress    Progress[]
-  StickyNote  StickyNote[]
+  stickyNotes StickyNote[]
 
   @@unique([moduleId, order])
 }
@@ -141,6 +138,24 @@ model Content {
   lesson      Lesson      @relation(fields: [lessonId], references: [id], onDelete: Cascade)
 
   @@unique([lessonId, order])
+}
+
+model StickyNote {
+  id        String         @id @default(cuid())
+  content   String
+  color     String?        @default("yellow")
+  isPinned  Boolean        @default(false)
+  timestamp Int?
+  studentId String
+  lessonId  String
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  lesson    Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([lessonId])
+  @@index([studentId, lessonId])
 }
 
 model Enrollment {
@@ -232,22 +247,66 @@ model Certificate {
   @@unique([studentId, courseId])
 }
 
-model StickyNote {
-  id             String         @id
-  content        String
-  color          String?        @default("yellow")
-  isPinned       Boolean        @default(false)
-  timestamp      Int?
-  studentId      String
-  lessonId       String
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime
-  Lesson         Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
-  StudentProfile StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+model Conversation {
+  id                      String                    @id
+  type                    ConversationType
+  name                    String?
+  image                   String?
+  createdById             String
+  createdAt               DateTime                  @default(now())
+  updatedAt               DateTime
+  User                    User                      @relation(fields: [createdById], references: [id])
+  ConversationParticipant ConversationParticipant[]
+  Message                 Message[]
 
-  @@index([lessonId])
-  @@index([studentId])
-  @@index([studentId, lessonId])
+  @@index([createdById])
+  @@index([updatedAt])
+}
+
+model ConversationParticipant {
+  id             String       @id
+  conversationId String
+  userId         String
+  joinedAt       DateTime     @default(now())
+  lastReadAt     DateTime?
+  Conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  User           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id                String              @id
+  conversationId    String
+  senderId          String
+  content           String?
+  isEdited          Boolean             @default(false)
+  editedAt          DateTime?
+  isDeleted         Boolean             @default(false)
+  deletedAt         DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime
+  Conversation      Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  User              User                @relation(fields: [senderId], references: [id])
+  MessageAttachment MessageAttachment[]
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+}
+
+model MessageAttachment {
+  id        String         @id
+  messageId String
+  fileName  String
+  fileUrl   String
+  mimeType  String
+  size      Int
+  type      AttachmentType
+  createdAt DateTime       @default(now())
+  Message   Message        @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
 }
 
 enum Role {
@@ -277,11 +336,6 @@ enum UserStatus {
   BLOCKED
 }
 
-enum ConversationType {
-  DIRECT
-  GROUP
-}
-
 enum AttachmentType {
   IMAGE
   VIDEO
@@ -290,104 +344,7 @@ enum AttachmentType {
   OTHER
 }
 
-model Conversation {
-  id          String           @id @default(cuid())
-  type        ConversationType
-  name        String?
-  description String?
-  image       String?
-
-  createdById String
-  createdBy   User   @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: Cascade)
-
-  participants ConversationParticipant[]
-  messages     Message[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([createdById])
-  @@index([updatedAt])
-}
-
-model ConversationParticipant {
-  id String @id @default(cuid())
-
-  conversationId String
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-
-  userId String
-  user   User   @relation("ConversationParticipant", fields: [userId], references: [id], onDelete: Cascade)
-
-  joinedAt   DateTime  @default(now())
-  lastReadAt DateTime?
-
-  isPinned Boolean @default(false)
-  isMuted  Boolean @default(false)
-
-  @@unique([conversationId, userId])
-  @@index([userId])
-}
-
-model Message {
-  id String @id @default(cuid())
-
-  conversationId String
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-
-  senderId String
-  sender User @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
-
-  content String @db.Text
-
-  isEdited Boolean @default(false)
-  editedAt DateTime?
-
-  isDeleted Boolean @default(false)
-  deletedAt DateTime?
-
-  // NEW
-  isStarred Boolean @default(false)
-  expiresAt DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  messageAttachments MessageAttachment[]
-
-  @@index([conversationId])
-  @@index([senderId])
-  @@index([expiresAt])
-}
-model MessageAttachment {
-  id String @id @default(cuid())
-
-  messageId String
-  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
-
-  fileName String
-  fileUrl  String
-  mimeType String
-  size     Int
-  type     AttachmentType
-
-  createdAt DateTime @default(now())
-
-  @@index([messageId])
-}
-
-model Notification {
-  id        String   @id @default(cuid())
-  userId    String
-  title     String
-  message   String
-  type      String
-  isRead    Boolean  @default(false)
-  link      String?
-  createdAt DateTime @default(now())
-
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([createdAt])
+enum ConversationType {
+  DIRECT
+  GROUP
 }
