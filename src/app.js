@@ -35,6 +35,7 @@ const liveClassRoutes = require("./modules/live-classes/live-class.routes");
 const achievementRoutes = require("./modules/achievements/achievement.routes");
 const assignmentRoutes = require("./modules/assignments/assignment.routes");
 const calendarRoutes = require("./modules/calendar/calendar.routes");
+const upcomingTasksRoutes = require("./modules/upcoming-tasks/upcoming-tasks.routes");
 
 const app = express();
 
@@ -94,7 +95,9 @@ app.use("/live-classes", liveClassRoutes);
 app.use("/achievements", achievementRoutes);
 app.use("/assignments", assignmentRoutes);
 app.use("/calendar", calendarRoutes);
+app.use("/upcoming-tasks", upcomingTasksRoutes);
 app.use(errorHandler);
+
 
 
 module.exports = app;
