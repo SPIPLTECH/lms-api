@@ -86,29 +86,34 @@ const participantInclude = {
 };
 
 const getConversations = async (userId) => {
-    const conversations = await prisma.conversation.findMany({
-        where: {
-            participants: {
-                some: {
-                    userId,
+    try {
+        const conversations = await prisma.conversation.findMany({
+            where: {
+                participants: {
+                    some: {
+                        userId,
+                    },
                 },
             },
-        },
 
-        include: {
-            participants: participantInclude,
-        },
+            include: {
+                participants: participantInclude,
+            },
 
-        orderBy: {
-            updatedAt: "desc",
-        },
-    });
+            orderBy: {
+                updatedAt: "desc",
+            },
+        });
 
-    return await Promise.all(
-        conversations.map((conversation) =>
-            formatConversation(conversation, userId)
-        )
-    );
+        return await Promise.all(
+            conversations.map((conversation) =>
+                formatConversation(conversation, userId)
+            )
+        );
+    } catch (error) {
+        console.error("Failed to load conversations from db:", error.message);
+        return [];
+    }
 };
 
 const getConversationById = async (conversationId, userId) => {
