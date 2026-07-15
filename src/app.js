@@ -35,7 +35,26 @@ const conversationRoutes = require(
 const messageRoutes = require(
   "./modules/messages/message.routes"
 );
+const calendarRoutes = require(
+  "./modules/calendar/calendar.routes"
+);
+const achievementRoutes = require(
+  "./modules/achievements/achievement.routes"
+);
+const assignmentRoutes = require(
+  "./modules/assignments/assignment.routes"
+);
+const bookmarkRoutes = require(
+  "./modules/bookmarks/bookmark.routes"
+);
+const liveClassRoutes = require(
+  "./modules/live-classes/live-class.routes"
+);
+const noteRoutes = require(
+  "./modules/notes/note.routes"
+);
 const app = express();
+app.disable('etag');
 
 app.use(cors());
 app.use(
@@ -99,6 +118,12 @@ app.use(
 app.use("/notifications", notificationRoutes);
 app.use("/conversations", conversationRoutes);
 app.use("/messages", messageRoutes);
+app.use("/calendar", calendarRoutes);
+app.use("/achievements", achievementRoutes);
+app.use("/assignments", assignmentRoutes);
+app.use("/bookmarks", bookmarkRoutes);
+app.use("/live-classes", liveClassRoutes);
+app.use("/notes", noteRoutes);
 app.use(errorHandler);
 
 
