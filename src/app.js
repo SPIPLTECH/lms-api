@@ -78,6 +78,14 @@ app.use("/progress", progressRoutes);
 app.use("/quizzes", quizRoutes);
 app.use("/questions", questionRoutes);
 app.use("/dashboard", dashboardRoutes);
+
+// Fallback direct endpoint for student dashboard upcoming-tasks
+app.get(
+  "/student/dashboard/upcoming-tasks",
+  require("./middleware/auth.middleware"),
+  require("./middleware/role.middleware")(["STUDENT"]),
+  require("./modules/dashboard/dashboard.controller").getUpcomingTasks
+);
 app.use("/reviews", reviewRoutes);
 app.use("/certificates", certificateRoutes);
 app.use("/admin", adminRoutes);

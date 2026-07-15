@@ -107,6 +107,7 @@ model Course {
   assignments  Assignment[]
   exams        Exam[]
   batches      Batch[]
+  batchSessions BatchSession[]
 }
 
 model Module {
@@ -207,6 +208,11 @@ model Quiz {
   passingScore    Int
   timeLimit       Int?
   startDate       DateTime?
+  dueDate        DateTime?
+  availableFrom  DateTime?
+  availableUntil DateTime?
+  isPublished    Boolean          @default(true)
+  status         String?          @default("ACTIVE")
   courseId        String
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
@@ -423,6 +429,14 @@ model LiveClass {
   duration     Int?
   meetingUrl   String?
   status       LiveClassStatus @default(SCHEDULED)
+  startDate      DateTime?
+  dueDate        DateTime?
+  availableFrom  DateTime?
+  availableUntil DateTime?
+  startTime      String?
+  endTime        String?
+  meetingLink    String?
+  isPublished    Boolean         @default(true)
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
   course       Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
@@ -463,6 +477,10 @@ model Assignment {
   totalQuestions Int?                   @default(0)
   estimatedTime  Int?                   @default(0)
   resources      Int?                   @default(0)
+  availableFrom  DateTime?
+  availableUntil DateTime?
+  isPublished    Boolean                @default(true)
+  status         String?                @default("ACTIVE")
   courseId       String
   createdAt      DateTime               @default(now())
   updatedAt      DateTime               @updatedAt
@@ -511,6 +529,15 @@ model Exam {
   description String?
   startDate   DateTime
   duration    Int?     // in minutes
+  dueDate        DateTime?
+  availableFrom  DateTime?
+  availableUntil DateTime?
+  examDate       DateTime?
+  startTime      String?
+  endTime        String?
+  meetingLink    String?
+  status         String?         @default("SCHEDULED")
+  isPublished    Boolean         @default(true)
   courseId    String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -523,11 +550,45 @@ model Batch {
   id          String           @id @default(cuid())
   name        String
   startDate   DateTime
+  dueDate        DateTime?
+  availableFrom  DateTime?
+  availableUntil DateTime?
+  startTime      String?
+  endTime        String?
+  meetingLink    String?
+  status         String?          @default("ACTIVE")
+  isPublished    Boolean          @default(true)
   courseId    String
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
   course      Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
   students    StudentProfile[]
+  sessions       BatchSession[]
 
   @@index([courseId])
 }
+
+model BatchSession {
+  id             String    @id @default(cuid())
+  title          String
+  description    String?
+  startDate      DateTime
+  dueDate        DateTime?
+  availableFrom  DateTime?
+  availableUntil DateTime?
+  examDate       DateTime?
+  startTime      String?
+  endTime        String?
+  meetingLink    String?
+  status         String?   @default("SCHEDULED")
+  isPublished    Boolean   @default(true)
+  courseId       String
+  batchId        String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  course         Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  batch          Batch?    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([courseId])
+}
+
