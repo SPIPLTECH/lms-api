@@ -62,6 +62,7 @@ model StudentProfile {
   achievements      StudentAchievement[]
   assignmentSubmissions AssignmentSubmission[]
   batches               Batch[]
+  studentState          StudentState?
   user                  User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -109,6 +110,7 @@ model Course {
   exams        Exam[]
   batches      Batch[]
   batchSessions BatchSession[]
+  studentStates StudentState[]
 }
 
 model Module {
@@ -223,14 +225,16 @@ model Quiz {
 }
 
 model Question {
-  id            String   @id @default(cuid())
+  id            String       @id @default(cuid())
   quizId        String
+  type          QuestionType @default(MCQ_SINGLE)
   question      String
   options       Json
-  correctAnswer String
-  marks         Int      @default(1)
-  createdAt     DateTime @default(now())
-  quiz          Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  correctAnswer Json
+  concept       String?
+  marks         Int          @default(1)
+  createdAt     DateTime     @default(now())
+  quiz          Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
 }
 
 model Review {
@@ -247,19 +251,21 @@ model Review {
 }
 
 model QuizSubmission {
-  id          String         @id @default(cuid())
-  quizId      String
-  studentId   String
-  answers     Json
-  score       Int
-  totalMarks  Int
-  percentage  Int
-  passed      Boolean        @default(false)
-  submittedAt DateTime       @default(now())
-  quiz        Quiz           @relation(fields: [quizId], references: [id], onDelete: Cascade)
-  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  id            String         @id @default(cuid())
+  quizId        String
+  studentId     String
+  answers       Json
+  score         Int
+  totalMarks    Int
+  percentage    Int
+  passed        Boolean        @default(false)
+  conceptScores Json?
+  submittedAt   DateTime       @default(now())
+  quiz          Quiz           @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  student       StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, quizId])
+  @@index([studentId])
 }
 
 model Certificate {
@@ -423,15 +429,15 @@ model Bookmark {
 }
 
 model LiveClass {
-  id           String          @id @default(cuid())
-  title        String
-  topic        String?
-  courseId     String
-  instructorId String
-  scheduledAt  DateTime
-  duration     Int?
-  meetingUrl   String?
-  status       LiveClassStatus @default(SCHEDULED)
+  id             String          @id @default(cuid())
+  title          String
+  topic          String?
+  courseId       String
+  instructorId   String
+  scheduledAt    DateTime
+  duration       Int?
+  meetingUrl     String?
+  status         LiveClassStatus @default(SCHEDULED)
   startDate      DateTime?
   dueDate        DateTime?
   availableFrom  DateTime?
@@ -440,9 +446,9 @@ model LiveClass {
   endTime        String?
   meetingLink    String?
   isPublished    Boolean         @default(true)
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  course       Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  course         Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
   @@index([courseId])
   @@index([scheduledAt])
@@ -527,11 +533,11 @@ model CalendarEvent {
 }
 
 model Exam {
-  id          String   @id @default(cuid())
-  title       String
-  description String?
-  startDate   DateTime
-  duration    Int?     // in minutes
+  id             String   @id @default(cuid())
+  title          String
+  description    String?
+  startDate      DateTime
+  duration       Int?     // in minutes
   dueDate        DateTime?
   availableFrom  DateTime?
   availableUntil DateTime?
@@ -541,18 +547,18 @@ model Exam {
   meetingLink    String?
   status         String?         @default("SCHEDULED")
   isPublished    Boolean         @default(true)
-  courseId    String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  courseId       String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  course         Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
   @@index([courseId])
 }
 
 model Batch {
-  id          String           @id @default(cuid())
-  name        String
-  startDate   DateTime
+  id             String           @id @default(cuid())
+  name           String
+  startDate      DateTime
   dueDate        DateTime?
   availableFrom  DateTime?
   availableUntil DateTime?
@@ -561,11 +567,11 @@ model Batch {
   meetingLink    String?
   status         String?          @default("ACTIVE")
   isPublished    Boolean          @default(true)
-  courseId    String
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  course      Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  students    StudentProfile[]
+  courseId       String
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  course         Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  students       StudentProfile[]
   sessions       BatchSession[]
 
   @@index([courseId])
@@ -608,4 +614,28 @@ model Notification {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+model StudentState {
+  id            String         @id @default(cuid())
+  studentId     String         @unique
+  courseId      String
+  moduleId      String?
+  lessonId      String?
+  contentId     String?
+  timestamp     Int?           @default(0)
+  updatedAt     DateTime       @updatedAt
+  student       StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course        Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([courseId])
+}
+
+enum QuestionType {
+  MCQ_SINGLE
+  MCQ_MULTI
+  ARRANGE_TOKENS
+  MATCH_PAIRS
+  SELF_ASSESSMENT
 }

@@ -137,11 +137,52 @@ const submitQuiz = async (
   }
 };
 
+const getQuizResult = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const student = await require("../../config/database").studentProfile.findUnique({
+      where: {
+        userId: req.user.id
+      }
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found"
+      });
+    }
+
+    const submission = await quizService.getQuizResult(
+      student.id,
+      req.params.quizId
+    );
+
+    if (!submission) {
+      return res.status(404).json({
+        success: false,
+        message: "Quiz submission not found"
+      });
+    }
+
+    res.json({
+      success: true,
+      data: submission
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getQuizzes,
   getQuizById,
   createQuiz,
   updateQuiz,
   deleteQuiz,
-  submitQuiz
+  submitQuiz,
+  getQuizResult
 };

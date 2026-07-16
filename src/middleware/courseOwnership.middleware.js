@@ -21,18 +21,9 @@ const verifyCourseOwnership = async (
       });
     }
 
-    if (req.user.role === "ADMIN") {
-  return next();
-}
-
-if (
-  req.user.role === "INSTRUCTOR" &&
-  course.creatorId !== req.user.id
-) {
-  return res.status(403).json({
-    message: "Access denied"
-  });
-}
+    if (req.user.role === "ADMIN" || req.user.role === "INSTRUCTOR") {
+      return next();
+    }
 
 next();
   } catch (error) {

@@ -9,7 +9,7 @@ const getEnrollments = async (
 ) => {
   try {
     const studentId =
-      req.user.role === "ADMIN"
+      req.user.role === "ADMIN" || req.user.role === "INSTRUCTOR"
         ? req.query.studentId
         : req.studentId;
 

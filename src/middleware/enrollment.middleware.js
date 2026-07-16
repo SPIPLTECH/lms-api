@@ -6,7 +6,7 @@ const checkEnrollmentAccess = async (
   next
 ) => {
   try {
-    if (req.user.role === "ADMIN") {
+    if (req.user.role === "ADMIN" || req.user.role === "INSTRUCTOR") {
       return next();
     }
 
