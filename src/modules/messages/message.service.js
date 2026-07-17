@@ -16,7 +16,7 @@ const getMessages = async (conversationId, userId) => {
     const conversation = await prisma.conversation.findFirst({
         where: {
             id: conversationId,
-            ConversationParticipant: {
+            participants: {
                 some: {
                     userId,
                 },
@@ -66,8 +66,8 @@ const getMessageById = async (messageId, userId) => {
     const message = await prisma.message.findFirst({
         where: {
             id: messageId,
-            Conversation: {
-                ConversationParticipant: {
+            conversation: {
+                participants: {
                     some: {
                         userId,
                     },
@@ -109,7 +109,7 @@ const sendMessage = async (conversationId, senderId, data) => {
     const conversation = await prisma.conversation.findFirst({
         where: {
             id: conversationId,
-            ConversationParticipant: {
+            participants: {
                 some: {
                     userId: senderId,
                 },

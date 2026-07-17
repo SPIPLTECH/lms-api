@@ -80,6 +80,7 @@ const participantInclude = {
             select: {
                 id: true,
                 name: true,
+                role: true,
             },
         },
     },

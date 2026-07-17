@@ -182,12 +182,13 @@ model StickyNote {
 }
 
 model Enrollment {
-  id         String         @id @default(cuid())
-  courseId   String
-  enrolledAt DateTime       @default(now())
-  studentId  String
-  course     Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  student    StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  id               String         @id @default(cuid())
+  courseId         String
+  enrolledAt       DateTime       @default(now())
+  lastAccessedAt   DateTime?
+  studentId        String
+  course           Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  student          StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, courseId])
 }

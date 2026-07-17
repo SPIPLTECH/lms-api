@@ -30,4 +30,11 @@ router.delete(
   controller.deleteEnrollment
 );
 
+router.patch(
+  "/:courseId/access",
+  verifyToken,
+  checkEnrollmentAccess,
+  controller.trackCourseAccess
+);
+
 module.exports = router;
