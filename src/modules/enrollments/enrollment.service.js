@@ -106,8 +106,26 @@ const deleteEnrollment = async (
   });
 };
 
+const updateLastAccessed = async (
+  studentId,
+  courseId
+) => {
+  return await prisma.enrollment.update({
+    where: {
+      studentId_courseId: {
+        studentId,
+        courseId
+      }
+    },
+    data: {
+      lastAccessedAt: new Date()
+    }
+  });
+};
+
 module.exports = {
   getEnrollments,
   createEnrollment,
-  deleteEnrollment
+  deleteEnrollment,
+  updateLastAccessed
 };

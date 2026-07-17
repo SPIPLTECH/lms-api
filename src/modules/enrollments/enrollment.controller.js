@@ -79,8 +79,26 @@ const deleteEnrollment = async (
   }
 };
 
+const trackCourseAccess = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    await enrollmentService.updateLastAccessed(
+      req.studentId,
+      req.params.courseId
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getEnrollments,
   createEnrollment,
-  deleteEnrollment
+  deleteEnrollment,
+  trackCourseAccess
 };
