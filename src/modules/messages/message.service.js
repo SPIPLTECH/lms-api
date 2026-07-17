@@ -9,6 +9,9 @@ const formatMessage = (msg) => {
         formatted.sender = msg.User;
         delete formatted.User;
     }
+    if (msg.messageAttachments) {
+        formatted.attachments = msg.messageAttachments;
+    }
     return formatted;
 };
 
@@ -16,7 +19,7 @@ const getMessages = async (conversationId, userId) => {
     const conversation = await prisma.conversation.findFirst({
         where: {
             id: conversationId,
-            ConversationParticipant: {
+            participants: {
                 some: {
                     userId,
                 },
@@ -34,7 +37,7 @@ const getMessages = async (conversationId, userId) => {
             isDeleted: false,
         },
         include: {
-            User: {
+            sender: {
                 select: {
                     id: true,
                     name: true,
@@ -42,7 +45,7 @@ const getMessages = async (conversationId, userId) => {
                     role: true,
                 },
             },
-            MessageAttachment: {
+            messageAttachments: {
                 select: {
                     id: true,
                     fileName: true,
@@ -67,7 +70,7 @@ const getMessageById = async (messageId, userId) => {
         where: {
             id: messageId,
             Conversation: {
-                ConversationParticipant: {
+                participants: {
                     some: {
                         userId,
                     },
@@ -76,7 +79,7 @@ const getMessageById = async (messageId, userId) => {
             isDeleted: false,
         },
         include: {
-            User: {
+            sender: {
                 select: {
                     id: true,
                     name: true,
@@ -84,7 +87,7 @@ const getMessageById = async (messageId, userId) => {
                     role: true,
                 },
             },
-            MessageAttachment: {
+            messageAttachments: {
                 select: {
                     id: true,
                     fileName: true,
@@ -109,7 +112,7 @@ const sendMessage = async (conversationId, senderId, data) => {
     const conversation = await prisma.conversation.findFirst({
         where: {
             id: conversationId,
-            ConversationParticipant: {
+            participants: {
                 some: {
                     userId: senderId,
                 },
@@ -127,7 +130,7 @@ const sendMessage = async (conversationId, senderId, data) => {
                 conversationId,
                 senderId,
                 content: data.content || "",
-                MessageAttachment: data.attachments && data.attachments.length > 0 ? {
+                messageAttachments: data.attachments && data.attachments.length > 0 ? {
                     create: data.attachments.map((att) => ({
                         fileName: att.fileName,
                         fileUrl: att.fileUrl,
@@ -138,7 +141,7 @@ const sendMessage = async (conversationId, senderId, data) => {
                 } : undefined,
             },
             include: {
-                User: {
+                sender: {
                     select: {
                         id: true,
                         name: true,
@@ -146,7 +149,7 @@ const sendMessage = async (conversationId, senderId, data) => {
                         role: true,
                     },
                 },
-                MessageAttachment: {
+                messageAttachments: {
                     select: {
                         id: true,
                         fileName: true,
@@ -250,7 +253,7 @@ const editMessage = async (messageId, userId, content) => {
             editedAt: new Date(),
         },
         include: {
-            User: {
+            sender: {
                 select: {
                     id: true,
                     name: true,
@@ -258,7 +261,7 @@ const editMessage = async (messageId, userId, content) => {
                     role: true,
                 },
             },
-            MessageAttachment: {
+            messageAttachments: {
                 select: {
                     id: true,
                     fileName: true,

@@ -104,8 +104,31 @@ const markAllAsRead = async (userId) => {
 };
 
 const notifyEnrolledStudents = async (courseId, notificationData) => {
-  // No-op fallback
-  console.log(`[Notification Fallback] Student notifications bypassed for course ${courseId}`);
+  try {
+    const enrollments = await prisma.enrollment.findMany({
+      where: { courseId },
+      include: {
+        student: {
+          select: {
+            userId: true,
+          },
+        },
+      },
+    });
+
+    for (const enrollment of enrollments) {
+      if (enrollment.student && enrollment.student.userId) {
+        await createNotification(enrollment.student.userId, {
+          title: notificationData.title || "New Announcement 📢",
+          message: notificationData.message,
+          type: "ANNOUNCEMENT",
+          link: notificationData.link || `/student/dashboard`,
+        });
+      }
+    }
+  } catch (error) {
+    console.error("Failed to notify enrolled students:", error.message);
+  }
 };
 
 module.exports = {

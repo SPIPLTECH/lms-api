@@ -87,4 +87,26 @@ router.get(
   controller.getCourseStudents
 );
 
+router.post(
+  "/:courseId/announcements",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyCourseOwnership,
+  controller.sendAnnouncement
+);
+
+router.get(
+  "/:courseId/batches",
+  verifyToken,
+  controller.getCourseBatches
+);
+
+router.post(
+  "/:courseId/batches",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyCourseOwnership,
+  controller.createCourseBatch
+);
+
 module.exports = router;

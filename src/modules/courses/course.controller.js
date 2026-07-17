@@ -132,6 +132,39 @@ const getCourseStudents = async (
     next(error);
   }
 };
+
+const sendAnnouncement = async (req, res, next) => {
+  try {
+    const { title, message } = req.body;
+    const notificationService = require("../notifications/notification.service");
+    await notificationService.notifyEnrolledStudents(req.params.courseId, { title, message });
+    res.json({
+      success: true,
+      message: "Announcement broadcasted successfully."
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getCourseBatches = async (req, res, next) => {
+  try {
+    const batches = await courseService.getCourseBatches(req.params.courseId);
+    res.json(batches);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const createCourseBatch = async (req, res, next) => {
+  try {
+    const batch = await courseService.createCourseBatch(req.params.courseId, req.body);
+    res.status(201).json(batch);
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getCourses,
   getCourseById,
@@ -139,5 +172,8 @@ module.exports = {
   updateCourse,
   updateStatus,
   deleteCourse,
-  getCourseStudents 
+  getCourseStudents,
+  sendAnnouncement,
+  getCourseBatches,
+  createCourseBatch
 };

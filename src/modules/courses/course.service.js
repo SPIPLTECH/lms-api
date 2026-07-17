@@ -96,7 +96,8 @@ const getCourseById = async (courseId, role) => {
         include: {
           questions: true
         }
-      }
+      },
+      enrollments: true
     }
   });
 
@@ -187,6 +188,29 @@ const getCourseStudents = async (courseId) => {
   }));
 };
 
+const getCourseBatches = async (courseId) => {
+  return await prisma.batch.findMany({
+    where: { courseId },
+    orderBy: { createdAt: "desc" }
+  });
+};
+
+const createCourseBatch = async (courseId, data) => {
+  return await prisma.batch.create({
+    data: {
+      name: data.name,
+      startDate: new Date(data.startDate),
+      dueDate: data.dueDate ? new Date(data.dueDate) : null,
+      startTime: data.startTime || null,
+      endTime: data.endTime || null,
+      meetingLink: data.meetingLink || null,
+      status: data.status || "ACTIVE",
+      isPublished: data.isPublished !== undefined ? data.isPublished : true,
+      courseId
+    }
+  });
+};
+
 module.exports = {
   getCourses,
   getCourseById,
@@ -194,5 +218,7 @@ module.exports = {
   updateCourse,
   updateStatus,
   deleteCourse,
-  getCourseStudents
+  getCourseStudents,
+  getCourseBatches,
+  createCourseBatch
 };

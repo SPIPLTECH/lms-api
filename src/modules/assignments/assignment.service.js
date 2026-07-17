@@ -110,8 +110,72 @@ const submitAssignment = async (assignmentId, studentId, data) => {
     });
 };
 
+const getInstructorAssignments = async (instructorId, courseId) => {
+    const where = {};
+    if (courseId) {
+        where.courseId = courseId;
+    } else {
+        where.course = { creatorId: instructorId };
+    }
+
+    return await prisma.assignment.findMany({
+        where,
+        include: {
+            course: {
+                select: {
+                    id: true,
+                    title: true,
+                }
+            }
+        },
+        orderBy: {
+            createdAt: "desc"
+        }
+    });
+};
+
+const createAssignment = async (data) => {
+    return await prisma.assignment.create({
+        data: {
+            title: data.title,
+            description: data.description || null,
+            dueDate: new Date(data.dueDate),
+            totalQuestions: data.totalQuestions ? parseInt(data.totalQuestions) : 0,
+            estimatedTime: data.estimatedTime ? parseInt(data.estimatedTime) : 0,
+            resources: data.resources ? parseInt(data.resources) : 0,
+            courseId: data.courseId,
+            isPublished: data.isPublished !== undefined ? data.isPublished : true,
+        }
+    });
+};
+
+const updateAssignment = async (assignmentId, data) => {
+    return await prisma.assignment.update({
+        where: { id: assignmentId },
+        data: {
+            title: data.title,
+            description: data.description,
+            dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
+            totalQuestions: data.totalQuestions !== undefined ? parseInt(data.totalQuestions) : undefined,
+            estimatedTime: data.estimatedTime !== undefined ? parseInt(data.estimatedTime) : undefined,
+            resources: data.resources !== undefined ? parseInt(data.resources) : undefined,
+            isPublished: data.isPublished !== undefined ? data.isPublished : undefined,
+        }
+    });
+};
+
+const deleteAssignment = async (assignmentId) => {
+    return await prisma.assignment.delete({
+        where: { id: assignmentId }
+    });
+};
+
 module.exports = {
     getAssignments,
     getAssignmentById,
     submitAssignment,
+    getInstructorAssignments,
+    createAssignment,
+    updateAssignment,
+    deleteAssignment,
 };

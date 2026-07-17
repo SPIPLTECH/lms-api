@@ -8,15 +8,36 @@ const checkRole = require("../../middleware/role.middleware");
 router.get(
     "/",
     verifyToken,
-    checkRole(["STUDENT"]),
+    checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]),
     controller.getAssignments
 );
 
 router.get(
     "/:assignmentId",
     verifyToken,
-    checkRole(["STUDENT"]),
+    checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]),
     controller.getAssignmentById
+);
+
+router.post(
+    "/",
+    verifyToken,
+    checkRole(["INSTRUCTOR", "ADMIN"]),
+    controller.createAssignment
+);
+
+router.put(
+    "/:assignmentId",
+    verifyToken,
+    checkRole(["INSTRUCTOR", "ADMIN"]),
+    controller.updateAssignment
+);
+
+router.delete(
+    "/:assignmentId",
+    verifyToken,
+    checkRole(["INSTRUCTOR", "ADMIN"]),
+    controller.deleteAssignment
 );
 
 router.post(
