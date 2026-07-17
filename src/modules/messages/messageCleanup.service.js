@@ -6,6 +6,9 @@ const cron = require("node-cron");
 const cleanupExpiredMessages = async () => {
     try {
         console.log("🧹 Running expired messages cleanup task...");
+        // Bypass message cleanup since isStarred / expiresAt columns do not exist in the database
+        console.log("🧹 Skipping message cleanup (columns not in database).");
+        return;
 
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);

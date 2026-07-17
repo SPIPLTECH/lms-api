@@ -26,7 +26,8 @@ const getInstructorDashboard = async (
   try {
     const data =
       await dashboardService.getInstructorDashboard(
-        req.user.id
+        req.user.id,
+        req.query.courseId
       );
 
     res.json({

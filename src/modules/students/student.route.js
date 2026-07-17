@@ -2,8 +2,11 @@ const express = require("express");
 const router = express.Router();
 
 const studentController = require("./student.controller");
+const studentStateRoutes = require("./studentState.routes");
 const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
+
+router.use("/state", studentStateRoutes);
 
 router.get(
   "/",

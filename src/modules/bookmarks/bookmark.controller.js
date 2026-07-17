@@ -8,7 +8,9 @@ const getBookmarks = async (req, res, next) => {
     });
 
     if (!student) {
-      return res.status(404).json({ success: false, message: "Student profile not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Student profile not found" });
     }
 
     const bookmarks = await bookmarkService.getBookmarks(student.id, req.query);
@@ -26,7 +28,9 @@ const createBookmark = async (req, res, next) => {
     });
 
     if (!student) {
-      return res.status(404).json({ success: false, message: "Student profile not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Student profile not found" });
     }
 
     const bookmark = await bookmarkService.createBookmark(req.body, student.id);
@@ -48,7 +52,9 @@ const deleteBookmark = async (req, res, next) => {
     });
 
     if (!student) {
-      return res.status(404).json({ success: false, message: "Student profile not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Student profile not found" });
     }
 
     await bookmarkService.deleteBookmark(req.params.bookmarkId, student.id);

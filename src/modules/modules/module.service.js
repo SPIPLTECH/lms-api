@@ -1,32 +1,45 @@
 const prisma = require("../../config/database");
 
-const getModules = async (courseId) => {
+const getModules = async (courseId, role) => {
+  const where = { courseId };
+  if (role === "STUDENT" || role === "GUEST") {
+    where.isPublished = true;
+  }
   return await prisma.module.findMany({
-    where: {
-      courseId
-    },
+    where,
     orderBy: {
       order: "asc"
     }
   });
 };
 
-const getModuleById = async (moduleId) => {
-  return await prisma.module.findUnique({
+const getModuleById = async (moduleId, role) => {
+  const isStudentOrGuest = role === "STUDENT" || role === "GUEST";
+
+  const module = await prisma.module.findUnique({
     where: {
       id: moduleId
     },
     include: {
-  lessons: {
-    orderBy: {
-      order: "asc"
-    },
-    include: {
-      contents: true
+      lessons: {
+        where: isStudentOrGuest ? { isPublished: true } : undefined,
+        orderBy: {
+          order: "asc"
+        },
+        include: {
+          contents: true
+        }
+      }
     }
-  }
-}
   });
+
+  if (!module) return null;
+
+  if (isStudentOrGuest && !module.isPublished) {
+    return null;
+  }
+
+  return module;
 };
 
 const createModule = async (data) => {

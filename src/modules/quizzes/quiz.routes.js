@@ -20,6 +20,12 @@ router.get(
 );
 
 router.get(
+  "/:quizId/result",
+  verifyToken,
+  controller.getQuizResult
+);
+
+router.get(
   "/:quizId",
   controller.getQuizById
 );
