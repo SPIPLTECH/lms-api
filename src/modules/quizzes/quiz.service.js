@@ -90,7 +90,8 @@ const calculateSubmissionResult = (quiz, answers = []) => {
 };
 
 const getQuizzes = async (
-  courseId
+  courseId,
+  studentId
 ) => {
   const where = {};
 
@@ -98,6 +99,7 @@ const getQuizzes = async (
     where.courseId = courseId;
   }
 
+<<<<<<< HEAD
   return prisma.quiz.findMany({
     where,
     include: {
@@ -112,8 +114,27 @@ const getQuizzes = async (
           title: true,
           category: true
         }
+=======
+  const include = {
+    _count: {
+      select: {
+        questions: true
+>>>>>>> 20f0f63ec84a0523853ff57971d50f2a4da7b04e
       }
     }
+  };
+
+  if (studentId) {
+    include.quizSubmissions = {
+      where: {
+        studentId
+      }
+    };
+  }
+
+  return prisma.quiz.findMany({
+    where,
+    include
   });
 };
 

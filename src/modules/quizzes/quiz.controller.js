@@ -8,9 +8,22 @@ const getQuizzes = async (
   next
 ) => {
   try {
+    let studentId = null;
+    if (req.user && req.user.role === "STUDENT") {
+      const student = await require("../../config/database").studentProfile.findUnique({
+        where: {
+          userId: req.user.id
+        }
+      });
+      if (student) {
+        studentId = student.id;
+      }
+    }
+
     const quizzes =
       await quizService.getQuizzes(
-        req.query.courseId
+        req.query.courseId,
+        studentId
       );
 
     res.json({
