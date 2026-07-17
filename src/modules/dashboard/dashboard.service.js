@@ -886,110 +886,11 @@ const getStudentDashboard = async (userId) => {
     };
   });
 
-  // Get upcoming quizzes, assignments, and live classes for this student
-  const quizzes = await prisma.quiz.findMany({
-    where: {
-      courseId: { in: enrolledCourseIds },
-      quizSubmissions: {
-        none: { studentId }
-      }
-    },
-    include: {
-      course: { select: { title: true } }
-    }
-  });
-
-  const assignmentsList = await prisma.assignment.findMany({
-    where: {
-      courseId: { in: enrolledCourseIds },
-      submissions: {
-        none: { studentId }
-      }
-    },
-    include: {
-      course: { select: { title: true } }
-    }
-  });
-
-  const liveClasses = await prisma.liveClass.findMany({
-    where: {
-      courseId: { in: enrolledCourseIds },
-      scheduledAt: { gte: new Date() }
-    },
-    include: {
-      course: { select: { title: true } }
-    }
-  });
-
-  const tasks = [];
-
-  quizzes.forEach(q => {
-    tasks.push({
-      id: q.id,
-      title: q.title,
-      subtitle: q.course?.title || "Quiz",
-      type: "quiz",
-      date: q.createdAt,
-      dueDateLabel: "Pending Quiz",
-    });
-  });
-
-  assignmentsList.forEach(a => {
-    const diffTime = Math.max(0, new Date(a.dueDate) - new Date());
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    tasks.push({
-      id: a.id,
-      title: a.title,
-      subtitle: a.course?.title || "Assignment",
-      type: "assignment",
-      date: a.dueDate,
-      dueDateLabel: diffDays === 0 ? "Due today" : `Due in ${diffDays} day${diffDays !== 1 ? "s" : ""}`,
-    });
-  });
-
-  liveClasses.forEach(l => {
-    const timeString = new Date(l.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const dateString = new Date(l.scheduledAt).toLocaleDateString([], { month: 'short', day: 'numeric' });
-    tasks.push({
-      id: l.id,
-      title: l.title,
-      subtitle: l.course?.title || "Live Class",
-      type: "class",
-      date: l.scheduledAt,
-      dueDateLabel: `${dateString} ${timeString}`,
-    });
-  });
-
-  // Sort tasks by date (ascending, closest first)
-  tasks.sort((a, b) => new Date(a.date) - new Date(b.date));
-
-  const upcomingTasks = tasks.slice(0, 4);
-
-  // Fallbacks if empty
-  if (upcomingTasks.length === 0) {
-    upcomingTasks.push({
-      id: "fallback-1",
-      title: "OOPs Concept Quiz",
-      subtitle: "Object Oriented Programming",
-      type: "quiz",
-      dueDateLabel: "Due in 3 days"
-    });
-    upcomingTasks.push({
-      id: "fallback-2",
-      title: "Live Class: DBMS masterclass",
-      subtitle: "Join with your batch",
-      type: "class",
-      dueDateLabel: "Tomorrow 10:00 AM"
-    });
-  }
-
   return {
     stats: {
-      enrolledCourses:
-        student.enrollments.length,
+      enrolledCourses: student.enrollments.length,
       completedLessons,
-      certificates:
-        student.certificates.length,
+      certificates: student.certificates.length,
       reviews: student.reviews.length,
       completionRate,
       totalLearningTime,
@@ -1001,14 +902,12 @@ const getStudentDashboard = async (userId) => {
       streak,
       rankPercentile,
     },
-
     enrolledCoursesList,
     certificatesList: student.certificates,
     reviewsList: student.reviews,
     progressList: progress,
     skills,
     recommendations: formattedRecommendations,
-    upcomingTasks,
   };
 };
 

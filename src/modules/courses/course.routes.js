@@ -35,6 +35,7 @@ router.get(
 
 router.get(
   "/:courseId",
+  verifyToken,
   controller.getCourseById
 );
 

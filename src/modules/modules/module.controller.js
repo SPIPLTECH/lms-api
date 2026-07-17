@@ -10,7 +10,8 @@ const getModules = async (
   try {
     const modules =
       await moduleService.getModules(
-        req.query.courseId
+        req.query.courseId,
+        req.user.role
       );
 
     res.json(modules);
@@ -27,7 +28,8 @@ const getModuleById = async (
   try {
     const module =
       await moduleService.getModuleById(
-        req.params.moduleId
+        req.params.moduleId,
+        req.user.role
       );
 
     res.json(module);

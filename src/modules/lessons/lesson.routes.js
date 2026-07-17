@@ -21,11 +21,13 @@ const verifyLessonOwnership =
 
 router.get(
   "/",
+  verifyToken,
   lessonController.getLessons
 );
 
 router.get(
   "/:lessonId",
+  verifyToken,
   lessonController.getLessonById
 );
 

@@ -32,7 +32,8 @@ const getCourseById = async (
   try {
     const course =
       await courseService.getCourseById(
-        req.params.courseId
+        req.params.courseId,
+        req.user.role
       );
 
     if (!course) {

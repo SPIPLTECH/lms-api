@@ -27,12 +27,12 @@ const formatConversation = async (conversation, currentUserId) => {
     const formattedConversation = { ...conversation };
 
     if (conversation.type === "DIRECT") {
-        const otherParticipant = conversation.ConversationParticipant.find(
+        const otherParticipant = conversation.participants.find(
             (participant) => participant.userId !== currentUserId
         );
 
         if (otherParticipant) {
-            formattedConversation.name = otherParticipant.User.name;
+            formattedConversation.name = otherParticipant.user.name;
         }
     }
 
@@ -46,7 +46,7 @@ const formatConversation = async (conversation, currentUserId) => {
             createdAt: "desc",
         },
         include: {
-            MessageAttachment: {
+            messageAttachments: {
                 take: 1,
             },
         },
@@ -56,8 +56,8 @@ const formatConversation = async (conversation, currentUserId) => {
         let text = "";
         if (lastMsg.content && lastMsg.content.trim()) {
             text = lastMsg.content;
-        } else if (lastMsg.MessageAttachment && lastMsg.MessageAttachment.length > 0) {
-            const type = lastMsg.MessageAttachment[0].type;
+        } else if (lastMsg.messageAttachments && lastMsg.messageAttachments.length > 0) {
+            const type = lastMsg.messageAttachments[0].type;
             if (type === "IMAGE") text = "📷 Photo";
             else if (type === "VIDEO") text = "🎥 Video";
             else if (type === "AUDIO") text = "🎵 Audio";
@@ -76,7 +76,7 @@ const formatConversation = async (conversation, currentUserId) => {
 
 const participantInclude = {
     include: {
-        User: {
+        user: {
             select: {
                 id: true,
                 name: true,
@@ -120,7 +120,7 @@ const getConversationById = async (conversationId, userId) => {
     const conversation = await prisma.conversation.findFirst({
         where: {
             id: conversationId,
-            ConversationParticipant: {
+            participants: {
                 some: {
                     userId,
                 },
@@ -128,7 +128,7 @@ const getConversationById = async (conversationId, userId) => {
         },
 
         include: {
-            ConversationParticipant: participantInclude,
+            participants: participantInclude,
         },
     });
 

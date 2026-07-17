@@ -19,11 +19,13 @@ const checkRole = require(
 
 router.get(
   "/",
+  verifyToken,
   controller.getModules
 );
 
 router.get(
   "/:moduleId",
+  verifyToken,
   controller.getModuleById
 );
 

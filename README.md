@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # LMS Backend API Testing Guide
 
 ## Base URL

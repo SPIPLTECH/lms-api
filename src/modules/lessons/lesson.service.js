@@ -2,23 +2,32 @@ const prisma =
   require("../../config/database");
 const notificationService = require("../notifications/notification.service");
 
-const getLessons = async (
-  moduleId
-) => {
+const getLessons = async (moduleId, role) => {
+  const where =
+    (role === "STUDENT" || role === "GUEST")
+      ? {
+          moduleId,
+          isPublished: true,
+        }
+      : {
+          moduleId,
+        };
+
   return prisma.lesson.findMany({
-    where: {
-      moduleId
-    },
+    where,
     orderBy: {
-      order: "asc"
-    }
+      order: "asc",
+    },
   });
 };
 
 const getLessonById = async (
-  lessonId
+  lessonId,
+  role
 ) => {
-  return prisma.lesson.findUnique({
+  const isStudentOrGuest = role === "STUDENT" || role === "GUEST";
+
+  const lesson = await prisma.lesson.findUnique({
     where: {
       id: lessonId
     },
@@ -30,6 +39,14 @@ const getLessonById = async (
       }
     }
   });
+
+  if (!lesson) return null;
+
+  if (isStudentOrGuest && !lesson.isPublished) {
+    return null;
+  }
+
+  return lesson;
 };
 
 const createLesson = async (

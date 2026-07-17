@@ -55,8 +55,10 @@ const getCourses = async (
   return await prisma.course.findMany(query);
 };
 
-const getCourseById = async (courseId) => {
-  return await prisma.course.findUnique({
+const getCourseById = async (courseId, role) => {
+  const isStudentOrGuest = role === "STUDENT" || role === "GUEST";
+
+  const course = await prisma.course.findUnique({
     where: {
       id: courseId
     },
@@ -73,11 +75,13 @@ const getCourseById = async (courseId) => {
       },
 
       modules: {
+        where: isStudentOrGuest ? { isPublished: true } : undefined,
         orderBy: {
           order: "asc"
         },
         include: {
           lessons: {
+            where: isStudentOrGuest ? { isPublished: true } : undefined,
             orderBy: {
               order: "asc"
             },
@@ -95,6 +99,14 @@ const getCourseById = async (courseId) => {
       }
     }
   });
+
+  if (!course) return null;
+
+  if (isStudentOrGuest && course.status !== "PUBLISHED") {
+    return null;
+  }
+
+  return course;
 };
 
 const createCourse = async (data, userId) => {

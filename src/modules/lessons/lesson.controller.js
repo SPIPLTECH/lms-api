@@ -6,7 +6,8 @@ const getLessons = async (req, res, next) => {
 
     const lessons =
       await lessonService.getLessons(
-        moduleId
+        moduleId,
+        req.user.role
       );
 
     res.json(lessons);
@@ -23,7 +24,8 @@ const getLessonById = async (
   try {
     const lesson =
       await lessonService.getLessonById(
-        req.params.lessonId
+        req.params.lessonId,
+        req.user.role
       );
 
     if (!lesson) {
