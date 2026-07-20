@@ -99,27 +99,17 @@ const getQuizzes = async (
     where.courseId = courseId;
   }
 
-<<<<<<< HEAD
-  return prisma.quiz.findMany({
-    where,
-    include: {
-      _count: {
-        select: {
-          questions: true,
-          quizSubmissions: true
-        }
-      },
-      course: {
-        select: {
-          title: true,
-          category: true
-        }
-=======
   const include = {
     _count: {
       select: {
-        questions: true
->>>>>>> 20f0f63ec84a0523853ff57971d50f2a4da7b04e
+        questions: true,
+        quizSubmissions: true
+      }
+    },
+    course: {
+      select: {
+        title: true,
+        category: true
       }
     }
   };
