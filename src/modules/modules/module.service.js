@@ -5,10 +5,22 @@ const getModules = async (courseId, role) => {
   if (role === "STUDENT" || role === "GUEST") {
     where.isPublished = true;
   }
+  const isStudentOrGuest = role === "STUDENT" || role === "GUEST";
   return await prisma.module.findMany({
     where,
     orderBy: {
       order: "asc"
+    },
+    include: {
+      lessons: {
+        where: isStudentOrGuest ? { isPublished: true } : undefined,
+        orderBy: {
+          order: "asc"
+        },
+        include: {
+          contents: true
+        }
+      }
     }
   });
 };
