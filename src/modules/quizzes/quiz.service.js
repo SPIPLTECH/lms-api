@@ -303,6 +303,66 @@ const getQuizResult = async (studentId, quizId) => {
   });
 };
 
+const generateSelfAssessmentQuiz = async (courseId, questionCount = 5) => {
+  // Find all quizzes in this course
+  const quizzes = await prisma.quiz.findMany({
+    where: { courseId },
+    select: { id: true }
+  });
+  const quizIds = quizzes.map((q) => q.id);
+
+  // Fetch all questions for those quizzes
+  const allQuestions = await prisma.question.findMany({
+    where: {
+      quizId: { in: quizIds }
+    }
+  });
+
+  if (allQuestions.length === 0) {
+    throw new Error("No questions found in this course to generate a practice quiz.");
+  }
+
+  // Shuffle questions randomly
+  const shuffled = [...allQuestions].sort(() => 0.5 - Math.random());
+  const selected = shuffled.slice(0, Math.min(questionCount, shuffled.length));
+
+  // Create a new self-generated Quiz
+  const newQuiz = await prisma.quiz.create({
+    data: {
+      title: `Self-Generated Practice Quiz`,
+      description: `Practice quiz generated on ${new Date().toLocaleDateString()}`,
+      passingScore: 50,
+      timeLimit: 15,
+      courseId,
+      isPublished: true,
+      status: "ACTIVE"
+    }
+  });
+
+  // Create the questions mapped to the new quiz
+  const questionData = selected.map((q) => ({
+    quizId: newQuiz.id,
+    type: q.type,
+    question: q.question,
+    options: q.options,
+    correctAnswer: q.correctAnswer,
+    concept: q.concept,
+    marks: q.marks
+  }));
+
+  await prisma.question.createMany({
+    data: questionData
+  });
+
+  // Return the full quiz object with questions
+  return await prisma.quiz.findUnique({
+    where: { id: newQuiz.id },
+    include: {
+      questions: true
+    }
+  });
+};
+
 module.exports = {
   calculateSubmissionResult,
   getQuizzes,
@@ -311,5 +371,6 @@ module.exports = {
   updateQuiz,
   deleteQuiz,
   submitQuiz,
-  getQuizResult
+  getQuizResult,
+  generateSelfAssessmentQuiz
 };

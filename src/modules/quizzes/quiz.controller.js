@@ -190,6 +190,36 @@ const getQuizResult = async (
   }
 };
 
+const generateSelfAssessmentQuiz = async (req, res, next) => {
+  try {
+    const { courseId, questionCount } = req.body;
+    if (!courseId) {
+      return res.status(400).json({
+        success: false,
+        message: "courseId is required"
+      });
+    }
+
+    const quiz = await quizService.generateSelfAssessmentQuiz(
+      courseId,
+      questionCount ? parseInt(questionCount, 10) : 5
+    );
+
+    res.status(201).json({
+      success: true,
+      data: quiz
+    });
+  } catch (error) {
+    if (error.message.includes("No questions found")) {
+      return res.status(404).json({
+        success: false,
+        message: error.message
+      });
+    }
+    next(error);
+  }
+};
+
 module.exports = {
   getQuizzes,
   getQuizById,
@@ -197,5 +227,6 @@ module.exports = {
   updateQuiz,
   deleteQuiz,
   submitQuiz,
-  getQuizResult
+  getQuizResult,
+  generateSelfAssessmentQuiz
 };

@@ -20,6 +20,12 @@ router.get(
   controller.getQuizzes
 );
 
+router.post(
+  "/self-generate",
+  verifyToken,
+  controller.generateSelfAssessmentQuiz
+);
+
 router.get(
   "/:quizId/result",
   verifyToken,
