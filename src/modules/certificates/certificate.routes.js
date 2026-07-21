@@ -34,4 +34,16 @@ verifyCertificateOwnership,
 controller.deleteCertificate
 );
 
+router.post(
+  "/",
+  verifyToken,
+  controller.createCertificate
+);
+
+router.put(
+  "/:certificateId",
+  verifyToken,
+  controller.updateCertificate
+);
+
 module.exports = router;
