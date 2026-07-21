@@ -88,8 +88,23 @@ const deleteCertificate = async (
   });
 };
 
+const createCertificate = async (data) => {
+  return prisma.certificate.create({
+    data
+  });
+};
+
+const updateCertificate = async (certificateId, data) => {
+  return prisma.certificate.update({
+    where: { id: certificateId },
+    data
+  });
+};
+
 module.exports = {
   getCertificates,
   getCertificateById,
-  deleteCertificate
+  deleteCertificate,
+  createCertificate,
+  updateCertificate
 };
