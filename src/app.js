@@ -35,6 +35,7 @@ const upcomingTasksRoutes = require("./modules/upcoming-tasks/upcoming-tasks.rou
 const notificationRoutes = require("./modules/notifications/notification.routes");
 const conversationRoutes = require("./modules/conversations/conversation.routes");
 const messageRoutes = require("./modules/messages/message.routes");
+const landingRoutes = require("./modules/landing/landing.routes");
 const app = express();
 app.disable('etag');
 
@@ -82,6 +83,7 @@ app.use("/progress", progressRoutes);
 app.use("/quizzes", quizRoutes);
 app.use("/questions", questionRoutes);
 app.use("/dashboard", dashboardRoutes);
+app.use("/public", landingRoutes);
 
 // Fallback direct endpoint for student dashboard upcoming-tasks
 app.get(
