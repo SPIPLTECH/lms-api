@@ -214,7 +214,7 @@ model Quiz {
   startDate       DateTime?
   dueDate         DateTime?
   availableFrom   DateTime?
-  type            QuestionType     @default(MCQ_SINGLE)
+  questionType    QuestionType       
   availableUntil  DateTime?
   isPublished     Boolean          @default(true)
   status          String?          @default("ACTIVE")
@@ -233,7 +233,7 @@ model Question {
   quiz   Quiz   @relation(fields: [quizId], references: [id], onDelete: Cascade)
 
   question     String       @db.Text
-  type         QuestionType @default(MCQ_SINGLE)
+  questionType QuestionType @default(MCQ_SINGLE)
 
   options       Json
   correctAnswer Json
@@ -255,7 +255,7 @@ model Question {
 
   @@index([quizId])
   @@index([difficulty])
-  @@index([type])
+  @@index([questionType])
 }
 
 enum DifficultyLevel {
