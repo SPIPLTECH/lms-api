@@ -1,6 +1,44 @@
 const prisma = require("../../config/database");
 
-const getEvents = async () => {
+const getEvents = async (user) => {
+    if (!user) {
+        return await prisma.calendarEvent.findMany({
+            orderBy: { date: "asc" }
+        });
+    }
+
+    if (user.role === "STUDENT") {
+        const student = await prisma.studentProfile.findUnique({
+            where: { userId: user.id },
+            select: {
+                enrollments: { select: { courseId: true } }
+            }
+        });
+        const enrolledCourseIds = student?.enrollments.map(e => e.courseId) || [];
+        return await prisma.calendarEvent.findMany({
+            where: {
+                OR: [
+                    { courseId: null },
+                    { courseId: "" },
+                    { courseId: { in: enrolledCourseIds } }
+                ]
+            },
+            orderBy: { date: "asc" }
+        });
+    }
+
+    if (user.role === "INSTRUCTOR") {
+        return await prisma.calendarEvent.findMany({
+            where: {
+                OR: [
+                    { instructorId: user.id },
+                    { instructorId: "inst-current" }
+                ]
+            },
+            orderBy: { date: "asc" }
+        });
+    }
+
     return await prisma.calendarEvent.findMany({
         orderBy: { date: "asc" }
     });

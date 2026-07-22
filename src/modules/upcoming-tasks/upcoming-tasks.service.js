@@ -32,40 +32,46 @@ const getUpcomingTasks = async (userId) => {
 
   const tasks = [];
 
-  // ── 1. Quizzes (not yet submitted, startDate in window) ─────────────────
+  // ── 1. Quizzes (not yet submitted, startDate in window or null) ─────────────────
   const quizzes = await prisma.quiz.findMany({
     where: {
       courseId: { in: enrolledCourseIds },
       id: { notIn: submittedQuizIds },
-      startDate: { gte: windowStart, lte: windowEnd },
+      OR: [
+        { startDate: null },
+        { startDate: { gte: windowStart, lte: windowEnd } }
+      ]
     },
     include: { course: { select: { title: true } } },
   });
 
   quizzes.forEach((q) => {
-    const startDate = new Date(q.startDate);
+    const startDate = q.startDate ? new Date(q.startDate) : new Date();
     tasks.push({
       id: q.id,
       title: q.title,
       subtitle: q.course?.title || "Quiz",
       type: "quiz",
-      startDate: q.startDate,
-      dueDateLabel: _formatLabel(startDate),
+      startDate: q.startDate || new Date(),
+      dueDateLabel: q.startDate ? _formatLabel(startDate) : "Available Now",
     });
   });
 
-  // ── 2. Assignments (not yet submitted, startDate in window) ─────────────
+  // ── 2. Assignments (not yet submitted, startDate in window or null) ─────────────
   const assignments = await prisma.assignment.findMany({
     where: {
       courseId: { in: enrolledCourseIds },
       id: { notIn: submittedAssignmentIds },
-      startDate: { gte: windowStart, lte: windowEnd },
+      OR: [
+        { startDate: null },
+        { startDate: { gte: windowStart, lte: windowEnd } }
+      ]
     },
     include: { course: { select: { title: true } } },
   });
 
   assignments.forEach((a) => {
-    const startDate = new Date(a.startDate);
+    const startDate = a.startDate ? new Date(a.startDate) : new Date();
     const dueDate = new Date(a.dueDate);
     const diffDays = Math.ceil((dueDate - new Date()) / (1000 * 60 * 60 * 24));
     tasks.push({
@@ -73,7 +79,7 @@ const getUpcomingTasks = async (userId) => {
       title: a.title,
       subtitle: a.course?.title || "Assignment",
       type: "assignment",
-      startDate: a.startDate,
+      startDate: a.startDate || new Date(),
       dueDate: a.dueDate,
       dueDateLabel: diffDays <= 0 ? "Due today" : `Due in ${diffDays} day${diffDays !== 1 ? "s" : ""}`,
     });
@@ -147,6 +153,37 @@ const getUpcomingTasks = async (userId) => {
       startDate: b.startDate,
       dueDateLabel: `Starts ${_formatLabel(startDate)}`,
     });
+  });
+
+  // ── 6. Calendar Events (from CalendarEvent table) ──────────────────────
+  const startStr = windowStart.toISOString().split("T")[0];
+  const endStr = windowEnd.toISOString().split("T")[0];
+  const calendarEvents = await prisma.calendarEvent.findMany({
+    where: {
+      date: { gte: startStr, lte: endStr },
+      OR: [
+        { courseId: null },
+        { courseId: "" },
+        { courseId: { in: enrolledCourseIds } }
+      ]
+    },
+    orderBy: { date: "asc" },
+  });
+
+  calendarEvents.forEach((ce) => {
+    const isDuplicate = tasks.some(t => t.id === ce.id || t.title === ce.title);
+    if (!isDuplicate) {
+      const dateParts = ce.date.split("-");
+      const d = new Date(parseInt(dateParts[0], 10), parseInt(dateParts[1], 10) - 1, parseInt(dateParts[2], 10));
+      tasks.push({
+        id: ce.id,
+        title: ce.title,
+        subtitle: ce.courseName || ce.description || "Event",
+        type: ce.type || "event",
+        startDate: ce.date,
+        dueDateLabel: ce.startTime ? `${_formatLabel(d)} ${ce.startTime}` : _formatLabel(d),
+      });
+    }
   });
 
   // Sort all tasks by startDate ascending (soonest first)

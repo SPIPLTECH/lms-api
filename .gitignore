@@ -30,3 +30,6 @@ Thumbs.db
 
 # Frontend (if it is inside this repository)
 /frontend/
+
+# Scratch folder for temporary scripts
+scratch/

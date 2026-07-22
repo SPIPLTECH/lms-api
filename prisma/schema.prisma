@@ -33,37 +33,37 @@ model User {
 }
 
 model StudentProfile {
-  id                String               @id @default(cuid())
-  userId            String               @unique
-  education         String?
-  phone             String?
-  createdAt         DateTime             @default(now())
-  dateOfBirth       DateTime?
-  guardianName      String?
-  profileVisibility String?              @default("Public")
-  focusTopics       String?              @default("")
-  interests         String?              @default("")
-  learningGoals     String?              @default("")
-  videoQuality      String?              @default("Auto")
-  downloadOverWifi  Boolean?             @default(true)
-  language          String?              @default("English")
-  timezone          String?              @default("GMT+05:30")
-  themeMode         String?              @default("Dark Mode")
-  plan              String?              @default("Free Plan")
-  updatedAt         DateTime             @updatedAt
-  certificates      Certificate[]
-  enrollments       Enrollment[]
-  progress          Progress[]
-  quizSubmissions   QuizSubmission[]
-  reviews           Review[]
-  stickyNotes       StickyNote[]
-  notes             Note[]
-  bookmarks         Bookmark[]
-  achievements      StudentAchievement[]
+  id                    String                 @id @default(cuid())
+  userId                String                 @unique
+  education             String?
+  phone                 String?
+  createdAt             DateTime               @default(now())
+  dateOfBirth           DateTime?
+  guardianName          String?
+  profileVisibility     String?                @default("Public")
+  focusTopics           String?                @default("")
+  interests             String?                @default("")
+  learningGoals         String?                @default("")
+  videoQuality          String?                @default("Auto")
+  downloadOverWifi      Boolean?               @default(true)
+  language              String?                @default("English")
+  timezone              String?                @default("GMT+05:30")
+  themeMode             String?                @default("Dark Mode")
+  plan                  String?                @default("Free Plan")
+  updatedAt             DateTime               @updatedAt
+  certificates          Certificate[]
+  enrollments           Enrollment[]
+  progress              Progress[]
+  quizSubmissions       QuizSubmission[]
+  reviews               Review[]
+  stickyNotes           StickyNote[]
+  notes                 Note[]
+  bookmarks             Bookmark[]
+  achievements          StudentAchievement[]
   assignmentSubmissions AssignmentSubmission[]
   batches               Batch[]
   studentState          StudentState?
-  user                  User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model TeacherProfile {
@@ -88,27 +88,27 @@ model AdminProfile {
 }
 
 model Course {
-  id           String        @id @default(cuid())
-  title        String
-  description  String?
-  category     String?
-  level        String?
-  thumbnailUrl String?
-  status       CourseStatus  @default(DRAFT)
-  publishedAt  DateTime?
-  creatorId    String
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  certificates Certificate[]
-  creator      User          @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-  enrollments  Enrollment[]
-  modules      Module[]
-  quizzes      Quiz[]
-  reviews      Review[]
-  liveClasses  LiveClass[]
-  assignments  Assignment[]
-  exams        Exam[]
-  batches      Batch[]
+  id            String         @id @default(cuid())
+  title         String
+  description   String?
+  category      String?
+  level         String?
+  thumbnailUrl  String?
+  status        CourseStatus   @default(DRAFT)
+  publishedAt   DateTime?
+  creatorId     String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  certificates  Certificate[]
+  creator       User           @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  enrollments   Enrollment[]
+  modules       Module[]
+  quizzes       Quiz[]
+  reviews       Review[]
+  liveClasses   LiveClass[]
+  assignments   Assignment[]
+  exams         Exam[]
+  batches       Batch[]
   batchSessions BatchSession[]
   studentStates StudentState[]
 }
@@ -182,13 +182,13 @@ model StickyNote {
 }
 
 model Enrollment {
-  id               String         @id @default(cuid())
-  courseId         String
-  enrolledAt       DateTime       @default(now())
-  lastAccessedAt   DateTime?
-  studentId        String
-  course           Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  student          StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  id             String         @id @default(cuid())
+  courseId       String
+  enrolledAt     DateTime       @default(now())
+  lastAccessedAt DateTime?
+  studentId      String
+  course         Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  student        StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, courseId])
 }
@@ -212,11 +212,12 @@ model Quiz {
   passingScore    Int
   timeLimit       Int?
   startDate       DateTime?
-  dueDate        DateTime?
-  availableFrom  DateTime?
-  availableUntil DateTime?
-  isPublished    Boolean          @default(true)
-  status         String?          @default("ACTIVE")
+  dueDate         DateTime?
+  availableFrom   DateTime?
+  type            QuestionType     @default(MCQ_SINGLE)
+  availableUntil  DateTime?
+  isPublished     Boolean          @default(true)
+  status          String?          @default("ACTIVE")
   courseId        String
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
@@ -226,16 +227,41 @@ model Quiz {
 }
 
 model Question {
-  id            String       @id @default(cuid())
-  quizId        String
-  type          QuestionType @default(MCQ_SINGLE)
-  question      String
+  id String @id @default(cuid())
+
+  quizId String
+  quiz   Quiz   @relation(fields: [quizId], references: [id], onDelete: Cascade)
+
+  question     String       @db.Text
+  type         QuestionType @default(MCQ_SINGLE)
+
   options       Json
   correctAnswer Json
-  concept       String?
-  marks         Int          @default(1)
-  createdAt     DateTime     @default(now())
-  quiz          Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+
+  explanation String? @db.Text
+
+  marks         Int   @default(1)
+  negativeMarks Float @default(0)
+
+  difficulty DifficultyLevel @default(MEDIUM)
+
+  isRequired  Boolean @default(true)
+  isPublished Boolean @default(true)
+
+  order Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([quizId])
+  @@index([difficulty])
+  @@index([type])
+}
+
+enum DifficultyLevel {
+  EASY
+  MEDIUM
+  HARD
 }
 
 model Review {
@@ -282,16 +308,16 @@ model Certificate {
 }
 
 model Conversation {
-  id                      String                    @id @default(cuid())
-  type                    ConversationType
-  name                    String?
-  image                   String?
-  createdById             String
-  createdAt               DateTime                  @default(now())
-  updatedAt               DateTime                  @updatedAt
-  User                    User                      @relation(fields: [createdById], references: [id])
-  participants            ConversationParticipant[]
-  Message                 Message[]
+  id           String                    @id @default(cuid())
+  type         ConversationType
+  name         String?
+  image        String?
+  createdById  String
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+  User         User                      @relation(fields: [createdById], references: [id])
+  participants ConversationParticipant[]
+  Message      Message[]
 
   @@index([createdById])
   @@index([updatedAt])
@@ -311,20 +337,20 @@ model ConversationParticipant {
 }
 
 model Message {
-  id                String              @id @default(cuid())
-  conversationId    String
-  senderId          String
-  content           String?
-  isEdited          Boolean             @default(false)
-  editedAt          DateTime?
-  isDeleted         Boolean             @default(false)
-  deletedAt         DateTime?
-  isStarred         Boolean             @default(false)
-  expiresAt         DateTime?
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
-  conversation      Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender            User                @relation(fields: [senderId], references: [id])
+  id                 String              @id @default(cuid())
+  conversationId     String
+  senderId           String
+  content            String?
+  isEdited           Boolean             @default(false)
+  editedAt           DateTime?
+  isDeleted          Boolean             @default(false)
+  deletedAt          DateTime?
+  isStarred          Boolean             @default(false)
+  expiresAt          DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  conversation       Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender             User                @relation(fields: [senderId], references: [id])
   messageAttachments MessageAttachment[]
 
   @@index([conversationId, createdAt])
@@ -534,11 +560,11 @@ model CalendarEvent {
 }
 
 model Exam {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   title          String
   description    String?
   startDate      DateTime
-  duration       Int?     // in minutes
+  duration       Int? // in minutes
   dueDate        DateTime?
   availableFrom  DateTime?
   availableUntil DateTime?
@@ -546,12 +572,12 @@ model Exam {
   startTime      String?
   endTime        String?
   meetingLink    String?
-  status         String?         @default("SCHEDULED")
-  isPublished    Boolean         @default(true)
+  status         String?   @default("SCHEDULED")
+  isPublished    Boolean   @default(true)
   courseId       String
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  course         Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  course         Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
   @@index([courseId])
 }
@@ -618,16 +644,16 @@ model Notification {
 }
 
 model StudentState {
-  id            String         @id @default(cuid())
-  studentId     String         @unique
-  courseId      String
-  moduleId      String?
-  lessonId      String?
-  contentId     String?
-  timestamp     Int?           @default(0)
-  updatedAt     DateTime       @updatedAt
-  student       StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  course        Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  id        String         @id @default(cuid())
+  studentId String         @unique
+  courseId  String
+  moduleId  String?
+  lessonId  String?
+  contentId String?
+  timestamp Int?           @default(0)
+  updatedAt DateTime       @updatedAt
+  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course    Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
   @@index([studentId])
   @@index([courseId])
@@ -639,4 +665,10 @@ enum QuestionType {
   ARRANGE_TOKENS
   MATCH_PAIRS
   SELF_ASSESSMENT
+  MCQ
+  MULTIPLE_CORRECT
+  TRUE_FALSE
+  FILL_BLANK
+  SHORT_ANSWER
+  LONG_ANSWER
 }
