@@ -324,19 +324,24 @@ const refreshToken =
 /**
  * Logout User
  */
-const logout = async (
-  userId
-) => {
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      refreshToken: null
-    }
-  });
+const logout = async (userId) => {
+  if (!userId) {
+    return { message: "Logged out successfully" };
+  }
+
+  try {
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        refreshToken: null
+      }
+    });
+  } catch (error) {
+    // Ignore error if user record is not found or already logged out
+  }
 
   return {
-    message:
-      "Logged out successfully"
+    message: "Logged out successfully"
   };
 };
 const changePassword = async (
