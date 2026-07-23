@@ -213,8 +213,7 @@ model Quiz {
   timeLimit       Int?
   startDate       DateTime?
   dueDate         DateTime?
-  availableFrom   DateTime?
-  questionType    QuestionType       
+  availableFrom   DateTime?     
   availableUntil  DateTime?
   isPublished     Boolean          @default(true)
   status          String?          @default("ACTIVE")
