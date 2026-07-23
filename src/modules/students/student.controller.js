@@ -2,7 +2,7 @@ const studentService = require("./student.service");
 
 const getStudents = async (req, res, next) => {
   try {
-    const students = await studentService.getStudents();
+    const students = await studentService.getStudents(req.user);
 
     res.json({
       success: true,
