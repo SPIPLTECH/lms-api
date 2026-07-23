@@ -27,31 +27,43 @@ const getCourses = async (
   // Student should see only published courses
 
 
-  // Admin should get creator details
-  if (role === "ADMIN" || role === "INSTRUCTOR") {
-    query.include = {
-      creator: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-          teacherProfile: true,
-          adminProfile: true,
-        },
+  const commonInclude = {
+    creator: {
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        teacherProfile: true,
+        adminProfile: true,
       },
-    };
+    },
+    modules: {
+      include: {
+        lessons: true,
+      },
+    },
+    quizzes: true,
+    assignments: true,
+    reviews: true,
+    certificates: true,
+    _count: {
+      select: {
+        enrollments: true,
+        modules: true,
+        quizzes: true,
+        assignments: true,
+        reviews: true,
+      },
+    },
+  };
+
+  if (role === "ADMIN" || role === "INSTRUCTOR") {
+    query.include = commonInclude;
+  } else {
+    query.where.status = "PUBLISHED";
+    query.include = commonInclude;
   }
-  else if (role === "GUEST" || role === "STUDENT") {
-  query.where.status = "PUBLISHED";
-  query.include={
-    creator:{
-      select:{
-        name:true,
-      }
-    }
-  }
-   }
   return await prisma.course.findMany(query);
 };
 
