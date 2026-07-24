@@ -277,70 +277,73 @@ const resetPassword =
 /**
  * Refresh Access Token
  */
-const refreshToken =
-  async (token) => {
-    try {
-      const decoded =
-        jwt.verify(
-          token,
-          process.env
-            .JWT_REFRESH_SECRET
-        );
-
-      const user =
-        await prisma.user.findUnique(
-          {
-            where: {
-              id: decoded.id
-            }
-          }
-        );
-
-      if (
-        !user ||
-        user.refreshToken !==
-          token
-      ) {
-        throw new Error(
-          "Invalid refresh token"
-        );
-      }
-
-      const accessToken =
-        generateAccessToken(
-          user
-        );
-
-      return {
-        accessToken
-      };
-    } catch (error) {
-      throw new Error(
-        "Invalid refresh token"
-      );
+const refreshToken = async (token) => {
+  try {
+    if (!token) {
+      const error = new Error("Refresh token required");
+      error.statusCode = 401;
+      throw error;
     }
-  };
+
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_REFRESH_SECRET
+    );
+
+    const user = await prisma.user.findUnique({
+      where: {
+        id: decoded.id
+      }
+    });
+
+    if (!user || user.refreshToken !== token) {
+      const error = new Error("Invalid refresh token");
+      error.statusCode = 401;
+      throw error;
+    }
+
+    const accessToken = generateAccessToken(user);
+
+    return {
+      accessToken
+    };
+  } catch (error) {
+    const authErr = new Error(error.message || "Invalid refresh token");
+    authErr.statusCode = 401;
+    throw authErr;
+  }
+};
 
 /**
  * Logout User
  */
-const logout = async (userId) => {
-  if (!userId) {
-    return { message: "Logged out successfully" };
-  }
-
+const logout = async (userId, tokenFromReq) => {
   try {
-    await prisma.user.update({
-      where: { id: userId },
-      data: {
-        refreshToken: null
-      }
-    });
+    if (userId) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          refreshToken: null
+        }
+      }).catch((err) => {
+        console.warn("Notice: Could not clear refreshToken by userId:", userId, err?.message);
+      });
+    } else if (tokenFromReq) {
+      await prisma.user.updateMany({
+        where: { refreshToken: tokenFromReq },
+        data: {
+          refreshToken: null
+        }
+      }).catch((err) => {
+        console.warn("Notice: Could not clear refreshToken by token:", err?.message);
+      });
+    }
   } catch (error) {
-    // Ignore error if user record is not found or already logged out
+    console.warn("Logout service handled exception:", error?.message);
   }
 
   return {
+    success: true,
     message: "Logged out successfully"
   };
 };
