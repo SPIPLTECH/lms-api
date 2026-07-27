@@ -1,4 +1,5 @@
 const express = require("express");
+const path = require("path");
 
 const router = express.Router();
 
@@ -12,6 +13,40 @@ const verifyToken = require(
 
 const checkRole = require(
   "../../middleware/role.middleware"
+);
+
+const { upload } = require(
+  "../../middleware/upload.middleware"
+);
+
+// File upload endpoint for DOCUMENT / PRESENTATION content
+router.post(
+  "/upload-file",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  upload.single("file"),
+  (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "No file uploaded."
+      });
+    }
+
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const relativePath = req.file.path
+      .replace(/\\/g, "/")
+      .split("uploads/")[1];
+
+    const fileUrl = `${baseUrl}/uploads/${relativePath}`;
+
+    return res.status(200).json({
+      success: true,
+      fileUrl,
+      originalName: req.file.originalname,
+      size: req.file.size,
+    });
+  }
 );
 
 router.get(
