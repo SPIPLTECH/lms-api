@@ -31,6 +31,12 @@ router.get(
   lessonController.getLessonById
 );
 
+router.get(
+  "/:lessonId/transcript",
+  verifyToken,
+  lessonController.getLessonTranscript
+);
+
 router.post(
   "/",
   verifyToken,
