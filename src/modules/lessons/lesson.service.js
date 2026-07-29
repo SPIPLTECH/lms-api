@@ -1,6 +1,7 @@
 const prisma =
   require("../../config/database");
 const notificationService = require("../notifications/notification.service");
+const youtubeTranscript = require("../../utils/youtubeTranscript");
 
 const getLessons = async (moduleId, role, userId) => {
   const where = {};
@@ -134,6 +135,86 @@ const deleteLesson = async (
   });
 };
 
+// Resolves the transcript for a lesson's video content. Keyed off
+// content.type so additional sources (uploaded captions, AI-generated,
+// cached transcripts) can be added here without touching the controller.
+const getTranscriptForContent = async (
+  content
+) => {
+  switch (content.type) {
+    case "VIDEO": {
+      const videoId = youtubeTranscript.extractVideoId(
+        content.videoUrl
+      );
+
+      if (!videoId) {
+        const error = new Error(
+          "The lesson video URL is not a valid YouTube link."
+        );
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const segments = await youtubeTranscript.fetchTranscript(
+        videoId
+      );
+
+      return { videoId, segments };
+    }
+
+    default: {
+      const error = new Error(
+        "Transcripts are not supported for this content type."
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+};
+
+const getLessonTranscript = async (
+  lessonId,
+  role
+) => {
+  const lesson = await getLessonById(
+    lessonId,
+    role
+  );
+
+  if (!lesson) {
+    const error = new Error(
+      "Lesson not found"
+    );
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const videoContent = lesson.contents.find(
+    (content) =>
+      content.type === "VIDEO" &&
+      content.videoUrl
+  );
+
+  if (!videoContent) {
+    const error = new Error(
+      "This lesson does not contain any video content."
+    );
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const { videoId, segments } =
+    await getTranscriptForContent(
+      videoContent
+    );
+
+  return {
+    lessonId,
+    videoId,
+    segments
+  };
+};
+
 const reorderLessons = async (
   lessons
 ) => {
@@ -157,5 +238,6 @@ module.exports = {
   createLesson,
   updateLesson,
   deleteLesson,
-  reorderLessons
+  reorderLessons,
+  getLessonTranscript
 };

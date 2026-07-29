@@ -109,6 +109,7 @@ app.use("/achievements", achievementRoutes);
 app.use("/assignments", assignmentRoutes);
 app.use("/calendar", calendarRoutes);
 app.use("/upcoming-tasks", upcomingTasksRoutes);
+app.use("/analytics", require("./modules/analytics/analytics.routes"));
 app.use(errorHandler);
 
 module.exports = app;

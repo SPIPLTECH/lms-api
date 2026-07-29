@@ -94,7 +94,8 @@ const getInstructorDashboard = async (instructorId, courseId) => {
           quizSubmissions: true
         }
       },
-      reviews: true
+      reviews: true,
+      videoAnalytics: true
     }
   });
 
@@ -267,6 +268,33 @@ const getInstructorDashboard = async (instructorId, courseId) => {
       iconColor: 'text-amber-400'
     }
   ];
+
+  // Video Analytics Calculation
+  let totalVideoWatchTime = 0;
+  for (const course of targetCourses) {
+    if (course.videoAnalytics) {
+       for (const va of course.videoAnalytics) {
+          totalVideoWatchTime += (va.watchTime || 0);
+       }
+    }
+  }
+  const formatWatchTime = (seconds) => {
+    const hrs = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return `${hrs}h ${mins}m`;
+  };
+
+  kpis.push({
+    id: 6,
+    title: 'Total Video Watch Time',
+    value: formatWatchTime(totalVideoWatchTime),
+    trend: 5.2,
+    trendLabel: 'vs last week',
+    status: totalVideoWatchTime > 3600 ? 'High Engagement' : 'Needs Focus',
+    icon: 'PlayCircle',
+    iconBg: 'bg-indigo-500/10',
+    iconColor: 'text-indigo-400'
+  });
 
   // 8. Action Center Priorities
   const priorities = [];

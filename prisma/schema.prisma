@@ -64,6 +64,7 @@ model StudentProfile {
   assignmentSubmissions AssignmentSubmission[]
   batches               Batch[]
   studentStates         StudentState[]
+  videoAnalytics        VideoAnalytics[]
   user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -112,6 +113,7 @@ model Course {
   batches       Batch[]
   batchSessions BatchSession[]
   studentStates StudentState[]
+  videoAnalytics VideoAnalytics[]
   store         Store?
 
   @@index([creatorId])
@@ -159,6 +161,7 @@ model Lesson {
   module      Module       @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   progress    Progress[]
   stickyNotes StickyNote[]
+  videoAnalytics VideoAnalytics[]
 
   @@unique([moduleId, order])
   @@index([moduleId])
@@ -744,4 +747,23 @@ enum QuestionType {
   FILL_BLANK
   SHORT_ANSWER
   LONG_ANSWER
+}
+
+model VideoAnalytics {
+  id          String         @id @default(cuid())
+  studentId   String
+  lessonId    String
+  courseId    String
+  watchTime   Int            @default(0) // Total seconds watched
+  completed   Boolean        @default(false)
+  lastPing    DateTime       @default(now())
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lesson      Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  course      Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, lessonId])
+  @@index([courseId])
 }

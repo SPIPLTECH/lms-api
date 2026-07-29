@@ -1,4 +1,4 @@
-const express = require("express");
+ const express = require("express");
 
 const router = express.Router();
 
@@ -37,6 +37,12 @@ router.get(
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
   lessonController.getLessonById
+);
+
+router.get(
+  "/:lessonId/transcript",
+  verifyToken,
+  lessonController.getLessonTranscript
 );
 
 router.post(

@@ -14,6 +14,10 @@ const verifyToken = (req, res, next) => {
     const token = authHeader.split(" ")[1];
 
     if (!token) {
+      if (req.path === "/logout" || req.originalUrl?.includes("/logout")) {
+        req.user = { role: "GUEST" };
+        return next();
+      }
       return res.status(401).json({
         success: false,
         message: "Invalid token format",
@@ -33,6 +37,11 @@ const verifyToken = (req, res, next) => {
 
     next();
   } catch (error) {
+    if (req.path === "/logout" || req.originalUrl?.includes("/logout")) {
+      req.user = { role: "GUEST" };
+      return next();
+    }
+
     if (error.name === "TokenExpiredError") {
       return res.status(401).json({
         success: false,

@@ -77,23 +77,23 @@ const login = async (
 /**
  * Logout
  */
-const logout = async (
-  req,
-  res,
-  next
-) => {
+const logout = async (req, res) => {
   try {
-    const result =
-      await authService.logout(
-        req.user.id
-      );
+    const userId = req.user?.id;
+    const refreshToken = req.body?.refreshToken;
 
-    res.json({
+    await authService.logout(userId, refreshToken);
+
+    return res.status(200).json({
       success: true,
-      message: result.message
+      message: "Logged out successfully"
     });
   } catch (error) {
-    next(error);
+    console.error("Logout error in controller:", error);
+    return res.status(200).json({
+      success: true,
+      message: "Logged out successfully"
+    });
   }
 };
 
