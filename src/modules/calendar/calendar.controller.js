@@ -14,7 +14,11 @@ const getEvents = async (req, res, next) => {
 
 const createEvent = async (req, res, next) => {
     try {
-        const event = await calendarService.createEvent(req.body);
+        const eventData = { ...req.body };
+        if (req.user) {
+            eventData.instructorId = eventData.instructorId || req.user.id;
+        }
+        const event = await calendarService.createEvent(eventData);
         res.json({
             success: true,
             message: "Calendar event created successfully.",
