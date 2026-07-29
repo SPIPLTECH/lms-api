@@ -11,7 +11,8 @@ const getModules = async (
     const modules =
       await moduleService.getModules(
         req.query.courseId,
-        req.user.role
+        req.user.role,
+        req.user.id
       );
 
     res.json(modules);

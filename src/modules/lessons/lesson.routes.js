@@ -18,16 +18,24 @@ const verifyLessonOwnership =
   require(
     "../../middleware/lessonOwnership.middleware"
   );
+const validate = require("../../middleware/joiValidation.middleware");
+const {
+  createLessonSchema,
+  updateLessonSchema,
+  reorderLessonsSchema
+} = require("./lesson.validation");
 
 router.get(
   "/",
   verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
   lessonController.getLessons
 );
 
 router.get(
   "/:lessonId",
   verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
   lessonController.getLessonById
 );
 
@@ -38,6 +46,7 @@ router.post(
     "ADMIN",
     "INSTRUCTOR"
   ]),
+  validate(createLessonSchema),
   lessonController.createLesson
 );
 
@@ -49,6 +58,7 @@ router.put(
     "INSTRUCTOR"
   ]),
   verifyLessonOwnership,
+  validate(updateLessonSchema),
   lessonController.updateLesson
 );
 
@@ -70,6 +80,7 @@ router.patch(
     "ADMIN",
     "INSTRUCTOR"
   ]),
+  validate(reorderLessonsSchema),
   lessonController.reorderLessons
 );
 

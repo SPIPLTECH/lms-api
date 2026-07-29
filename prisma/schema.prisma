@@ -30,6 +30,7 @@ model User {
   studentProfile          StudentProfile?
   teacherProfile          TeacherProfile?
   notifications           Notification[]
+  createdQuestions        Question[]
 }
 
 model StudentProfile {
@@ -62,7 +63,7 @@ model StudentProfile {
   achievements          StudentAchievement[]
   assignmentSubmissions AssignmentSubmission[]
   batches               Batch[]
-  studentState          StudentState?
+  studentStates         StudentState[]
   user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -111,6 +112,22 @@ model Course {
   batches       Batch[]
   batchSessions BatchSession[]
   studentStates StudentState[]
+  store         Store?
+
+  @@index([creatorId])
+  @@index([status])
+}
+
+model Store {
+  id             String   @id @default(cuid())
+  price          Float    @default(0)
+  discountPrice  Float?
+  currency       String   @default("INR")
+  isFree         Boolean  @default(false)
+  courseId       String   @unique
+  course         Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
 
 model Module {
@@ -126,6 +143,7 @@ model Module {
   course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
   @@unique([courseId, order])
+  @@index([courseId])
 }
 
 model Lesson {
@@ -143,6 +161,7 @@ model Lesson {
   stickyNotes StickyNote[]
 
   @@unique([moduleId, order])
+  @@index([moduleId])
 }
 
 model Content {
@@ -161,6 +180,7 @@ model Content {
   lesson      Lesson      @relation(fields: [lessonId], references: [id], onDelete: Cascade)
 
   @@unique([lessonId, order])
+  @@index([lessonId])
 }
 
 model StickyNote {
@@ -191,6 +211,8 @@ model Enrollment {
   student        StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, courseId])
+  @@index([courseId])
+  @@index([studentId])
 }
 
 model Progress {
@@ -203,34 +225,45 @@ model Progress {
   student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, lessonId])
+  @@index([studentId])
+  @@index([lessonId])
 }
 
 model Quiz {
   id              String           @id @default(cuid())
   title           String
   description     String?
+  instructions    String?          @db.Text
   passingScore    Int
   timeLimit       Int?
   startDate       DateTime?
   dueDate         DateTime?
   availableFrom   DateTime?     
   availableUntil  DateTime?
+  shuffleQuestions Boolean         @default(false)
+  shuffleOptions  Boolean          @default(false)
+  negativeMarking Float            @default(0)
+  attempts        Int              @default(1)
   isPublished     Boolean          @default(true)
   status          String?          @default("ACTIVE")
   courseId        String
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   questions       Question[]
+  quizQuestions   QuizQuestion[]
   course          Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
   quizSubmissions QuizSubmission[]
+
+  @@index([courseId])
 }
 
 model Question {
   id String @id @default(cuid())
 
-  quizId String
-  quiz   Quiz   @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  quizId String?
+  quiz   Quiz?   @relation(fields: [quizId], references: [id], onDelete: Cascade)
 
+  title        String?
   question     String       @db.Text
   questionType QuestionType @default(MCQ_SINGLE)
 
@@ -239,22 +272,50 @@ model Question {
 
   explanation String? @db.Text
 
-  marks         Int   @default(1)
-  negativeMarks Float @default(0)
+  subject    String?
+  topic      String?
+  tags       String?          @default("")
+  marks      Int              @default(1)
+  negativeMarks Float         @default(0)
+  difficulty DifficultyLevel  @default(MEDIUM)
+  status     String?          @default("ACTIVE")
 
-  difficulty DifficultyLevel @default(MEDIUM)
+  createdBy  String?
+  creator    User?            @relation(fields: [createdBy], references: [id], onDelete: SetNull)
 
-  isRequired  Boolean @default(true)
-  isPublished Boolean @default(true)
+  isRequired  Boolean         @default(true)
+  isPublished Boolean         @default(true)
 
   order Int?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @default(now()) @updatedAt
+  quizQuestions QuizQuestion[]
 
   @@index([quizId])
   @@index([difficulty])
   @@index([questionType])
+  @@index([subject])
+  @@index([topic])
+  @@index([createdBy])
+  @@index([status])
+}
+
+model QuizQuestion {
+  id          String   @id @default(cuid())
+  quizId      String
+  questionId  String
+  order       Int      @default(1)
+  marks       Int      @default(1)
+  isMandatory Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  quiz        Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  question    Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([quizId, questionId])
+  @@index([quizId])
+  @@index([questionId])
 }
 
 enum DifficultyLevel {
@@ -388,6 +449,18 @@ enum ContentType {
   TEXT
   LINK
   PRESENTATION
+  IMAGE
+  PDF
+  FILE
+  EXTERNAL_LINK
+  HTML
+  CODE
+  ASSIGNMENT
+  CODING_EXERCISE
+  SCORM
+  INTERACTIVE_LAB
+  AUDIO
+  EMBED
 }
 
 enum UserStatus {
@@ -644,7 +717,7 @@ model Notification {
 
 model StudentState {
   id        String         @id @default(cuid())
-  studentId String         @unique
+  studentId String
   courseId  String
   moduleId  String?
   lessonId  String?
@@ -654,6 +727,7 @@ model StudentState {
   student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
   course    Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
+  @@unique([studentId, courseId])
   @@index([studentId])
   @@index([courseId])
 }

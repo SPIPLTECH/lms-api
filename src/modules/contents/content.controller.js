@@ -10,7 +10,9 @@ const getContents = async (
   try {
     const contents =
       await contentService.getContents(
-        req.query.lessonId
+        req.query.lessonId,
+        req.user.role,
+        req.user.id
       );
 
     res.json(contents);

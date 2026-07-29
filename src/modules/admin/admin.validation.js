@@ -1,73 +1,50 @@
-const { body } = require("express-validator");
+const Joi = require("joi");
 
 /* Create Admin Validation */
-const createAdminValidation = [
-  body("name")
-    .notEmpty()
-    .withMessage("Name is required"),
+const createAdminSchema = Joi.object({
+  name: Joi.string().required().messages({
+    "any.required": "Name is required"
+  }),
 
-  body("email")
-    .isEmail()
-    .withMessage("Valid email is required"),
+  email: Joi.string().email().required().messages({
+    "string.email": "Valid email is required",
+    "any.required": "Valid email is required"
+  }),
 
-  body("password")
-    .isLength({ min: 6 })
-    .withMessage(
-      "Password must be at least 6 characters"
-    ),
+  password: Joi.string().min(6).required().messages({
+    "string.min": "Password must be at least 6 characters",
+    "any.required": "Password is required"
+  }),
 
-  body("phoneNumber")
-    .optional()
-    .isString(),
-
-  body("address")
-    .optional()
-    .isString(),
-
-  body("department")
-    .optional()
-    .isString(),
-
-  body("designation")
-    .optional()
-    .isString()
-];
+  phoneNumber: Joi.string().optional().allow(null, ""),
+  address: Joi.string().optional().allow(null, ""),
+  department: Joi.string().optional().allow(null, ""),
+  designation: Joi.string().optional().allow(null, "")
+});
 
 /* Update User Validation */
-const updateUserValidation = [
-  body("name")
-    .optional()
-    .isString(),
-
-  body("email")
-    .optional()
-    .isEmail()
-    .withMessage("Invalid email"),
-
-  body("phoneNumber")
-    .optional()
-    .isString(),
-
-  body("address")
-    .optional()
-    .isString()
-];
+const updateUserSchema = Joi.object({
+  name: Joi.string().optional(),
+  email: Joi.string().email().optional().messages({
+    "string.email": "Invalid email"
+  }),
+  phoneNumber: Joi.string().optional().allow(null, ""),
+  address: Joi.string().optional().allow(null, "")
+});
 
 /* Update User Status Validation */
-const updateUserStatusValidation = [
-  body("status")
-    .notEmpty()
-    .isIn([
-      "ACTIVE",
-      "INACTIVE",
-      "SUSPENDED",
-      "BLOCKED"
-    ])
-    .withMessage("Invalid user status")
-];
+const updateUserStatusSchema = Joi.object({
+  status: Joi.string()
+    .valid("ACTIVE", "INACTIVE", "SUSPENDED", "BLOCKED")
+    .required()
+    .messages({
+      "any.only": "Invalid user status",
+      "any.required": "Invalid user status"
+    })
+});
 
 module.exports = {
-  createAdminValidation,
-  updateUserValidation,
-  updateUserStatusValidation
+  createAdminSchema,
+  updateUserSchema,
+  updateUserStatusSchema
 };

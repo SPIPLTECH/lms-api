@@ -18,6 +18,11 @@ const checkRole = require(
 const { upload } = require(
   "../../middleware/upload.middleware"
 );
+const validate = require("../../middleware/joiValidation.middleware");
+const {
+  createContentSchema,
+  updateContentSchema
+} = require("./content.validation");
 
 // File upload endpoint for DOCUMENT / PRESENTATION content
 router.post(
@@ -51,11 +56,15 @@ router.post(
 
 router.get(
   "/",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
   controller.getContents
 );
 
 router.get(
   "/:contentId",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
   controller.getContentById
 );
 
@@ -66,6 +75,7 @@ router.post(
     "ADMIN",
     "INSTRUCTOR"
   ]),
+  validate(createContentSchema),
   controller.createContent
 );
 
@@ -76,6 +86,7 @@ router.put(
     "ADMIN",
     "INSTRUCTOR"
   ]),
+  validate(updateContentSchema),
   controller.updateContent
 );
 

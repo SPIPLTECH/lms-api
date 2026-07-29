@@ -80,6 +80,10 @@ const getStudents = async (user) => {
     const firstEnrollment = student.enrollments[0];
     const courseTitle = firstEnrollment?.course?.title || "General Course";
 
+    const completedLessonIds = new Set(
+      student.progress.filter((p) => p.completed).map((p) => p.lessonId)
+    );
+
     let totalLessonsCount = 0;
     student.enrollments.forEach((e) => {
       e.course?.modules?.forEach((m) => {
@@ -96,7 +100,7 @@ const getStudents = async (user) => {
     const gradedSubmissions = student.assignmentSubmissions.filter((a) => a.status === "Graded" || a.grade).length;
     const assignmentRate = totalSubmissions > 0
       ? Math.round((gradedSubmissions / totalSubmissions) * 100)
-      : 80;
+      : 0;
 
     let status = "Behind Average";
     if (progressPercent >= 85) status = "Top Performer";
@@ -119,7 +123,9 @@ const getStudents = async (user) => {
       status: status,
       progress: progressPercent,
       assignmentRate: assignmentRate,
-      attendanceRate: 85 + (student.user.name ? student.user.name.length % 15 : 0),
+      // No attendance-tracking feature exists yet, so this is intentionally
+      // null rather than a fabricated number - frontend should render "N/A".
+      attendanceRate: null,
       joinedDate: joinedDateStr,
       assignments: student.assignmentSubmissions.map((as) => ({
         id: as.id,
@@ -133,11 +139,19 @@ const getStudents = async (user) => {
           year: "numeric",
         }),
       })),
-      modules: (firstEnrollment?.course?.modules || []).map((m) => ({
-        name: m.title,
-        progress: 100,
-        status: "Completed",
-      })),
+      modules: (firstEnrollment?.course?.modules || []).map((m) => {
+        const lessonIds = (m.lessons || []).map((l) => l.id);
+        const completedInModule = lessonIds.filter((id) => completedLessonIds.has(id)).length;
+        const moduleProgress = lessonIds.length > 0
+          ? Math.round((completedInModule / lessonIds.length) * 100)
+          : 0;
+
+        return {
+          name: m.title,
+          progress: moduleProgress,
+          status: moduleProgress === 100 ? "Completed" : moduleProgress > 0 ? "In Progress" : "Not Started",
+        };
+      }),
       certificates: student.certificates.map((c) => ({
         id: c.id,
         title: c.course?.title || "Certificate of Completion",

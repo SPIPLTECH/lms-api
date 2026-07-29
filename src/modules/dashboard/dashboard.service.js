@@ -551,6 +551,9 @@ const getStudentDashboard = async (userId) => {
     where: { userId },
     select: {
       id: true,
+      batches: {
+        select: { name: true },
+      },
       enrollments: {
         include: {
           course: {
@@ -700,11 +703,13 @@ const getStudentDashboard = async (userId) => {
   const completedQuizzes = student.quizSubmissions ? student.quizSubmissions.length : 0;
 
   let avgQuizScore = 0;
+  let passingRate = 0;
   if (student.quizSubmissions && student.quizSubmissions.length > 0) {
     const sum = student.quizSubmissions.reduce((acc, sub) => acc + sub.percentage, 0);
     avgQuizScore = Math.round(sum / student.quizSubmissions.length);
-  } else {
-    avgQuizScore = 78; // Fallback default to match the requested dashboard design average if no quizzes are taken yet
+
+    const passedCount = student.quizSubmissions.filter((sub) => sub.passed).length;
+    passingRate = Math.round((passedCount / student.quizSubmissions.length) * 100);
   }
 
   // Format enrolled courses for frontend
@@ -899,8 +904,10 @@ const getStudentDashboard = async (userId) => {
       totalQuizzes,
       completedQuizzes,
       avgQuizScore,
+      passingRate,
       streak,
       rankPercentile,
+      activeBatchName: student.batches[0]?.name || null,
     },
     enrolledCoursesList,
     certificatesList: student.certificates,

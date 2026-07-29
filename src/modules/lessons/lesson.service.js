@@ -2,16 +2,19 @@ const prisma =
   require("../../config/database");
 const notificationService = require("../notifications/notification.service");
 
-const getLessons = async (moduleId, role) => {
-  const where =
-    (role === "STUDENT" || role === "GUEST")
-      ? {
-          moduleId,
-          isPublished: true,
-        }
-      : {
-          moduleId,
-        };
+const getLessons = async (moduleId, role, userId) => {
+  const where = {};
+
+  if (moduleId) {
+    where.moduleId = moduleId;
+  } else if (role === "INSTRUCTOR") {
+    // No specific module requested: scope to this instructor's own courses only.
+    where.module = { course: { creatorId: userId } };
+  }
+
+  if (role === "STUDENT" || role === "GUEST") {
+    where.isPublished = true;
+  }
 
   return prisma.lesson.findMany({
     where,

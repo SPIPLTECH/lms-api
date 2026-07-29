@@ -2,12 +2,21 @@ const prisma =
   require("../../config/database");
 
 const getContents = async (
-  lessonId
+  lessonId,
+  role,
+  userId
 ) => {
+  const where = {};
+
+  if (lessonId) {
+    where.lessonId = lessonId;
+  } else if (role === "INSTRUCTOR") {
+    // No specific lesson requested: scope to this instructor's own courses only.
+    where.lesson = { module: { course: { creatorId: userId } } };
+  }
+
   return prisma.content.findMany({
-    where: {
-      lessonId
-    },
+    where,
     orderBy: {
       order: "asc"
     }

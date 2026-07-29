@@ -1,74 +1,42 @@
-const { body } = require("express-validator");
+const Joi = require("joi");
 
-const validateRequest = require("../../middleware/validation.middleware");
+const stickyNoteCreateSchema = Joi.object({
+  lessonId: Joi.string().required().messages({
+    "any.required": "Lesson ID is required",
+    "string.empty": "Lesson ID cannot be empty"
+  }),
+  content: Joi.string().trim().max(5000).required().messages({
+    "any.required": "Content is required",
+    "string.empty": "Content cannot be empty",
+    "string.max": "Content must be 5000 characters or less"
+  }),
+  color: Joi.string().optional().allow(null, "").messages({
+    "string.base": "Color must be a string"
+  }),
+  timestamp: Joi.number().integer().min(0).optional().allow(null).messages({
+    "number.base": "Timestamp must be a positive integer",
+    "number.min": "Timestamp must be a positive integer"
+  })
+});
 
-const stickyNoteCreateValidation = [
-  body("lessonId")
-    .trim()
-    .notEmpty()
-    .withMessage("Lesson ID is required"),
-
-  body("content")
-    .trim()
-    .notEmpty()
-    .withMessage("Content is required")
-    .isLength({ max: 5000 })
-    .withMessage(
-      "Content must be 5000 characters or less"
-    ),
-
-  body("color")
-    .optional()
-    .isString()
-    .withMessage("Color must be a string"),
-
-  body("timestamp")
-    .optional()
-    .isInt({ min: 0 })
-    .withMessage(
-      "Timestamp must be a positive integer"
-    )
-    .toInt(),
-
-  validateRequest
-];
-
-const stickyNoteUpdateValidation = [
-  body("content")
-    .optional()
-    .trim()
-    .notEmpty()
-    .withMessage("Content cannot be empty")
-    .isLength({ max: 5000 })
-    .withMessage(
-      "Content must be 5000 characters or less"
-    ),
-
-  body("color")
-    .optional()
-    .isString()
-    .withMessage("Color must be a string"),
-
-  body("timestamp")
-    .optional()
-    .isInt({ min: 0 })
-    .withMessage(
-      "Timestamp must be a positive integer"
-    )
-    .toInt(),
-
-  body("isPinned")
-    .optional()
-    .isBoolean()
-    .withMessage(
-      "isPinned must be true or false"
-    )
-    .toBoolean(),
-
-  validateRequest
-];
+const stickyNoteUpdateSchema = Joi.object({
+  content: Joi.string().trim().max(5000).optional().messages({
+    "string.empty": "Content cannot be empty",
+    "string.max": "Content must be 5000 characters or less"
+  }),
+  color: Joi.string().optional().allow(null, "").messages({
+    "string.base": "Color must be a string"
+  }),
+  timestamp: Joi.number().integer().min(0).optional().allow(null).messages({
+    "number.base": "Timestamp must be a positive integer",
+    "number.min": "Timestamp must be a positive integer"
+  }),
+  isPinned: Joi.boolean().optional().messages({
+    "boolean.base": "isPinned must be true or false"
+  })
+});
 
 module.exports = {
-  stickyNoteCreateValidation,
-  stickyNoteUpdateValidation
+  stickyNoteCreateSchema,
+  stickyNoteUpdateSchema
 };

@@ -143,8 +143,18 @@ const login = async (
   }
 
   if (!user.isVerified) {
-  throw new Error("Verify email first");
-}
+    throw new Error("Verify email first");
+  }
+
+  // Enforce account status — SUSPENDED/BLOCKED/INACTIVE accounts are denied
+  // even if credentials are correct. This makes admin suspension effective.
+  if (user.status !== "ACTIVE") {
+    const error = new Error(
+      "Your account has been suspended. Please contact support."
+    );
+    error.statusCode = 403;
+    throw error;
+  }
 
   const accessToken =
     generateAccessToken(user);
@@ -179,7 +189,7 @@ const login = async (
  * Forgot Password
  */
 const generateOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return crypto.randomInt(100000, 1000000).toString();
 };
 const forgotPassword =
   async (email) => {
@@ -195,7 +205,7 @@ const forgotPassword =
     }
     if(!user.isVerified){
       throw new Error(
-       "Yo are not verified");}
+       "You are not verified");}
     const Newotp = generateOTP();
   
     await prisma.user.update({
@@ -235,7 +245,7 @@ const resetPassword =
     const user =
       await prisma.user.findFirst({
         where: {
-          email:email
+          email: email
         }
       });
 
@@ -245,10 +255,15 @@ const resetPassword =
       );
     }
 
-    if(otp!=user.otp)
-    {
+    if (!user.otp || String(user.otp) !== String(otp)) {
       throw new Error(
         "Invalid OTP"
+      );
+    }
+
+    if (!user.otpExpiresAt || new Date() > new Date(user.otpExpiresAt)) {
+      throw new Error(
+        "OTP expired"
       );
     }
 
@@ -263,8 +278,9 @@ const resetPassword =
         id: user.id
       },
       data: {
-        password:
-          hashedPassword,
+        password: hashedPassword,
+        otp: null,
+        otpExpiresAt: null
       }
     });
 

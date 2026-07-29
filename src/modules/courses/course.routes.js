@@ -11,6 +11,9 @@ const controller = require(
 const verifyToken = require(
   "../../middleware/auth.middleware"
 );
+const { optionalToken } = require(
+  "../../middleware/auth.middleware"
+);
 
 const checkRole = require(
   "../../middleware/role.middleware"
@@ -19,11 +22,22 @@ const checkRole = require(
 const verifyCourseOwnership = require(
   "../../middleware/courseOwnership.middleware"
 );
+const validate = require("../../middleware/joiValidation.middleware");
+const {
+  createCourseSchema,
+  updateCourseSchema,
+  updateCourseStatusSchema,
+  sendAnnouncementSchema,
+  createCourseBatchSchema
+} = require("./course.validation");
 
+// Public read — optionalToken allows unauthenticated (GUEST) access.
+// The service layer already filters: guests/students see only PUBLISHED courses;
+// admins/instructors see all. verifyToken is NOT used here because guests
+// must be able to browse the course catalogue without a token.
 router.get(
   "/",
-
-  verifyToken,
+  optionalToken,
   checkRole([
     "ADMIN",
     "INSTRUCTOR",
@@ -33,9 +47,11 @@ router.get(
   controller.getCourses
 );
 
+// Public read — optionalToken allows unauthenticated access for course preview.
+// Students/guests only receive PUBLISHED course data; the service enforces this.
 router.get(
   "/:courseId",
-  verifyToken,
+  optionalToken,
   controller.getCourseById
 );
 
@@ -46,6 +62,7 @@ router.post(
     "ADMIN",
     "INSTRUCTOR"
   ]),
+  validate(createCourseSchema),
   controller.createCourse
 );
 
@@ -57,6 +74,7 @@ router.put(
     "INSTRUCTOR"
   ]),
   verifyCourseOwnership,
+  validate(updateCourseSchema),
   controller.updateCourse
 );
 
@@ -68,6 +86,7 @@ router.patch(
     "INSTRUCTOR"
   ]),
   verifyCourseOwnership,
+  validate(updateCourseStatusSchema),
   controller.updateStatus
 );
 
@@ -84,6 +103,8 @@ router.delete(
 router.get(
   "/:courseId/students",
   verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyCourseOwnership,
   controller.getCourseStudents
 );
 
@@ -92,12 +113,15 @@ router.post(
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
   verifyCourseOwnership,
+  validate(sendAnnouncementSchema),
   controller.sendAnnouncement
 );
 
 router.get(
   "/:courseId/batches",
   verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyCourseOwnership,
   controller.getCourseBatches
 );
 
@@ -106,6 +130,7 @@ router.post(
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
   verifyCourseOwnership,
+  validate(createCourseBatchSchema),
   controller.createCourseBatch
 );
 

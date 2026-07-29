@@ -7,6 +7,7 @@ const notificationService = require("../notifications/notification.service");
 
 const getCourses = async (
   role,
+  userId,
   search = "",
   page = 1,
   limit = 10
@@ -38,15 +39,6 @@ const getCourses = async (
         adminProfile: true,
       },
     },
-    modules: {
-      include: {
-        lessons: true,
-      },
-    },
-    quizzes: true,
-    assignments: true,
-    reviews: true,
-    certificates: true,
     _count: {
       select: {
         enrollments: true,
@@ -58,7 +50,10 @@ const getCourses = async (
     },
   };
 
-  if (role === "ADMIN" || role === "INSTRUCTOR") {
+  if (role === "ADMIN") {
+    query.include = commonInclude;
+  } else if (role === "INSTRUCTOR") {
+    query.where.creatorId = userId;
     query.include = commonInclude;
   } else {
     query.where.status = "PUBLISHED";
@@ -106,7 +101,25 @@ const getCourseById = async (courseId, role) => {
 
       quizzes: {
         include: {
-          questions: true
+          questions: {
+            select: {
+              id: true,
+              quizId: true,
+              title: true,
+              question: true,
+              questionType: true,
+              options: true,
+              marks: true,
+              difficulty: true,
+              order: true,
+              // Sensitive fields are conditionally spread only for ADMIN/INSTRUCTOR.
+              // Omitting a field from select entirely is the only guaranteed way
+              // Prisma will not fetch it — setting a field to false is undefined behavior.
+              ...(isStudentOrGuest
+                ? {}
+                : { correctAnswer: true, explanation: true }),
+            }
+          }
         }
       },
       enrollments: true
@@ -141,19 +154,23 @@ const updateCourse = async (courseId, data) => {
 };
 
 const updateStatus = async (courseId, status) => {
+  const isPublished = status === "PUBLISHED" || status === "Published" || status === true;
+  const finalStatus = isPublished ? "PUBLISHED" : "DRAFT";
+
   const course = await prisma.course.update({
     where: {
       id: courseId
     },
     data: {
-      status
+      status: finalStatus,
+      publishedAt: isPublished ? new Date() : null
     }
   });
 
   try {
     await notificationService.createNotification(course.creatorId, {
       title: "Course Status Updated 📢",
-      message: `Your course "${course.title}" status has been updated to "${status}".`,
+      message: `Your course "${course.title}" status has been updated to "${finalStatus}".`,
       type: "COURSE_STATUS",
       link: `/courses/${courseId}`
     });

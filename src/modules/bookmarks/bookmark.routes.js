@@ -4,7 +4,8 @@ const router = express.Router();
 const controller = require("./bookmark.controller");
 const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
-const { bookmarkCreateValidation } = require("./bookmark.validation");
+const validate = require("../../middleware/joiValidation.middleware");
+const { bookmarkCreateSchema } = require("./bookmark.validation");
 
 router.get(
   "/",
@@ -17,7 +18,7 @@ router.post(
   "/",
   verifyToken,
   checkRole(["STUDENT"]),
-  bookmarkCreateValidation,
+  validate(bookmarkCreateSchema),
   controller.createBookmark
 );
 

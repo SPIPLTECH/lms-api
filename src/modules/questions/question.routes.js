@@ -1,73 +1,90 @@
 const express = require("express");
+const multer = require("multer");
 const router = express.Router();
 
 const controller = require("./question.controller");
 const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
-const { importUpload } = require("../../middleware/upload.middleware");
+const validate = require("../../middleware/joiValidation.middleware");
+const {
+  createQuestionSchema,
+  updateQuestionSchema
+} = require("./question.validation");
 
-// =========================
-// Public Routes
-// =========================
-
-// Get all questions (optional ?quizId=...)
-router.get("/", controller.getQuestions);
-
-// Get questions by quiz id (explicit endpoint)
-router.get("/quiz/:quizId", controller.getQuestionsByQuizId);
-
-// Get question by id (explicit endpoint)
-router.get("/question/:questionId", controller.getQuestionById);
-
-// Get questions by quiz id or question by id (fallback for backward compatibility)
-router.get("/:quizId", (req, res, next) => {
-  // If request hits /:quizId, forward to getQuestionsByQuizId
-  return controller.getQuestionsByQuizId(req, res, next);
+// Multer memory storage for handling Excel, CSV, JSON file upload buffers
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB
+  },
 });
 
 // =========================
-// Protected Routes
+// Question Repository Routes
 // =========================
 
-// Create single question
+// GET /questions - Paginated search and filter repository questions
+router.get("/", verifyToken, controller.getQuestions);
+
+// POST /questions/upload - Bulk file upload (Excel, CSV, JSON)
+router.post(
+  "/upload",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  upload.single("file"),
+  controller.uploadQuestions
+);
+
+// GET /questions/question/:questionId - Single question details & quiz usage
+router.get("/question/:questionId", verifyToken, controller.getQuestionById);
+
+// GET /questions/quiz/:quizId - Questions by Quiz ID
+router.get("/quiz/:quizId", verifyToken, controller.getQuestionsByQuizId);
+
+// POST /questions - Manual single question creation
 router.post(
   "/",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
+  validate(createQuestionSchema),
   controller.createQuestion
 );
 
-// Bulk create questions
+// POST /questions/:questionId/archive - Archive question
 router.post(
-  "/bulk",
+  "/:questionId/archive",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
-  controller.bulkCreateQuestions
+  controller.archiveQuestion
 );
 
-// Import questions from file
+// POST /questions/:questionId/duplicate - Duplicate question
 router.post(
-  "/import",
+  "/:questionId/duplicate",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
-  importUpload.single("file"),
-  controller.importQuestions
+  controller.duplicateQuestion
 );
 
-// Update question
+// PUT /questions/:questionId - Update question
 router.put(
   "/:questionId",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
+  validate(updateQuestionSchema),
   controller.updateQuestion
 );
 
-// Delete question
+// DELETE /questions/:questionId - Delete or soft archive question
 router.delete(
   "/:questionId",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
   controller.deleteQuestion
 );
+
+// Fallback GET /questions/:quizId
+router.get("/:quizId", verifyToken, controller.getQuestionsByQuizId);
 
 module.exports = router;

@@ -1,7 +1,13 @@
 const prisma = require("../../config/database");
 
-const getModules = async (courseId, role) => {
-  const where = { courseId };
+const getModules = async (courseId, role, userId) => {
+  const where = {};
+  if (courseId) {
+    where.courseId = courseId;
+  } else if (role === "INSTRUCTOR") {
+    // No specific course requested: scope to this instructor's own courses only.
+    where.course = { creatorId: userId };
+  }
   if (role === "STUDENT" || role === "GUEST") {
     where.isPublished = true;
   }

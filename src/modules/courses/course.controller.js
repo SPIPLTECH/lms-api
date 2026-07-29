@@ -8,6 +8,7 @@ const getCourses = async (req, res) => {
 
     const courses = await courseService.getCourses(
        req.user.role,
+      req.user.id,
       search,
       page,
       limit
@@ -38,11 +39,15 @@ const getCourseById = async (
 
     if (!course) {
       return res.status(404).json({
+        success: false,
         message: "Course not found"
       });
     }
 
-    res.json(course);
+    res.json({
+      success: true,
+      data: course
+    });
   } catch (error) {
     next(error);
   }
@@ -59,7 +64,11 @@ const createCourse = async (
         req.user.id
       );
 
-    res.status(201).json(course);
+    res.status(201).json({
+      success: true,
+      data: course,
+      message: "Course created successfully"
+    });
   } catch (error) {
     next(error);
   }
@@ -77,7 +86,11 @@ const updateCourse = async (
         req.body
       );
 
-    res.json(course);
+    res.json({
+      success: true,
+      data: course,
+      message: "Course updated successfully"
+    });
   } catch (error) {
     next(error);
   }
@@ -95,7 +108,11 @@ const updateStatus = async (
         req.body.status
       );
 
-    res.json(course);
+    res.json({
+      success: true,
+      data: course,
+      message: "Course status updated successfully"
+    });
   } catch (error) {
     next(error);
   }
@@ -111,7 +128,10 @@ const deleteCourse = async (
       req.params.courseId
     );
 
-    res.status(204).send();
+    res.status(200).json({
+      success: true,
+      message: "Course deleted successfully"
+    });
   } catch (error) {
     next(error);
   }
@@ -127,7 +147,10 @@ const getCourseStudents = async (
         req.params.courseId
       );
 
-    res.json(students);
+    res.json({
+      success: true,
+      data: students
+    });
   } catch (error) {
     next(error);
   }
@@ -150,7 +173,10 @@ const sendAnnouncement = async (req, res, next) => {
 const getCourseBatches = async (req, res, next) => {
   try {
     const batches = await courseService.getCourseBatches(req.params.courseId);
-    res.json(batches);
+    res.json({
+      success: true,
+      data: batches
+    });
   } catch (error) {
     next(error);
   }
@@ -159,7 +185,11 @@ const getCourseBatches = async (req, res, next) => {
 const createCourseBatch = async (req, res, next) => {
   try {
     const batch = await courseService.createCourseBatch(req.params.courseId, req.body);
-    res.status(201).json(batch);
+    res.status(201).json({
+      success: true,
+      data: batch,
+      message: "Course batch created successfully"
+    });
   } catch (error) {
     next(error);
   }

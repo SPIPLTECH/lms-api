@@ -7,7 +7,8 @@ const getLessons = async (req, res, next) => {
     const lessons =
       await lessonService.getLessons(
         moduleId,
-        req.user.role
+        req.user.role,
+        req.user.id
       );
 
     res.json(lessons);

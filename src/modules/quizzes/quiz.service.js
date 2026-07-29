@@ -85,12 +85,17 @@ const calculateSubmissionResult = (quiz, answers = []) => {
 };
 
 const getQuizzes = async (
-  courseId
+  courseId,
+  role,
+  userId
 ) => {
   const where = {};
 
   if (courseId) {
     where.courseId = courseId;
+  } else if (role === "INSTRUCTOR") {
+    // No specific course requested: scope to this instructor's own courses only.
+    where.course = { creatorId: userId };
   }
 
   return prisma.quiz.findMany({
@@ -106,16 +111,51 @@ const getQuizzes = async (
 };
 
 const getQuizById = async (
-  quizId
+  quizId,
+  role
 ) => {
-  return prisma.quiz.findUnique({
+  const quiz = await prisma.quiz.findUnique({
     where: {
       id: quizId
     },
     include: {
-      questions: true
+      questions: true,
+      quizQuestions: {
+        orderBy: { order: "asc" },
+        include: { question: true }
+      }
     }
   });
+
+  if (!quiz) return null;
+
+  const junctionQuestions = (quiz.quizQuestions || []).map((qq) => ({
+    ...qq.question,
+    marks: qq.marks || qq.question.marks || 1,
+    order: qq.order,
+    isMandatory: qq.isMandatory,
+    quizQuestionId: qq.id
+  }));
+
+  const directQuestions = (quiz.questions || []).filter(
+    (q) => !junctionQuestions.some((jq) => jq.id === q.id)
+  );
+
+  let allQuestions = [...junctionQuestions, ...directQuestions].sort(
+    (a, b) => (a.order || 0) - (b.order || 0)
+  );
+
+  // Students attempting the quiz should not receive the answer key up front.
+  if (role === "STUDENT" || role === "GUEST") {
+    allQuestions = allQuestions.map(
+      ({ correctAnswer, explanation, ...rest }) => rest
+    );
+  }
+
+  return {
+    ...quiz,
+    questions: allQuestions
+  };
 };
 
 const createQuiz = async (

@@ -6,10 +6,11 @@ const controller = require("./sticky-note.controller");
 
 const verifyToken = require("../../middleware/auth.middleware");
 const verifyStickyNoteOwnership = require("../../middleware/stickyNoteOwnership.middleware");
+const validate = require("../../middleware/joiValidation.middleware");
 
 const {
-  stickyNoteCreateValidation,
-  stickyNoteUpdateValidation
+  stickyNoteCreateSchema,
+  stickyNoteUpdateSchema
 } = require("./sticky-note.validation");
 
 router.get(
@@ -27,7 +28,7 @@ router.get(
 router.post(
   "/",
   verifyToken,
-  stickyNoteCreateValidation,
+  validate(stickyNoteCreateSchema),
   controller.createStickyNote
 );
 
@@ -35,7 +36,7 @@ router.put(
   "/:stickyNoteId",
   verifyToken,
   verifyStickyNoteOwnership,
-  stickyNoteUpdateValidation,
+  validate(stickyNoteUpdateSchema),
   controller.updateStickyNote
 );
 
