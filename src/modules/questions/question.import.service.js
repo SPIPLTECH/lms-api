@@ -3,7 +3,7 @@ const { parseFile: parseUploadedFile } = require("../../utils/fileParser");
 const { validateQuestions } = require("../../utils/helpers/questionValidator");
 const { normalizeQuestion } = require("../../utils/helpers/question.helper");
 
-const parseFile = async (file, quizId) => {
+const parseFile = async (file) => {
     try {
         const parsedQuestions = await parseUploadedFile(file.path);
 
@@ -17,17 +17,11 @@ const parseFile = async (file, quizId) => {
         // 2. Validate normalized questions
         const { validQuestions, failedQuestions } = validateQuestions(normalizedRows);
 
-        // 3. Attach quizId to valid questions
-        const questions = validQuestions.map(q => ({
-            ...q,
-            quizId
-        }));
-
         return {
-            questions,
+            questions: validQuestions,
             report: {
                 total: parsedQuestions.length,
-                inserted: questions.length,
+                inserted: validQuestions.length,
                 failed: failedQuestions.length,
                 errors: failedQuestions,
             },

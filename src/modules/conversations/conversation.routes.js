@@ -2,6 +2,7 @@ const express = require("express");
 
 const conversationController = require("./conversation.controller");
 const verifyToken = require("../../middleware/auth.middleware");
+const verifyConversationParticipant = require("../../middleware/conversationOwnership.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
 
 const {
@@ -39,6 +40,7 @@ router.post(
 router.patch(
     "/:conversationId",
     verifyToken,
+    verifyConversationParticipant,
     validate(updateConversationSchema),
     conversationController.updateConversation
 );
@@ -46,6 +48,7 @@ router.patch(
 router.delete(
     "/:conversationId",
     verifyToken,
+    verifyConversationParticipant,
     conversationController.deleteConversation
 );
 

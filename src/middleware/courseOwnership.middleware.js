@@ -1,45 +1,56 @@
 const prisma = require("../config/database");
+const { buildOwnershipCheck } = require("./ownership.middleware");
 
-const verifyCourseOwnership = async (
-  req,
-  res,
-  next
-) => {
-  try {
-    const { courseId } = req.params;
+const findCourse = (id) =>
+  prisma.course.findUnique({
+    where: { id },
+    select: { id: true, creatorId: true },
+  });
 
-    const course =
-      await prisma.course.findUnique({
-        where: {
-          id: courseId
-        }
-      });
+const getCourseCreatorId = (course) => course.creatorId;
 
-    if (!course) {
-      return res.status(404).json({
-        message: "Course not found"
-      });
-    }
+/**
+ * Verifies the caller owns the course identified by req.params.courseId.
+ * ADMIN always passes. Used on routes that operate directly on a course.
+ */
+const verifyCourseOwnership = buildOwnershipCheck({
+  getResourceId: (req) => req.params.courseId,
+  findResource: findCourse,
+  getCourseCreatorId,
+  notFoundMessage: "Course not found",
+  missingIdMessage: "courseId is required",
+  attachAs: "course",
+});
 
-    if (req.user.role === "ADMIN") {
-      return next();
-    }
+/**
+ * Same check, but reads the course id from req.body.courseId instead of the
+ * URL params. Used on "create a child of this course" routes (modules,
+ * quizzes, assignments, live classes, certificates) where the course hasn't
+ * been reached via a resource id yet.
+ */
+const verifyCourseOwnershipFromBody = buildOwnershipCheck({
+  getResourceId: (req) => req.body.courseId,
+  findResource: findCourse,
+  getCourseCreatorId,
+  notFoundMessage: "Course not found",
+  missingIdMessage: "courseId is required",
+  attachAs: "course",
+});
 
-    if (req.user.role === "INSTRUCTOR") {
-      if (course.creatorId !== req.user.id) {
-        return res.status(403).json({
-          message: "Forbidden: You do not have permission to manage this course"
-        });
-      }
-      return next();
-    }
-
-    return res.status(403).json({
-      message: "Forbidden: Unauthorized access"
-    });
-  } catch (error) {
-    next(error);
-  }
-};
+/**
+ * Same check, but reads the course id from req.query.courseId. Used on list
+ * endpoints for a course's child resources (e.g. GET /discussions?courseId=...).
+ */
+const verifyCourseOwnershipFromQuery = buildOwnershipCheck({
+  getResourceId: (req) => req.query.courseId,
+  findResource: findCourse,
+  getCourseCreatorId,
+  notFoundMessage: "Course not found",
+  missingIdMessage: "courseId is required",
+  attachAs: "course",
+});
 
 module.exports = verifyCourseOwnership;
+module.exports.verifyCourseOwnership = verifyCourseOwnership;
+module.exports.fromBody = verifyCourseOwnershipFromBody;
+module.exports.fromQuery = verifyCourseOwnershipFromQuery;

@@ -33,9 +33,14 @@ const getContentById = async (
   });
 };
 
+const { sanitizeContent } = require("../../utils/sanitizer");
+
 const createContent = async (
   data
 ) => {
+  if (data.htmlContent) {
+    data.htmlContent = sanitizeContent(data.htmlContent);
+  }
   return prisma.content.create({
     data
   });
@@ -45,6 +50,9 @@ const updateContent = async (
   contentId,
   data
 ) => {
+  if (data.htmlContent) {
+    data.htmlContent = sanitizeContent(data.htmlContent);
+  }
   return prisma.content.update({
     where: {
       id: contentId

@@ -1,5 +1,15 @@
 const Joi = require("joi");
 
+const courseExtraFields = {
+  visibility: Joi.string().valid("PUBLIC", "PRIVATE", "UNLISTED").optional(),
+  language: Joi.string().max(50).optional().allow(null, ""),
+  tags: Joi.array().items(Joi.string().max(50)).optional(),
+  certificatesEnabled: Joi.boolean().optional(),
+  discussionEnabled: Joi.boolean().optional(),
+  dripContentEnabled: Joi.boolean().optional(),
+  estimatedLearningHours: Joi.number().min(0).max(10000).optional().allow(null)
+};
+
 const createCourseSchema = Joi.object({
   title: Joi.string().required().messages({
     "any.required": "Title is required",
@@ -9,7 +19,8 @@ const createCourseSchema = Joi.object({
   category: Joi.string().optional().allow(null, ""),
   level: Joi.string().optional().allow(null, ""),
   thumbnailUrl: Joi.string().uri().optional().allow(null, ""),
-  status: Joi.string().valid("DRAFT", "PUBLISHED", "ARCHIVED").optional()
+  status: Joi.string().valid("DRAFT", "PUBLISHED", "ARCHIVED").optional(),
+  ...courseExtraFields
 });
 
 const updateCourseSchema = Joi.object({
@@ -18,6 +29,7 @@ const updateCourseSchema = Joi.object({
   category: Joi.string().optional().allow(null, ""),
   level: Joi.string().optional().allow(null, ""),
   thumbnailUrl: Joi.string().uri().optional().allow(null, ""),
+  ...courseExtraFields
 });
 
 const updateCourseStatusSchema = Joi.object({

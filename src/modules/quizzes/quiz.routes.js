@@ -3,6 +3,8 @@ const router = express.Router();
 const controller = require("./quiz.controller");
 const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
+const verifyQuizOwnership = require("../../middleware/quizOwnership.middleware");
+const verifyCourseOwnership = require("../../middleware/courseOwnership.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
 const {
   createQuizSchema,
@@ -38,6 +40,7 @@ router.post(
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
   validate(createQuizSchema),
+  verifyCourseOwnership.fromBody,
   controller.createQuiz
 );
 
@@ -45,6 +48,7 @@ router.put(
   "/:quizId",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyQuizOwnership,
   validate(updateQuizSchema),
   controller.updateQuiz
 );
@@ -53,6 +57,7 @@ router.delete(
   "/:quizId",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyQuizOwnership,
   controller.deleteQuiz
 );
 
@@ -72,6 +77,7 @@ router.post(
   "/:quizId/import-questions",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyQuizOwnership,
   validate(importQuestionsToQuizSchema),
   controller.importQuestionsToQuiz
 );
@@ -81,6 +87,7 @@ router.delete(
   "/:quizId/questions/:questionId",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyQuizOwnership,
   controller.removeQuestionFromQuiz
 );
 
@@ -89,6 +96,7 @@ router.put(
   "/:quizId/questions/reorder",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyQuizOwnership,
   validate(reorderQuizQuestionsSchema),
   controller.reorderQuizQuestions
 );
@@ -98,6 +106,7 @@ router.put(
   "/:quizId/questions/:questionId/marks",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyQuizOwnership,
   validate(updateQuizQuestionMarksSchema),
   controller.updateQuizQuestionMarks
 );

@@ -18,6 +18,10 @@ const verifyLessonOwnership =
   require(
     "../../middleware/lessonOwnership.middleware"
   );
+const verifyModuleOwnership =
+  require(
+    "../../middleware/moduleOwnership.middleware"
+  );
 const validate = require("../../middleware/joiValidation.middleware");
 const {
   createLessonSchema,
@@ -53,6 +57,7 @@ router.post(
     "INSTRUCTOR"
   ]),
   validate(createLessonSchema),
+  verifyModuleOwnership.fromBody,
   lessonController.createLesson
 );
 
@@ -87,6 +92,7 @@ router.patch(
     "INSTRUCTOR"
   ]),
   validate(reorderLessonsSchema),
+  verifyModuleOwnership.fromBody,
   lessonController.reorderLessons
 );
 

@@ -1,6 +1,6 @@
 const assert = require("assert");
 const courseImportService = require("../src/modules/import/services/CourseImportService");
-const ZipValidator = require("../src/modules/import/validators/ZipValidator");
+const ZipValidator = require("../src/modules/import/parsers/ZipValidator");
 const contentParser = require("../src/modules/import/parsers/ContentParser");
 const MarkdownParser = require("../src/modules/import/parsers/MarkdownParser");
 const JSZip = require("jszip");

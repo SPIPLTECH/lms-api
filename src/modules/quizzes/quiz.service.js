@@ -1,74 +1,104 @@
 const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
 
-const isAnswerCorrect = (selectedOption, correctAnswer, questionType) => {
-  if (selectedOption === undefined || selectedOption === null) {
-    return false;
+const evaluateAnswer = (answer, correctAnswer, questionType) => {
+  if (answer === undefined || answer === null || answer === "") {
+    return 0;
   }
 
   const type = String(questionType || '').toUpperCase();
 
   // 1. MATCH_PAIRS (Object mapping match)
   if (type === "MATCH_PAIRS" || (typeof correctAnswer === "object" && correctAnswer !== null && !Array.isArray(correctAnswer))) {
-    if (typeof selectedOption !== "object" || selectedOption === null || Array.isArray(selectedOption)) {
-      return false;
+    if (typeof answer !== "object" || answer === null || Array.isArray(answer)) {
+      return 0;
     }
-    const keysA = Object.keys(selectedOption);
+    const keysA = Object.keys(answer);
     const keysB = Object.keys(correctAnswer);
-    if (keysA.length !== keysB.length) return false;
-    return keysA.every((key) => 
-      Object.prototype.hasOwnProperty.call(correctAnswer, key) && 
-      String(selectedOption[key]).trim().toLowerCase() === String(correctAnswer[key]).trim().toLowerCase()
-    );
+    if (keysB.length === 0) return 0;
+    
+    let correctCount = 0;
+    keysA.forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(correctAnswer, key) && 
+          String(answer[key]).trim().toLowerCase() === String(correctAnswer[key]).trim().toLowerCase()) {
+        correctCount++;
+      }
+    });
+    return Math.max(0, correctCount / keysB.length);
   }
 
   // 2. ARRANGE_TOKENS (Ordered Array match)
   if (type === "ARRANGE_TOKENS") {
-    if (!Array.isArray(selectedOption) || !Array.isArray(correctAnswer)) return false;
-    if (selectedOption.length !== correctAnswer.length) return false;
-    return selectedOption.every((val, idx) => 
-      String(val).trim().toLowerCase() === String(correctAnswer[idx]).trim().toLowerCase()
-    );
+    if (!Array.isArray(answer) || !Array.isArray(correctAnswer)) return 0;
+    if (correctAnswer.length === 0) return 0;
+    
+    let correctCount = 0;
+    answer.forEach((val, idx) => {
+      if (idx < correctAnswer.length && String(val).trim().toLowerCase() === String(correctAnswer[idx]).trim().toLowerCase()) {
+        correctCount++;
+      }
+    });
+    return Math.max(0, correctCount / correctAnswer.length);
   }
 
   // 3. MCQ_MULTI / MULTIPLE_CORRECT (Order-independent Array match)
-  if (type === "MCQ_MULTI" || type === "MULTIPLE_CORRECT" || Array.isArray(correctAnswer) || Array.isArray(selectedOption)) {
-    const selArr = Array.isArray(selectedOption)
-      ? selectedOption.map(s => String(s).trim().toLowerCase())
-      : [String(selectedOption).trim().toLowerCase()];
+  if (type === "MCQ_MULTI" || type === "MULTIPLE_CORRECT" || Array.isArray(correctAnswer) || Array.isArray(answer)) {
+    const selArr = Array.isArray(answer)
+      ? answer.map(s => String(s).trim().toLowerCase())
+      : [String(answer).trim().toLowerCase()];
     const corrArr = Array.isArray(correctAnswer)
       ? correctAnswer.map(c => String(c).trim().toLowerCase())
       : [String(correctAnswer).trim().toLowerCase()];
 
-    if (selArr.length !== corrArr.length) return false;
-    selArr.sort();
-    corrArr.sort();
-    return selArr.every((val, idx) => val === corrArr[idx]);
+    if (corrArr.length === 0) return 0;
+    
+    let correctCount = 0;
+    let incorrectCount = 0;
+
+    selArr.forEach((val) => {
+      if (corrArr.includes(val)) {
+        correctCount++;
+      } else {
+        incorrectCount++;
+      }
+    });
+    
+    const score = (correctCount - incorrectCount) / corrArr.length;
+    return Math.max(0, score);
   }
 
   // 4. Primitive types (MCQ_SINGLE, MCQ, TRUE_FALSE, FILL_BLANK, SHORT_ANSWER, LONG_ANSWER)
-  const selStr = String(selectedOption).trim().toLowerCase();
+  const selStr = String(answer).trim().toLowerCase();
   const corrStr = String(correctAnswer).trim().toLowerCase();
-  return selStr === corrStr;
+  return selStr === corrStr ? 1 : 0;
 };
 
 const calculateSubmissionResult = (quiz, answers = []) => {
-  const questions = quiz.questions || [];
-  const totalMarks = questions.reduce((sum, question) => sum + (question.marks || 1), 0);
-  const answerMap = new Map((answers || []).map((answer) => [answer.questionId, answer.selectedOption]));
+  const rawQuestions = quiz.quizQuestions ? quiz.quizQuestions.map(qq => ({
+    ...qq.question,
+    marks: qq.marks ?? qq.question?.marks ?? 1,
+    negativeMarks: qq.question?.negativeMarks ?? 0
+  })) : [];
+  
+  const totalMarks = rawQuestions.reduce((sum, question) => sum + (question.marks || 1), 0);
+  const answerMap = new Map((answers || []).map((ans) => [ans.questionId, ans.answer]));
 
   let score = 0;
 
-  questions.forEach((question) => {
-    const selectedOption = answerMap.get(question.id);
+  rawQuestions.forEach((question) => {
+    const answer = answerMap.get(question.id);
 
-    if (selectedOption !== undefined && selectedOption !== null && selectedOption !== "") {
+    if (answer !== undefined && answer !== null && answer !== "") {
       const qType = question.questionType || question.type;
-      const correct = isAnswerCorrect(selectedOption, question.correctAnswer, qType);
-      if (correct) {
-        score += question.marks !== undefined ? Number(question.marks) : 1;
-      } else if (question.negativeMarks && Number(question.negativeMarks) > 0) {
-        score -= Number(question.negativeMarks);
+      const scoreMultiplier = evaluateAnswer(answer, question.correctAnswer, qType);
+      
+      const questionMarks = question.marks !== undefined ? Number(question.marks) : 1;
+      const negativeMarks = question.negativeMarks ? Number(question.negativeMarks) : 0;
+      
+      if (scoreMultiplier > 0) {
+        score += scoreMultiplier * questionMarks;
+      } else if (scoreMultiplier === 0 && negativeMarks > 0) {
+        score -= negativeMarks;
       }
     }
   });
@@ -103,7 +133,7 @@ const getQuizzes = async (
     include: {
       _count: {
         select: {
-          questions: true
+          quizQuestions: true
         }
       }
     }
@@ -119,7 +149,6 @@ const getQuizById = async (
       id: quizId
     },
     include: {
-      questions: true,
       quizQuestions: {
         orderBy: { order: "asc" },
         include: { question: true }
@@ -131,19 +160,13 @@ const getQuizById = async (
 
   const junctionQuestions = (quiz.quizQuestions || []).map((qq) => ({
     ...qq.question,
-    marks: qq.marks || qq.question.marks || 1,
+    marks: qq.marks ?? qq.question?.marks ?? 1,
     order: qq.order,
     isMandatory: qq.isMandatory,
     quizQuestionId: qq.id
   }));
 
-  const directQuestions = (quiz.questions || []).filter(
-    (q) => !junctionQuestions.some((jq) => jq.id === q.id)
-  );
-
-  let allQuestions = [...junctionQuestions, ...directQuestions].sort(
-    (a, b) => (a.order || 0) - (b.order || 0)
-  );
+  let allQuestions = [...junctionQuestions];
 
   // Students attempting the quiz should not receive the answer key up front.
   if (role === "STUDENT" || role === "GUEST") {
@@ -211,7 +234,7 @@ const deleteQuiz = async (
 const submitQuiz = async (studentId, quizId, answers = []) => {
   const quiz = await prisma.quiz.findUnique({
     where: { id: quizId },
-    include: { questions: true }
+    include: { quizQuestions: { include: { question: true } } }
   });
 
   if (!quiz) {

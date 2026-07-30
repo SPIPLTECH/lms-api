@@ -121,6 +121,7 @@ const reorderLessons = async (
   try {
     const result =
       await lessonService.reorderLessons(
+        req.body.moduleId,
         req.body.lessons
       );
 

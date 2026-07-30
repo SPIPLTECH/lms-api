@@ -118,7 +118,7 @@ const getInstructorAssignments = async (instructorId, courseId) => {
         where.course = { creatorId: instructorId };
     }
 
-    return await prisma.assignment.findMany({
+    const assignments = await prisma.assignment.findMany({
         where,
         include: {
             course: {
@@ -126,12 +126,24 @@ const getInstructorAssignments = async (instructorId, courseId) => {
                     id: true,
                     title: true,
                 }
+            },
+            // Ungraded submissions only — this is what "pending review" means for
+            // an assignment, not the assignment's own workflow `status` field.
+            _count: {
+                select: {
+                    submissions: { where: { grade: null } }
+                }
             }
         },
         orderBy: {
             createdAt: "desc"
         }
     });
+
+    return assignments.map(({ _count, ...assignment }) => ({
+        ...assignment,
+        pendingSubmissionsCount: _count.submissions
+    }));
 };
 
 const createAssignment = async (data) => {

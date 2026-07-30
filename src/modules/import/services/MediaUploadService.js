@@ -12,7 +12,13 @@ class MediaUploadService {
     const uniqueFilename = `${Date.now()}_${sanitizedFilename}`;
     const destinationPath = path.join(uploadDir, uniqueFilename);
 
-    fs.writeFileSync(destinationPath, fileBuffer);
+    let finalBuffer = fileBuffer;
+    if (originalFilename.toLowerCase().endsWith(".svg")) {
+      const { sanitizeSvg } = require("../../../utils/sanitizer");
+      finalBuffer = sanitizeSvg(fileBuffer);
+    }
+
+    fs.writeFileSync(destinationPath, finalBuffer);
 
     return `/uploads/${targetFolder}/${uniqueFilename}`;
   }

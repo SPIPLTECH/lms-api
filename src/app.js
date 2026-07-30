@@ -110,6 +110,11 @@ app.use("/assignments", assignmentRoutes);
 app.use("/calendar", calendarRoutes);
 app.use("/upcoming-tasks", upcomingTasksRoutes);
 app.use("/analytics", require("./modules/analytics/analytics.routes"));
+app.use("/announcements", require("./modules/announcements/announcement.routes"));
+app.use("/teaching-goals", require("./modules/teaching-goals/teachingGoal.routes"));
+app.use("/lesson-notes", require("./modules/lesson-notes/lessonNote.routes"));
+app.use("/lesson-queries", require("./modules/lesson-queries/lessonQuery.routes"));
+app.use("/discussions", require("./modules/discussions/discussion.routes"));
 app.use(errorHandler);
 
 module.exports = app;

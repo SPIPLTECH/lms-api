@@ -136,6 +136,27 @@ const deleteCourse = async (
     next(error);
   }
 };
+const duplicateCourse = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const course = await courseService.duplicateCourse(
+      req.params.courseId,
+      req.user.id
+    );
+
+    res.status(201).json({
+      success: true,
+      data: course,
+      message: "Course duplicated successfully"
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getCourseStudents = async (
   req,
   res,
@@ -160,6 +181,13 @@ const sendAnnouncement = async (req, res, next) => {
   try {
     const { title, message } = req.body;
     const notificationService = require("../notifications/notification.service");
+    const announcementService = require("../announcements/announcement.service");
+    await announcementService.createAnnouncement({
+      courseId: req.params.courseId,
+      instructorId: req.user.id,
+      title,
+      message
+    });
     await notificationService.notifyEnrolledStudents(req.params.courseId, { title, message });
     res.json({
       success: true,
@@ -202,6 +230,7 @@ module.exports = {
   updateCourse,
   updateStatus,
   deleteCourse,
+  duplicateCourse,
   getCourseStudents,
   sendAnnouncement,
   getCourseBatches,

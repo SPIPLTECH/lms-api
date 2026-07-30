@@ -167,6 +167,9 @@ const updateMyProfile = async (userId, data) => {
     if (data.qualification !== undefined) profileUpdate.qualification = data.qualification;
     if (data.experience !== undefined) profileUpdate.experience = parseInt(data.experience);
     if (data.bio !== undefined) profileUpdate.bio = data.bio;
+    if (data.notificationPreferences !== undefined) profileUpdate.notificationPreferences = data.notificationPreferences;
+    if (data.language !== undefined) profileUpdate.language = data.language;
+    if (data.timezone !== undefined) profileUpdate.timezone = data.timezone;
 
     if (Object.keys(profileUpdate).length > 0) {
       await prisma.teacherProfile.update({

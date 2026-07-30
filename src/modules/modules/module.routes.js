@@ -9,6 +9,10 @@ const verifyModuleOwnership =
   require(
     "../../middleware/moduleOwnership.middleware"
   );
+const verifyCourseOwnership =
+  require(
+    "../../middleware/courseOwnership.middleware"
+  );
 const verifyToken = require(
   "../../middleware/auth.middleware"
 );
@@ -45,6 +49,7 @@ router.post(
     "INSTRUCTOR"
   ]),
   validate(createModuleSchema),
+  verifyCourseOwnership.fromBody,
   controller.createModule
 );
 
@@ -79,6 +84,7 @@ router.patch(
     "INSTRUCTOR"
   ]),
   validate(reorderModulesSchema),
+  verifyCourseOwnership.fromBody,
   controller.reorderModules
 );
 

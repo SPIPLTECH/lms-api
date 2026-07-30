@@ -3,7 +3,7 @@ const express = require("express");
 const messageController = require("./message.controller");
 const verifyToken = require("../../middleware/auth.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
-const { upload } = require("../../middleware/upload.middleware");
+const { upload, sanitizeSvgUpload } = require("../../middleware/upload.middleware");
 
 const {
     sendMessageSchema,
@@ -38,6 +38,7 @@ router.post(
     "/upload",
     verifyToken,
     upload.single("file"),
+    sanitizeSvgUpload,
     messageController.uploadAttachment
 );
 

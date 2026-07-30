@@ -105,6 +105,7 @@ const reorderModules = async (
   try {
     const result =
       await moduleService.reorderModules(
+        req.body.courseId,
         req.body.modules
       );
 

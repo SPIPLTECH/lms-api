@@ -215,5 +215,19 @@ module.exports = {
   importUpload,
 
   getAttachmentType,
+  
+  sanitizeSvgUpload: (req, res, next) => {
+    if (req.file && req.file.path && path.extname(req.file.originalname).toLowerCase() === '.svg') {
+      try {
+        const { sanitizeSvg } = require("../utils/sanitizer");
+        const svgBuffer = fs.readFileSync(req.file.path);
+        const cleanSvg = sanitizeSvg(svgBuffer);
+        fs.writeFileSync(req.file.path, cleanSvg);
+      } catch (err) {
+        return next(new Error("Failed to sanitize SVG file."));
+      }
+    }
+    next();
+  }
 
 };

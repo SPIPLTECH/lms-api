@@ -1,5 +1,6 @@
 const prisma =
   require("../../config/database");
+const ApiError = require("../../utils/ApiError");
 const notificationService = require("../notifications/notification.service");
 const youtubeTranscript = require("../../utils/youtubeTranscript");
 
@@ -56,8 +57,14 @@ const getLessonById = async (
 const createLesson = async (
   data
 ) => {
+  const lastLesson = await prisma.lesson.findFirst({
+    where: { moduleId: data.moduleId },
+    orderBy: { order: "desc" },
+    select: { order: true }
+  });
+
   const lesson = await prisma.lesson.create({
-    data
+    data: { ...data, order: (lastLesson?.order ?? 0) + 1 }
   });
 
   if (lesson.isPublished) {
@@ -216,13 +223,37 @@ const getLessonTranscript = async (
 };
 
 const reorderLessons = async (
+  moduleId,
   lessons
 ) => {
+  // Mirrors reorderModules: the caller's ownership of `moduleId` is verified
+  // by middleware before this runs, but every id in the payload must also be
+  // confirmed to actually belong to that module before we touch it — a
+  // lesson id from a different module (owned by someone else) must not be
+  // reorderable just because it was included in this request's array.
+  const owned = await prisma.lesson.findMany({
+    where: {
+      id: { in: lessons.map((lesson) => lesson.id) },
+      moduleId
+    },
+    select: { id: true }
+  });
+
+  const ownedIds = new Set(owned.map((lesson) => lesson.id));
+  const invalidId = lessons.find((lesson) => !ownedIds.has(lesson.id));
+
+  if (invalidId) {
+    throw new ApiError(
+      403,
+      "Forbidden: one or more lessons do not belong to this module"
+    );
+  }
+
   return prisma.$transaction(
     lessons.map((lesson) =>
       prisma.lesson.update({
         where: {
-          id: lesson.lessonId
+          id: lesson.id
         },
         data: {
           order: lesson.order

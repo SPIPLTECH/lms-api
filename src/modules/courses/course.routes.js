@@ -100,6 +100,17 @@ router.delete(
   verifyCourseOwnership,
   controller.deleteCourse
 );
+router.post(
+  "/:courseId/duplicate",
+  verifyToken,
+  checkRole([
+    "ADMIN",
+    "INSTRUCTOR"
+  ]),
+  verifyCourseOwnership,
+  controller.duplicateCourse
+);
+
 router.get(
   "/:courseId/students",
   verifyToken,

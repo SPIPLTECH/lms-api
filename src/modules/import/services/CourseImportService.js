@@ -133,13 +133,14 @@ class CourseImportService {
               if (ext === ".md") {
                 const mdText = fileBuffer.toString("utf-8");
                 const { body } = MarkdownParser.parseFrontmatter(mdText);
+                const { sanitizeContent } = require("../../../utils/sanitizer");
 
                 await tx.content.create({
                   data: {
                     lessonId: lessonObj.id,
                     title: lesData.title || "Lesson Material",
                     type: "TEXT",
-                    htmlContent: body,
+                    htmlContent: sanitizeContent(body),
                     order: 1,
                   },
                 });

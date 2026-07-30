@@ -156,7 +156,7 @@ const getInstructorDashboard = async (instructorId, courseId) => {
   }
   const avgQuizScore = quizScores.length > 0
     ? Math.round(quizScores.reduce((sum, s) => sum + s, 0) / quizScores.length)
-    : 78; // baseline fallback
+    : 0;
 
   // 4. Average rating calculations
   let ratings = [];
@@ -167,7 +167,7 @@ const getInstructorDashboard = async (instructorId, courseId) => {
   }
   const avgRating = ratings.length > 0
     ? parseFloat((ratings.reduce((sum, r) => sum + r, 0) / ratings.length).toFixed(1))
-    : 4.6; // baseline fallback
+    : 0;
 
   // 5. Inactive Students Count (no progress or login activity for 5+ days)
   const fiveDaysAgo = new Date();
@@ -423,9 +423,9 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     
     studentEngagement.push({
       day: dayLabel,
-      activeStudents: dailyActiveStudents.size || Math.round(totalEnrollments * 0.15) + (i % 3) * 2,
-      lessonsCompleted: dailyCompletions || Math.round(totalEnrollments * 0.1) + (i % 2) * 3,
-      quizAttempts: dailyQuizAttempts || Math.round(totalEnrollments * 0.05) + (i % 4)
+      activeStudents: dailyActiveStudents.size,
+      lessonsCompleted: dailyCompletions,
+      quizAttempts: dailyQuizAttempts
     });
   }
 
@@ -455,17 +455,25 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     }
     const courseQuizAverage = quizScores.length > 0
       ? Math.round(quizScores.reduce((sum, s) => sum + s, 0) / quizScores.length)
-      : 78;
-      
+      : 0;
+
     const courseRatings = course.reviews.map(r => r.rating);
     const courseRating = courseRatings.length > 0
       ? parseFloat((courseRatings.reduce((sum, r) => sum + r, 0) / courseRatings.length).toFixed(1))
-      : 4.5;
+      : 0;
       
-    let health = 'Good';
-    if (completionRate < 60 || courseQuizAverage < 60) health = 'Critical';
-    else if (completionRate < 75 || courseQuizAverage < 75) health = 'Needs Review';
-    else if (completionRate >= 85 && courseQuizAverage >= 80) health = 'Excellent';
+    let health = 'No Data';
+    if (enrolledCount > 0) {
+      const signals = [completionRate];
+      if (quizScores.length > 0) signals.push(courseQuizAverage);
+      const worstSignal = Math.min(...signals);
+      const bestSignal = Math.min(completionRate, quizScores.length > 0 ? courseQuizAverage : 100);
+
+      health = 'Good';
+      if (worstSignal < 60) health = 'Critical';
+      else if (worstSignal < 75) health = 'Needs Review';
+      else if (completionRate >= 85 && bestSignal >= 80) health = 'Excellent';
+    }
     
     return {
       id: course.id,
@@ -566,12 +574,7 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     coursePerformance,
     conceptMastery,
     recommendedActions,
-    courses,
-    schedule: [
-      { day: 'Monday', time: '9:00 AM', topic: 'Java EE Basics Lecture' },
-      { day: 'Wednesday', time: '10:00 AM', topic: 'Spring JPA Config Lab' },
-      { day: 'Friday', time: '2:00 PM', topic: 'Java Collections Lab' },
-    ]
+    courses
   };
 };
 const getStudentDashboard = async (userId) => {
