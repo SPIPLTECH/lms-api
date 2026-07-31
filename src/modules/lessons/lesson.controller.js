@@ -7,7 +7,8 @@ const getLessons = async (req, res, next) => {
     const lessons =
       await lessonService.getLessons(
         moduleId,
-        req.user.role
+        req.user.role,
+        req.user.id
       );
 
     res.json(lessons);
@@ -120,6 +121,7 @@ const reorderLessons = async (
   try {
     const result =
       await lessonService.reorderLessons(
+        req.body.moduleId,
         req.body.lessons
       );
 

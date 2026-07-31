@@ -3,6 +3,8 @@ const router = express.Router();
 
 const controller = require("./calendar.controller");
 const verifyToken = require("../../middleware/auth.middleware");
+const validate = require("../../middleware/joiValidation.middleware");
+const { createEventSchema } = require("./calendar.validation");
 
 router.get(
     "/",
@@ -13,6 +15,7 @@ router.get(
 router.post(
     "/",
     verifyToken,
+    validate(createEventSchema),
     controller.createEvent
 );
 

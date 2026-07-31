@@ -21,115 +21,56 @@ if (!fs.existsSync(uploadDir)) {
 // Storage
 // =====================================
 
-const storage = multer.diskStorage({
+const allowedImportExtensions = [
+  ".csv",
+  ".xls",
+  ".xlsx",
+  ".ods",
+  ".json",
+  ".xml",
+  ".txt",
+  ".tsv",
+  ".pdf",
+  ".docx",
+];
 
+const forbiddenAttachmentExtensions = [
+  ".exe", ".bat", ".cmd", ".sh", ".php", ".js", ".vbs", ".ps1", ".html", ".htm", ".cgi", ".pl", ".py"
+];
+
+const attachmentFileFilter = (req, file, cb) => {
+  const extension = path.extname(file.originalname).toLowerCase();
+  if (forbiddenAttachmentExtensions.includes(extension)) {
+    return cb(new Error(`File type ${extension} is not permitted for upload`), false);
+  }
+  cb(null, true);
+};
+
+const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadDir);
   },
-
   filename: (req, file, cb) => {
-
-    const uniqueSuffix =
-      Date.now() +
-      "-" +
-      Math.round(
-        Math.random() * 1e9
-      );
-
-    cb(
-      null,
-      uniqueSuffix +
-        "-" +
-        file.originalname
-    );
-
+    const sanitizedOriginal = path.basename(file.originalname).replace(/[^a-zA-Z0-9.-]/g, "_");
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + "-" + sanitizedOriginal);
   },
-
 });
 
-// =====================================
-// Allowed Import File Extensions
-// =====================================
-
-const allowedImportExtensions = [
-
-  ".csv",
-
-  ".xls",
-
-  ".xlsx",
-
-  ".ods",
-
-  ".json",
-
-  ".xml",
-
-  ".txt",
-
-  ".tsv",
-
-  ".html",
-
-  ".pdf",
-
-  ".docx",
-
-];
-
-// =====================================
-// Import File Filter
-// =====================================
-
-const importFileFilter = (
-  req,
-  file,
-  cb
-) => {
-
-  const extension =
-    path
-      .extname(file.originalname)
-      .toLowerCase();
-
-  if (
-    allowedImportExtensions.includes(
-      extension
-    )
-  ) {
-
-    return cb(
-      null,
-      true
-    );
-
+const importFileFilter = (req, file, cb) => {
+  const extension = path.extname(file.originalname).toLowerCase();
+  if (allowedImportExtensions.includes(extension)) {
+    return cb(null, true);
   }
-
-  cb(
-    new Error(
-      `Unsupported import file: ${extension}`
-    ),
-    false
-  );
-
+  cb(new Error(`Unsupported import file format: ${extension}`), false);
 };
 
-// =====================================
-// Default Upload
-// (Attachments)
-// =====================================
-
 const upload = multer({
-
   storage,
-
+  fileFilter: attachmentFileFilter,
   limits: {
-
-    fileSize:
-      50 * 1024 * 1024,
-
+    fileSize: 50 * 1024 * 1024,
   },
-
 });
 
 // =====================================
@@ -274,5 +215,19 @@ module.exports = {
   importUpload,
 
   getAttachmentType,
+  
+  sanitizeSvgUpload: (req, res, next) => {
+    if (req.file && req.file.path && path.extname(req.file.originalname).toLowerCase() === '.svg') {
+      try {
+        const { sanitizeSvg } = require("../utils/sanitizer");
+        const svgBuffer = fs.readFileSync(req.file.path);
+        const cleanSvg = sanitizeSvg(svgBuffer);
+        fs.writeFileSync(req.file.path, cleanSvg);
+      } catch (err) {
+        return next(new Error("Failed to sanitize SVG file."));
+      }
+    }
+    next();
+  }
 
 };

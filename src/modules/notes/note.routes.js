@@ -4,7 +4,8 @@ const router = express.Router();
 const controller = require("./note.controller");
 const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
-const { noteCreateValidation, noteUpdateValidation } = require("./note.validation");
+const validate = require("../../middleware/joiValidation.middleware");
+const { noteCreateSchema, noteUpdateSchema } = require("./note.validation");
 
 // All routes require authentication as STUDENT
 router.get(
@@ -25,7 +26,7 @@ router.post(
   "/",
   verifyToken,
   checkRole(["STUDENT"]),
-  noteCreateValidation,
+  validate(noteCreateSchema),
   controller.createNote
 );
 
@@ -33,7 +34,7 @@ router.put(
   "/:noteId",
   verifyToken,
   checkRole(["STUDENT"]),
-  noteUpdateValidation,
+  validate(noteUpdateSchema),
   controller.updateNote
 );
 

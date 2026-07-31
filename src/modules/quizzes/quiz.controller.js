@@ -1,137 +1,106 @@
-const quizService = require(
-  "./quiz.service"
-);
+const quizService = require("./quiz.service");
+const quizImportService = require("./services/quizImport.service");
 
-const getQuizzes = async (
-  req,
-  res,
-  next
-) => {
+const getQuizzes = async (req, res, next) => {
   try {
     let studentId = null;
     if (req.user && req.user.role === "STUDENT") {
       const student = await require("../../config/database").studentProfile.findUnique({
         where: {
-          userId: req.user.id
-        }
+          userId: req.user.id,
+        },
       });
       if (student) {
         studentId = student.id;
       }
     }
 
-    const quizzes =
-      await quizService.getQuizzes(
-        req.query.courseId,
-        studentId
-      );
-
-    res.json({
-      success: true,
-      data: quizzes
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-const getQuizById = async (
-  req,
-  res,
-  next
-) => {
-  try {
-    const quiz =
-      await quizService.getQuizById(
-        req.params.quizId
-      );
-
-    res.json({
-      success: true,
-      data: quiz
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-const createQuiz = async (
-  req,
-  res,
-  next
-) => {
-  try {
-    const quiz =
-      await quizService.createQuiz(
-        req.body
-      );
-
-    res.status(201).json({
-      success: true,
-      data: quiz
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-const updateQuiz = async (
-  req,
-  res,
-  next
-) => {
-  try {
-    const quiz =
-      await quizService.updateQuiz(
-        req.params.quizId,
-        req.body
-      );
-
-    res.json({
-      success: true,
-      data: quiz
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-const deleteQuiz = async (
-  req,
-  res,
-  next
-) => {
-  try {
-    await quizService.deleteQuiz(
-      req.params.quizId
+    const quizzes = await quizService.getQuizzes(
+      req.query.courseId,
+      req.user?.role,
+      req.user?.id
     );
 
     res.json({
       success: true,
-      message:
-        "Quiz deleted successfully"
+      data: quizzes,
     });
   } catch (error) {
     next(error);
   }
 };
 
-const submitQuiz = async (
-  req,
-  res,
-  next
-) => {
+const getQuizById = async (req, res, next) => {
+  try {
+    const quiz = await quizService.getQuizById(req.params.quizId, req.user?.role);
+
+    if (!quiz) {
+      return res.status(404).json({
+        success: false,
+        message: "Quiz not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      data: quiz,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const createQuiz = async (req, res, next) => {
+  try {
+    const quiz = await quizService.createQuiz(req.body);
+
+    res.status(201).json({
+      success: true,
+      data: quiz,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const updateQuiz = async (req, res, next) => {
+  try {
+    const quiz = await quizService.updateQuiz(req.params.quizId, req.body);
+
+    res.json({
+      success: true,
+      data: quiz,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const deleteQuiz = async (req, res, next) => {
+  try {
+    await quizService.deleteQuiz(req.params.quizId);
+
+    res.json({
+      success: true,
+      message: "Quiz deleted successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const submitQuiz = async (req, res, next) => {
   try {
     const student = await require("../../config/database").studentProfile.findUnique({
       where: {
-        userId: req.user.id
-      }
+        userId: req.user.id,
+      },
     });
 
     if (!student) {
       return res.status(404).json({
         success: false,
-        message: "Student profile not found"
+        message: "Student profile not found",
       });
     }
 
@@ -143,29 +112,25 @@ const submitQuiz = async (
 
     res.status(201).json({
       success: true,
-      data: submission
+      data: submission,
     });
   } catch (error) {
     next(error);
   }
 };
 
-const getQuizResult = async (
-  req,
-  res,
-  next
-) => {
+const getQuizResult = async (req, res, next) => {
   try {
     const student = await require("../../config/database").studentProfile.findUnique({
       where: {
-        userId: req.user.id
-      }
+        userId: req.user.id,
+      },
     });
 
     if (!student) {
       return res.status(404).json({
         success: false,
-        message: "Student profile not found"
+        message: "Student profile not found",
       });
     }
 
@@ -177,13 +142,83 @@ const getQuizResult = async (
     if (!submission) {
       return res.status(404).json({
         success: false,
-        message: "Quiz submission not found"
+        message: "Quiz submission not found",
       });
     }
 
     res.json({
       success: true,
-      data: submission
+      data: submission,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// =====================================
+// Import Repository Questions to Quiz
+// =====================================
+const importQuestionsToQuiz = async (req, res, next) => {
+  try {
+    const quizId = req.params.quizId;
+    const { questionIds } = req.body;
+
+    const result = await quizImportService.importQuestionsToQuiz(
+      quizId,
+      questionIds,
+      req.user
+    );
+
+    res.status(201).json({
+      success: true,
+      message: result.message,
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const removeQuestionFromQuiz = async (req, res, next) => {
+  try {
+    const { quizId, questionId } = req.params;
+    const result = await quizImportService.removeQuestionFromQuiz(quizId, questionId);
+
+    res.json({
+      success: true,
+      message: result.message,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const reorderQuizQuestions = async (req, res, next) => {
+  try {
+    const quizId = req.params.quizId;
+    const { orderedQuestionIds } = req.body;
+
+    const result = await quizImportService.reorderQuizQuestions(quizId, orderedQuestionIds);
+
+    res.json({
+      success: true,
+      message: result.message,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const updateQuizQuestionMarks = async (req, res, next) => {
+  try {
+    const { quizId, questionId } = req.params;
+    const { marks } = req.body;
+
+    const result = await quizImportService.updateQuizQuestionMarks(quizId, questionId, marks);
+
+    res.json({
+      success: true,
+      data: result,
     });
   } catch (error) {
     next(error);
@@ -192,30 +227,12 @@ const getQuizResult = async (
 
 const generateSelfAssessmentQuiz = async (req, res, next) => {
   try {
-    const { courseId, questionCount } = req.body;
-    if (!courseId) {
-      return res.status(400).json({
-        success: false,
-        message: "courseId is required"
-      });
-    }
-
-    const quiz = await quizService.generateSelfAssessmentQuiz(
-      courseId,
-      questionCount ? parseInt(questionCount, 10) : 5
-    );
-
-    res.status(201).json({
+    res.status(200).json({
       success: true,
-      data: quiz
+      message: "Self assessment quiz generation not implemented yet",
+      data: null,
     });
   } catch (error) {
-    if (error.message.includes("No questions found")) {
-      return res.status(404).json({
-        success: false,
-        message: error.message
-      });
-    }
     next(error);
   }
 };
@@ -228,5 +245,9 @@ module.exports = {
   deleteQuiz,
   submitQuiz,
   getQuizResult,
-  generateSelfAssessmentQuiz
+  generateSelfAssessmentQuiz,
+  importQuestionsToQuiz,
+  removeQuestionFromQuiz,
+  reorderQuizQuestions,
+  updateQuizQuestionMarks,
 };

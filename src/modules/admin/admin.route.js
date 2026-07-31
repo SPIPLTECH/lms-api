@@ -7,12 +7,12 @@ const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
 
 const {
-  createAdminValidation,
-  updateUserValidation,
-  updateUserStatusValidation
+  createAdminSchema,
+  updateUserSchema,
+  updateUserStatusSchema
 } = require("./admin.validation");
 
-const validateRequest = require("../../middleware/validation.middleware");
+const validate = require("../../middleware/joiValidation.middleware");
 // Protect all admin routes
 router.use(verifyToken);
 router.use(checkRole("ADMIN"));
@@ -36,15 +36,13 @@ router.get(
 
 router.patch(
   "/users/:id",
-  updateUserValidation,
-  validateRequest,
+  validate(updateUserSchema),
   adminController.updateUser
 );
 
 router.patch(
   "/users/:id/status",
-  updateUserStatusValidation,
-  validateRequest,
+  validate(updateUserStatusSchema),
   adminController.updateUserStatus
 );
 
@@ -56,8 +54,7 @@ router.delete(
 /* Admin Management */
 router.post(
   "/create-admin",
-  createAdminValidation,
-  validateRequest,
+  validate(createAdminSchema),
   adminController.createAdmin
 );
 

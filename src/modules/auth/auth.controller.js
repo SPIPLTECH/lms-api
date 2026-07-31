@@ -21,33 +21,29 @@ const register = async (
       data: user
     });
   } catch (error) {
-    // next(error);
-  
-  if (error.code === "P2002") {
-    const field =
-      error.meta?.target?.[0];
+    // Translate Prisma unique constraint violations (P2002) into
+    // user-friendly 409 Conflict responses before passing to the
+    // global error handler via next(). Using bare throw inside catch
+    // causes unhandled promise rejections in Express 4 and is
+    // fragile in Express 5.
+    if (error.code === "P2002") {
+      const field = error.meta?.target?.[0];
+      const message =
+        field === "email"
+          ? "Email already registered."
+          : field === "phoneNumber"
+          ? "Phone number already registered."
+          : "User already exists.";
 
-    if (field === "email") {
-      throw new Error(
-        "Email already registered."
-      );
+      const conflictError = new Error(message);
+      conflictError.statusCode = 409;
+      return next(conflictError);
     }
 
-    if (field === "phoneNumber") {
-      throw new Error(
-        "Phone number already registered."
-      );
-    }
-
-    throw new Error(
-      "User already exists."
-    );
-  }
-
-  throw error;
-
+    next(error);
   }
 };
+
 
 /**
  * Login

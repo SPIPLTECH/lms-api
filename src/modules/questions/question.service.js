@@ -30,13 +30,11 @@ const verifyQuizExists = async (quizId) => {
 // Get All Questions
 // =========================
 const getQuestions = async (quizId) => {
-    const where = {};
     if (quizId) {
-        where.quizId = quizId;
+        return getQuestionsByQuizId(quizId);
     }
 
     return prisma.question.findMany({
-        where,
         orderBy: [
             { order: "asc" },
             { createdAt: "asc" }
@@ -50,13 +48,18 @@ const getQuestions = async (quizId) => {
 const getQuestionsByQuizId = async (quizId) => {
     await verifyQuizExists(quizId);
 
-    return prisma.question.findMany({
+    const quizQuestions = await prisma.quizQuestion.findMany({
         where: { quizId },
-        orderBy: [
-            { order: "asc" },
-            { createdAt: "asc" }
-        ],
+        orderBy: { order: "asc" },
+        include: { question: true }
     });
+
+    return quizQuestions.map(qq => ({
+        ...qq.question,
+        marks: qq.marks,
+        order: qq.order,
+        quizQuestionId: qq.id
+    }));
 };
 
 // =========================
@@ -88,14 +91,6 @@ const getQuestionById = async (questionId) => {
 const createQuestion = async (data) => {
     const normalized = normalizeQuestion(data);
 
-    if (!normalized.quizId) {
-        const error = new Error("quizId is required");
-        error.statusCode = 400;
-        throw error;
-    }
-
-    await verifyQuizExists(normalized.quizId);
-
     const validation = validateQuestion(normalized);
     if (!validation.isValid) {
         const error = new Error(`Validation failed: ${validation.errors.join(", ")}`);
@@ -105,7 +100,6 @@ const createQuestion = async (data) => {
 
     return prisma.question.create({
         data: {
-            quizId: normalized.quizId,
             question: normalized.question,
             questionType: normalized.questionType,
             options: normalized.options,
@@ -124,13 +118,10 @@ const createQuestion = async (data) => {
 // =========================
 // Bulk Create Questions
 // =========================
-const bulkCreateQuestions = async (questionsPayload, rootQuizId) => {
+const bulkCreateQuestions = async (questionsPayload) => {
     let rawQuestions = questionsPayload;
     if (questionsPayload && !Array.isArray(questionsPayload) && Array.isArray(questionsPayload.questions)) {
         rawQuestions = questionsPayload.questions;
-        if (!rootQuizId && questionsPayload.quizId) {
-            rootQuizId = questionsPayload.quizId;
-        }
     }
 
     if (!Array.isArray(rawQuestions) || !rawQuestions.length) {
@@ -139,27 +130,7 @@ const bulkCreateQuestions = async (questionsPayload, rootQuizId) => {
         throw error;
     }
 
-    const formattedQuestions = rawQuestions.map((q) => {
-        const norm = normalizeQuestion(q);
-        if (!norm.quizId && rootQuizId) {
-            norm.quizId = rootQuizId;
-        }
-        return norm;
-    });
-
-    for (const q of formattedQuestions) {
-        if (!q.quizId) {
-            const error = new Error("quizId is required for each question or at root level.");
-            error.statusCode = 400;
-            throw error;
-        }
-    }
-
-    // Verify all unique quizIds exist
-    const quizIds = [...new Set(formattedQuestions.map((q) => q.quizId))];
-    for (const qId of quizIds) {
-        await verifyQuizExists(qId);
-    }
+    const formattedQuestions = rawQuestions.map((q) => normalizeQuestion(q));
 
     const { validQuestions, failedQuestions } = validateQuestions(formattedQuestions);
 
@@ -174,7 +145,6 @@ const bulkCreateQuestions = async (questionsPayload, rootQuizId) => {
 
     const result = await prisma.question.createMany({
         data: validQuestions.map((q) => ({
-            quizId: q.quizId,
             question: q.question,
             questionType: q.questionType,
             options: q.options,
@@ -201,16 +171,8 @@ const bulkCreateQuestions = async (questionsPayload, rootQuizId) => {
 // =========================
 // Import Questions
 // =========================
-const importQuestions = async (file, quizId) => {
-    if (!quizId) {
-        const error = new Error("quizId is required for importing questions.");
-        error.statusCode = 400;
-        throw error;
-    }
-
-    await verifyQuizExists(quizId);
-
-    const { questions, report } = await importService.parseFile(file, quizId);
+const importQuestions = async (file) => {
+    const { questions, report } = await importService.parseFile(file);
 
     if (questions.length === 0) {
         return report;
@@ -218,7 +180,6 @@ const importQuestions = async (file, quizId) => {
 
     const result = await prisma.question.createMany({
         data: questions.map((q) => ({
-            quizId: q.quizId,
             question: q.question,
             questionType: q.questionType,
             options: q.options,
@@ -257,10 +218,6 @@ const updateQuestion = async (questionId, data) => {
     if (data.isRequired !== undefined) updateData.isRequired = Boolean(data.isRequired);
     if (data.isPublished !== undefined) updateData.isPublished = Boolean(data.isPublished);
     if (data.order !== undefined) updateData.order = data.order !== null && !isNaN(Number(data.order)) ? Number(data.order) : null;
-    if (data.quizId !== undefined) {
-        await verifyQuizExists(data.quizId);
-        updateData.quizId = data.quizId;
-    }
 
     return prisma.question.update({
         where: { id: questionId },

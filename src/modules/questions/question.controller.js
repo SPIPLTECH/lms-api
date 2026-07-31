@@ -1,15 +1,27 @@
 const questionService = require("./question.service");
+const questionRepositoryService = require("./services/questionRepository.service");
 
 // =========================
-// Get All Questions
+// Get Repository Questions (Paginated & Filtered)
 // =========================
 const getQuestions = async (req, res, next) => {
   try {
-    const questions = await questionService.getQuestions(req.query.quizId);
+    // If specifically querying by quizId legacy format
+    if (req.query.quizId) {
+      const questions = await questionService.getQuestions(req.query.quizId);
+      return res.json({
+        success: true,
+        data: questions,
+      });
+    }
+
+    const user = req.user || { role: "GUEST" };
+    const result = await questionRepositoryService.getQuestions(req.query, user);
 
     res.json({
       success: true,
-      data: questions,
+      data: result.data,
+      pagination: result.pagination,
     });
   } catch (error) {
     next(error);
@@ -22,23 +34,25 @@ const getQuestions = async (req, res, next) => {
 const getQuestionsByQuizId = async (req, res, next) => {
   const id = req.params.quizId;
   try {
-    // 1. Try to fetch as single question first (compatibility fallback for /questions/:id)
-    const question = await questionService.getQuestionById(id);
-    return res.json({
-      success: true,
-      data: question,
-    });
-  } catch (error) {
-    // 2. If it's not a question, fetch as quiz questions list
-    try {
-      const questions = await questionService.getQuestionsByQuizId(id);
+    const question = await questionRepositoryService.getQuestionById(id, req.user || {});
+    if (question) {
       return res.json({
         success: true,
-        data: questions,
+        data: question,
       });
-    } catch (quizError) {
-      next(quizError);
     }
+  } catch (error) {
+    // Fallback to quiz questions list
+  }
+
+  try {
+    const questions = await questionService.getQuestionsByQuizId(id);
+    return res.json({
+      success: true,
+      data: questions,
+    });
+  } catch (quizError) {
+    next(quizError);
   }
 };
 
@@ -47,9 +61,17 @@ const getQuestionsByQuizId = async (req, res, next) => {
 // =========================
 const getQuestionById = async (req, res, next) => {
   try {
-    const question = await questionService.getQuestionById(
-      req.params.questionId
+    const question = await questionRepositoryService.getQuestionById(
+      req.params.questionId,
+      req.user || {}
     );
+
+    if (!question) {
+      return res.status(404).json({
+        success: false,
+        message: "Question not found",
+      });
+    }
 
     res.json({
       success: true,
@@ -65,7 +87,10 @@ const getQuestionById = async (req, res, next) => {
 // =========================
 const createQuestion = async (req, res, next) => {
   try {
-    const question = await questionService.createQuestion(req.body);
+    const userId = req.user ? req.user.id : null;
+
+    // Repository creation
+    const question = await questionRepositoryService.createQuestion(req.body, userId);
 
     res.status(201).json({
       success: true,
@@ -77,62 +102,27 @@ const createQuestion = async (req, res, next) => {
 };
 
 // =========================
-// Bulk Create Questions
+// Bulk Upload Questions (Excel, CSV, JSON)
 // =========================
-const bulkCreateQuestions = async (req, res, next) => {
+const uploadQuestions = async (req, res, next) => {
   try {
-    const payload = req.body.questions || req.body;
-
-    if (!payload || (!Array.isArray(payload) && !Array.isArray(payload.questions))) {
+    if (!req.file || !req.file.buffer) {
       return res.status(400).json({
         success: false,
-        message: "questions must be an array or an object containing a questions array",
+        message: "Please upload an Excel (.xlsx), CSV (.csv), or JSON (.json) file.",
       });
     }
 
-    const result = await questionService.bulkCreateQuestions(
-      payload,
-      req.body.quizId
+    const userId = req.user ? req.user.id : null;
+    const result = await questionRepositoryService.bulkUploadQuestions(
+      req.file.buffer,
+      req.file.originalname,
+      userId
     );
 
     res.status(201).json({
       success: true,
-      message: "Questions created successfully",
-      data: result,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// =========================
-// Import Questions
-// =========================
-const importQuestions = async (req, res, next) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "Please upload a file.",
-      });
-    }
-
-    const quizId = req.body.quizId || req.query.quizId;
-    if (!quizId) {
-      return res.status(400).json({
-        success: false,
-        message: "quizId is required to import questions.",
-      });
-    }
-
-    const result = await questionService.importQuestions(
-      req.file,
-      quizId
-    );
-
-    res.status(201).json({
-      success: true,
-      message: "Questions imported successfully",
+      message: `Processed ${result.total} questions. Successfully imported ${result.importedCount}.`,
       data: result,
     });
   } catch (error) {
@@ -145,9 +135,10 @@ const importQuestions = async (req, res, next) => {
 // =========================
 const updateQuestion = async (req, res, next) => {
   try {
-    const question = await questionService.updateQuestion(
+    const question = await questionRepositoryService.updateQuestion(
       req.params.questionId,
-      req.body
+      req.body,
+      req.user || {}
     );
 
     res.json({
@@ -164,11 +155,54 @@ const updateQuestion = async (req, res, next) => {
 // =========================
 const deleteQuestion = async (req, res, next) => {
   try {
-    await questionService.deleteQuestion(req.params.questionId);
+    await questionRepositoryService.deleteQuestion(
+      req.params.questionId,
+      req.user || {}
+    );
 
     res.json({
       success: true,
-      message: "Question deleted successfully",
+      message: "Question deleted or archived successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// =========================
+// Archive Question
+// =========================
+const archiveQuestion = async (req, res, next) => {
+  try {
+    const question = await questionRepositoryService.archiveQuestion(
+      req.params.questionId,
+      req.user || {}
+    );
+
+    res.json({
+      success: true,
+      message: "Question archived successfully",
+      data: question,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// =========================
+// Duplicate Question
+// =========================
+const duplicateQuestion = async (req, res, next) => {
+  try {
+    const question = await questionRepositoryService.duplicateQuestion(
+      req.params.questionId,
+      req.user || {}
+    );
+
+    res.status(201).json({
+      success: true,
+      message: "Question duplicated successfully",
+      data: question,
     });
   } catch (error) {
     next(error);
@@ -180,8 +214,9 @@ module.exports = {
   getQuestionsByQuizId,
   getQuestionById,
   createQuestion,
-  bulkCreateQuestions,
-  importQuestions,
+  uploadQuestions,
   updateQuestion,
   deleteQuestion,
+  archiveQuestion,
+  duplicateQuestion,
 };

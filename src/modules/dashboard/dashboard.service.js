@@ -94,7 +94,8 @@ const getInstructorDashboard = async (instructorId, courseId) => {
           quizSubmissions: true
         }
       },
-      reviews: true
+      reviews: true,
+      videoAnalytics: true
     }
   });
 
@@ -155,7 +156,7 @@ const getInstructorDashboard = async (instructorId, courseId) => {
   }
   const avgQuizScore = quizScores.length > 0
     ? Math.round(quizScores.reduce((sum, s) => sum + s, 0) / quizScores.length)
-    : 78; // baseline fallback
+    : 0;
 
   // 4. Average rating calculations
   let ratings = [];
@@ -166,7 +167,7 @@ const getInstructorDashboard = async (instructorId, courseId) => {
   }
   const avgRating = ratings.length > 0
     ? parseFloat((ratings.reduce((sum, r) => sum + r, 0) / ratings.length).toFixed(1))
-    : 4.6; // baseline fallback
+    : 0;
 
   // 5. Inactive Students Count (no progress or login activity for 5+ days)
   const fiveDaysAgo = new Date();
@@ -267,6 +268,33 @@ const getInstructorDashboard = async (instructorId, courseId) => {
       iconColor: 'text-amber-400'
     }
   ];
+
+  // Video Analytics Calculation
+  let totalVideoWatchTime = 0;
+  for (const course of targetCourses) {
+    if (course.videoAnalytics) {
+       for (const va of course.videoAnalytics) {
+          totalVideoWatchTime += (va.watchTime || 0);
+       }
+    }
+  }
+  const formatWatchTime = (seconds) => {
+    const hrs = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return `${hrs}h ${mins}m`;
+  };
+
+  kpis.push({
+    id: 6,
+    title: 'Total Video Watch Time',
+    value: formatWatchTime(totalVideoWatchTime),
+    trend: 5.2,
+    trendLabel: 'vs last week',
+    status: totalVideoWatchTime > 3600 ? 'High Engagement' : 'Needs Focus',
+    icon: 'PlayCircle',
+    iconBg: 'bg-indigo-500/10',
+    iconColor: 'text-indigo-400'
+  });
 
   // 8. Action Center Priorities
   const priorities = [];
@@ -395,9 +423,9 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     
     studentEngagement.push({
       day: dayLabel,
-      activeStudents: dailyActiveStudents.size || Math.round(totalEnrollments * 0.15) + (i % 3) * 2,
-      lessonsCompleted: dailyCompletions || Math.round(totalEnrollments * 0.1) + (i % 2) * 3,
-      quizAttempts: dailyQuizAttempts || Math.round(totalEnrollments * 0.05) + (i % 4)
+      activeStudents: dailyActiveStudents.size,
+      lessonsCompleted: dailyCompletions,
+      quizAttempts: dailyQuizAttempts
     });
   }
 
@@ -427,17 +455,25 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     }
     const courseQuizAverage = quizScores.length > 0
       ? Math.round(quizScores.reduce((sum, s) => sum + s, 0) / quizScores.length)
-      : 78;
-      
+      : 0;
+
     const courseRatings = course.reviews.map(r => r.rating);
     const courseRating = courseRatings.length > 0
       ? parseFloat((courseRatings.reduce((sum, r) => sum + r, 0) / courseRatings.length).toFixed(1))
-      : 4.5;
+      : 0;
       
-    let health = 'Good';
-    if (completionRate < 60 || courseQuizAverage < 60) health = 'Critical';
-    else if (completionRate < 75 || courseQuizAverage < 75) health = 'Needs Review';
-    else if (completionRate >= 85 && courseQuizAverage >= 80) health = 'Excellent';
+    let health = 'No Data';
+    if (enrolledCount > 0) {
+      const signals = [completionRate];
+      if (quizScores.length > 0) signals.push(courseQuizAverage);
+      const worstSignal = Math.min(...signals);
+      const bestSignal = Math.min(completionRate, quizScores.length > 0 ? courseQuizAverage : 100);
+
+      health = 'Good';
+      if (worstSignal < 60) health = 'Critical';
+      else if (worstSignal < 75) health = 'Needs Review';
+      else if (completionRate >= 85 && bestSignal >= 80) health = 'Excellent';
+    }
     
     return {
       id: course.id,
@@ -538,12 +574,7 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     coursePerformance,
     conceptMastery,
     recommendedActions,
-    courses,
-    schedule: [
-      { day: 'Monday', time: '9:00 AM', topic: 'Java EE Basics Lecture' },
-      { day: 'Wednesday', time: '10:00 AM', topic: 'Spring JPA Config Lab' },
-      { day: 'Friday', time: '2:00 PM', topic: 'Java Collections Lab' },
-    ]
+    courses
   };
 };
 const getStudentDashboard = async (userId) => {
@@ -551,6 +582,9 @@ const getStudentDashboard = async (userId) => {
     where: { userId },
     select: {
       id: true,
+      batches: {
+        select: { name: true },
+      },
       enrollments: {
         include: {
           course: {
@@ -700,11 +734,13 @@ const getStudentDashboard = async (userId) => {
   const completedQuizzes = student.quizSubmissions ? student.quizSubmissions.length : 0;
 
   let avgQuizScore = 0;
+  let passingRate = 0;
   if (student.quizSubmissions && student.quizSubmissions.length > 0) {
     const sum = student.quizSubmissions.reduce((acc, sub) => acc + sub.percentage, 0);
     avgQuizScore = Math.round(sum / student.quizSubmissions.length);
-  } else {
-    avgQuizScore = 78; // Fallback default to match the requested dashboard design average if no quizzes are taken yet
+
+    const passedCount = student.quizSubmissions.filter((sub) => sub.passed).length;
+    passingRate = Math.round((passedCount / student.quizSubmissions.length) * 100);
   }
 
   // Format enrolled courses for frontend
@@ -899,8 +935,10 @@ const getStudentDashboard = async (userId) => {
       totalQuizzes,
       completedQuizzes,
       avgQuizScore,
+      passingRate,
       streak,
       rankPercentile,
+      activeBatchName: student.batches[0]?.name || null,
     },
     enrolledCoursesList,
     certificatesList: student.certificates,

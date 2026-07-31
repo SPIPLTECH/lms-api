@@ -15,9 +15,22 @@ const checkRole = require(
   "../../middleware/role.middleware"
 );
 
-const { upload } = require(
+const verifyContentOwnership = require(
+  "../../middleware/contentOwnership.middleware"
+);
+
+const verifyLessonOwnership = require(
+  "../../middleware/lessonOwnership.middleware"
+);
+
+const { upload, sanitizeSvgUpload } = require(
   "../../middleware/upload.middleware"
 );
+const validate = require("../../middleware/joiValidation.middleware");
+const {
+  createContentSchema,
+  updateContentSchema
+} = require("./content.validation");
 
 // File upload endpoint for DOCUMENT / PRESENTATION content
 router.post(
@@ -25,6 +38,7 @@ router.post(
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
   upload.single("file"),
+  sanitizeSvgUpload,
   (req, res) => {
     if (!req.file) {
       return res.status(400).json({
@@ -51,11 +65,15 @@ router.post(
 
 router.get(
   "/",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
   controller.getContents
 );
 
 router.get(
   "/:contentId",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
   controller.getContentById
 );
 
@@ -66,6 +84,8 @@ router.post(
     "ADMIN",
     "INSTRUCTOR"
   ]),
+  validate(createContentSchema),
+  verifyLessonOwnership.fromBody,
   controller.createContent
 );
 
@@ -76,6 +96,8 @@ router.put(
     "ADMIN",
     "INSTRUCTOR"
   ]),
+  verifyContentOwnership,
+  validate(updateContentSchema),
   controller.updateContent
 );
 
@@ -86,6 +108,7 @@ router.delete(
     "ADMIN",
     "INSTRUCTOR"
   ]),
+  verifyContentOwnership,
   controller.deleteContent
 );
 

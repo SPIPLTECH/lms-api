@@ -1,53 +1,30 @@
-const { body } = require("express-validator");
-const validateRequest = require("../../middleware/validation.middleware");
+const Joi = require("joi");
 
-const noteCreateValidation = [
-  body("title")
-    .trim()
-    .notEmpty()
-    .withMessage("Title is required")
-    .isLength({ max: 255 })
-    .withMessage("Title must be 255 characters or less"),
+const noteCreateSchema = Joi.object({
+  title: Joi.string().trim().max(255).required().messages({
+    "any.required": "Title is required",
+    "string.empty": "Title cannot be empty",
+    "string.max": "Title must be 255 characters or less"
+  }),
+  content: Joi.string().max(20000).optional().allow(null, "").messages({
+    "string.max": "Content must be 20000 characters or less"
+  }),
+  category: Joi.string().max(100).optional().allow(null, "").messages({
+    "string.max": "Category must be 100 characters or less"
+  })
+});
 
-  body("content")
-    .optional()
-    .isString()
-    .withMessage("Content must be a string")
-    .isLength({ max: 20000 })
-    .withMessage("Content must be 20000 characters or less"),
+const noteUpdateSchema = Joi.object({
+  title: Joi.string().trim().max(255).optional().messages({
+    "string.empty": "Title cannot be empty",
+    "string.max": "Title must be 255 characters or less"
+  }),
+  content: Joi.string().max(20000).optional().allow(null, "").messages({
+    "string.max": "Content must be 20000 characters or less"
+  }),
+  category: Joi.string().max(100).optional().allow(null, "").messages({
+    "string.max": "Category must be 100 characters or less"
+  })
+});
 
-  body("category")
-    .optional()
-    .isString()
-    .withMessage("Category must be a string")
-    .isLength({ max: 100 })
-    .withMessage("Category must be 100 characters or less"),
-
-  validateRequest,
-];
-
-const noteUpdateValidation = [
-  body("title")
-    .optional()
-    .trim()
-    .notEmpty()
-    .withMessage("Title cannot be empty")
-    .isLength({ max: 255 })
-    .withMessage("Title must be 255 characters or less"),
-
-  body("content")
-    .optional()
-    .isString()
-    .withMessage("Content must be a string")
-    .isLength({ max: 20000 })
-    .withMessage("Content must be 20000 characters or less"),
-
-  body("category")
-    .optional()
-    .isString()
-    .withMessage("Category must be a string"),
-
-  validateRequest,
-];
-
-module.exports = { noteCreateValidation, noteUpdateValidation };
+module.exports = { noteCreateSchema, noteUpdateSchema };

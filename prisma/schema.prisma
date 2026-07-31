@@ -30,6 +30,12 @@ model User {
   studentProfile          StudentProfile?
   teacherProfile          TeacherProfile?
   notifications           Notification[]
+  createdQuestions        Question[]
+  announcements           Announcement[]
+  teachingGoals           TeachingGoal[]
+  lessonNotes             InstructorLessonNote[]
+  discussions             Discussion[]
+  discussionReplies       DiscussionReply[]
 }
 
 model StudentProfile {
@@ -62,20 +68,25 @@ model StudentProfile {
   achievements          StudentAchievement[]
   assignmentSubmissions AssignmentSubmission[]
   batches               Batch[]
-  studentState          StudentState?
+  studentStates         StudentState[]
+  videoAnalytics        VideoAnalytics[]
+  lessonQueries         LessonQuery[]
   user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model TeacherProfile {
-  id             String   @id @default(cuid())
-  userId         String   @unique
-  specialization String?
-  qualification  String?
-  experience     Int?
-  bio            String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                      String   @id @default(cuid())
+  userId                  String   @unique
+  specialization          String?
+  qualification           String?
+  experience              Int?
+  bio                     String?
+  notificationPreferences Json?
+  language                String?  @default("English")
+  timezone                String?  @default("GMT+05:30")
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model AdminProfile {
@@ -88,29 +99,61 @@ model AdminProfile {
 }
 
 model Course {
-  id            String         @id @default(cuid())
-  title         String
-  description   String?
-  category      String?
-  level         String?
-  thumbnailUrl  String?
-  status        CourseStatus   @default(DRAFT)
-  publishedAt   DateTime?
-  creatorId     String
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  certificates  Certificate[]
-  creator       User           @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-  enrollments   Enrollment[]
-  modules       Module[]
-  quizzes       Quiz[]
-  reviews       Review[]
-  liveClasses   LiveClass[]
-  assignments   Assignment[]
-  exams         Exam[]
-  batches       Batch[]
-  batchSessions BatchSession[]
-  studentStates StudentState[]
+  id                     String           @id @default(cuid())
+  title                  String
+  description            String?
+  category               String?
+  level                  String?
+  thumbnailUrl           String?
+  status                 CourseStatus     @default(DRAFT)
+  publishedAt            DateTime?
+  creatorId              String
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+  visibility             CourseVisibility @default(PUBLIC)
+  language               String?          @default("English")
+  tags                   String[]         @default([])
+  certificatesEnabled    Boolean          @default(false)
+  discussionEnabled      Boolean          @default(true)
+  dripContentEnabled     Boolean          @default(false)
+  estimatedLearningHours Float?
+  certificates           Certificate[]
+  creator                User             @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  enrollments            Enrollment[]
+  modules                Module[]
+  quizzes                Quiz[]
+  reviews                Review[]
+  liveClasses            LiveClass[]
+  assignments            Assignment[]
+  exams                  Exam[]
+  batches                Batch[]
+  batchSessions          BatchSession[]
+  studentStates          StudentState[]
+  videoAnalytics         VideoAnalytics[]
+  store                  Store?
+  announcements          Announcement[]
+  discussions            Discussion[]
+
+  @@index([creatorId])
+  @@index([status])
+}
+
+enum CourseVisibility {
+  PUBLIC
+  PRIVATE
+  UNLISTED
+}
+
+model Store {
+  id            String   @id @default(cuid())
+  price         Float    @default(0)
+  discountPrice Float?
+  currency      String   @default("INR")
+  isFree        Boolean  @default(false)
+  courseId      String   @unique
+  course        Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 model Module {
@@ -126,23 +169,28 @@ model Module {
   course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
   @@unique([courseId, order])
+  @@index([courseId])
 }
 
 model Lesson {
-  id          String       @id @default(cuid())
-  title       String
-  description String?
-  order       Int
-  isPublished Boolean      @default(false)
-  moduleId    String
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  contents    Content[]
-  module      Module       @relation(fields: [moduleId], references: [id], onDelete: Cascade)
-  progress    Progress[]
-  stickyNotes StickyNote[]
+  id              String                 @id @default(cuid())
+  title           String
+  description     String?
+  order           Int
+  isPublished     Boolean                @default(false)
+  moduleId        String
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  contents        Content[]
+  module          Module                 @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  progress        Progress[]
+  stickyNotes     StickyNote[]
+  videoAnalytics  VideoAnalytics[]
+  instructorNotes InstructorLessonNote[]
+  queries         LessonQuery[]
 
   @@unique([moduleId, order])
+  @@index([moduleId])
 }
 
 model Content {
@@ -161,6 +209,7 @@ model Content {
   lesson      Lesson      @relation(fields: [lessonId], references: [id], onDelete: Cascade)
 
   @@unique([lessonId, order])
+  @@index([lessonId])
 }
 
 model StickyNote {
@@ -191,6 +240,8 @@ model Enrollment {
   student        StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, courseId])
+  @@index([courseId])
+  @@index([studentId])
 }
 
 model Progress {
@@ -203,34 +254,41 @@ model Progress {
   student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, lessonId])
+  @@index([studentId])
+  @@index([lessonId])
 }
 
 model Quiz {
-  id              String           @id @default(cuid())
-  title           String
-  description     String?
-  passingScore    Int
-  timeLimit       Int?
-  startDate       DateTime?
-  dueDate         DateTime?
-  availableFrom   DateTime?     
-  availableUntil  DateTime?
-  isPublished     Boolean          @default(true)
-  status          String?          @default("ACTIVE")
-  courseId        String
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  questions       Question[]
-  course          Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  quizSubmissions QuizSubmission[]
+  id               String           @id @default(cuid())
+  title            String
+  description      String?
+  instructions     String?          @db.Text
+  passingScore     Int
+  timeLimit        Int?
+  startDate        DateTime?
+  dueDate          DateTime?
+  availableFrom    DateTime?
+  availableUntil   DateTime?
+  shuffleQuestions Boolean          @default(false)
+  shuffleOptions   Boolean          @default(false)
+  negativeMarking  Float            @default(0)
+  attempts         Int              @default(1)
+  isPublished      Boolean          @default(true)
+  status           String?          @default("ACTIVE")
+  courseId         String
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  quizQuestions    QuizQuestion[]
+  course           Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  quizSubmissions  QuizSubmission[]
+
+  @@index([courseId])
 }
 
 model Question {
   id String @id @default(cuid())
 
-  quizId String
-  quiz   Quiz   @relation(fields: [quizId], references: [id], onDelete: Cascade)
-
+  title        String?
   question     String       @db.Text
   questionType QuestionType @default(MCQ_SINGLE)
 
@@ -239,22 +297,49 @@ model Question {
 
   explanation String? @db.Text
 
-  marks         Int   @default(1)
-  negativeMarks Float @default(0)
+  subject       String?
+  topic         String?
+  tags          String?         @default("")
+  marks         Int             @default(1)
+  negativeMarks Float           @default(0)
+  difficulty    DifficultyLevel @default(MEDIUM)
+  status        String?         @default("ACTIVE")
 
-  difficulty DifficultyLevel @default(MEDIUM)
+  createdBy String?
+  creator   User?   @relation(fields: [createdBy], references: [id], onDelete: SetNull)
 
   isRequired  Boolean @default(true)
   isPublished Boolean @default(true)
 
   order Int?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @default(now()) @updatedAt
+  quizQuestions QuizQuestion[]
 
-  @@index([quizId])
   @@index([difficulty])
   @@index([questionType])
+  @@index([subject])
+  @@index([topic])
+  @@index([createdBy])
+  @@index([status])
+}
+
+model QuizQuestion {
+  id          String   @id @default(cuid())
+  quizId      String
+  questionId  String
+  order       Int      @default(1)
+  marks       Int      @default(1)
+  isMandatory Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  quiz     Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([quizId, questionId])
+  @@index([quizId])
+  @@index([questionId])
 }
 
 enum DifficultyLevel {
@@ -389,10 +474,24 @@ enum ContentType {
   LINK
   PRESENTATION
   IMAGE
+<<<<<<< HEAD
   AUDIO
   QUIZ
   CODE
   OTHER
+=======
+  PDF
+  FILE
+  EXTERNAL_LINK
+  HTML
+  CODE
+  ASSIGNMENT
+  CODING_EXERCISE
+  SCORM
+  INTERACTIVE_LAB
+  AUDIO
+  EMBED
+>>>>>>> 2adfd6e56fa3b2d257bf0ca1d386f22373efabe5
 }
 
 enum UserStatus {
@@ -649,7 +748,7 @@ model Notification {
 
 model StudentState {
   id        String         @id @default(cuid())
-  studentId String         @unique
+  studentId String
   courseId  String
   moduleId  String?
   lessonId  String?
@@ -659,6 +758,7 @@ model StudentState {
   student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
   course    Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
+  @@unique([studentId, courseId])
   @@index([studentId])
   @@index([courseId])
 }
@@ -675,4 +775,119 @@ enum QuestionType {
   FILL_BLANK
   SHORT_ANSWER
   LONG_ANSWER
+}
+
+model VideoAnalytics {
+  id        String   @id @default(cuid())
+  studentId String
+  lessonId  String
+  courseId  String
+  watchTime Int      @default(0) // Total seconds watched
+  completed Boolean  @default(false)
+  lastPing  DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lesson  Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  course  Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, lessonId])
+  @@index([courseId])
+}
+
+model Announcement {
+  id           String   @id @default(cuid())
+  title        String
+  message      String
+  courseId     String
+  instructorId String
+  createdAt    DateTime @default(now())
+  course       Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  instructor   User     @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+
+  @@index([courseId])
+  @@index([instructorId])
+}
+
+model TeachingGoal {
+  id           String   @id @default(cuid())
+  instructorId String
+  label        String
+  current      Int      @default(0)
+  target       Int      @default(1)
+  done         Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  instructor   User     @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+
+  @@index([instructorId])
+}
+
+model InstructorLessonNote {
+  id               String   @id @default(cuid())
+  instructorId     String
+  lessonId         String
+  content          String
+  timestampSeconds Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  instructor       User     @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+  lesson           Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@index([instructorId])
+  @@index([lessonId])
+}
+
+enum LessonQueryStatus {
+  PENDING
+  ANSWERED
+}
+
+model LessonQuery {
+  id         String            @id @default(cuid())
+  lessonId   String
+  studentId  String
+  question   String
+  reply      String?
+  status     LessonQueryStatus @default(PENDING)
+  createdAt  DateTime          @default(now())
+  answeredAt DateTime?
+  lesson     Lesson            @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  student    StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([lessonId])
+  @@index([studentId])
+}
+
+model Discussion {
+  id        String            @id @default(cuid())
+  courseId  String
+  authorId  String
+  title     String
+  body      String
+  isPinned  Boolean           @default(false)
+  isLocked  Boolean           @default(false)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  course    Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  author    User              @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  replies   DiscussionReply[]
+
+  @@index([courseId])
+  @@index([authorId])
+}
+
+model DiscussionReply {
+  id           String     @id @default(cuid())
+  discussionId String
+  authorId     String
+  body         String
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  discussion   Discussion @relation(fields: [discussionId], references: [id], onDelete: Cascade)
+  author       User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([discussionId])
+  @@index([authorId])
 }

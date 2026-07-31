@@ -12,6 +12,7 @@ const authRoutes = require("./modules/auth/auth.routes");
 const userRoutes = require("./modules/users/user.routes");
 const studentRoutes = require("./modules/students/student.route");
 const courseRoutes = require("./modules/courses/course.routes");
+const importRoutes = require("./modules/import/routes/import.routes");
 const moduleRoutes = require("./modules/modules/module.routes");
 const lessonRoutes = require("./modules/lessons/lesson.routes");
 const contentRoutes = require("./modules/contents/content.routes");
@@ -37,6 +38,7 @@ const conversationRoutes = require("./modules/conversations/conversation.routes"
 const messageRoutes = require("./modules/messages/message.routes");
 const landingRoutes = require("./modules/landing/landing.routes");
 const app = express();
+const storeRoutes = require("./modules/store/store.routes");
 app.disable('etag');
 
 app.use(cors());
@@ -69,11 +71,12 @@ app.get("/", (req, res) => {
 | Routes
 |--------------------------------------------------------------------------
 */
-
+app.use("/store", storeRoutes);
 app.use("/teachers", teacherRoutes);
 app.use("/auth", authRoutes);
 app.use("/users", userRoutes);
 app.use("/students", studentRoutes);
+app.use("/courses/import", importRoutes);
 app.use("/courses", courseRoutes);
 app.use("/modules", moduleRoutes);
 app.use("/lessons", lessonRoutes);
@@ -106,6 +109,12 @@ app.use("/achievements", achievementRoutes);
 app.use("/assignments", assignmentRoutes);
 app.use("/calendar", calendarRoutes);
 app.use("/upcoming-tasks", upcomingTasksRoutes);
+app.use("/analytics", require("./modules/analytics/analytics.routes"));
+app.use("/announcements", require("./modules/announcements/announcement.routes"));
+app.use("/teaching-goals", require("./modules/teaching-goals/teachingGoal.routes"));
+app.use("/lesson-notes", require("./modules/lesson-notes/lessonNote.routes"));
+app.use("/lesson-queries", require("./modules/lesson-queries/lessonQuery.routes"));
+app.use("/discussions", require("./modules/discussions/discussion.routes"));
 app.use(errorHandler);
 
 module.exports = app;

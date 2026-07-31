@@ -8,9 +8,10 @@ const registerPresenceEvents = require("./presence.socket");
 let io;
 
 const initializeSocket = (server) => {
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
     io = new Server(server, {
         cors: {
-            origin: ["http://localhost:3000"],
+            origin: [frontendUrl, "http://localhost:3000"],
             credentials: true,
         },
     });
