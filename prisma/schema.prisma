@@ -474,12 +474,6 @@ enum ContentType {
   LINK
   PRESENTATION
   IMAGE
-<<<<<<< HEAD
-  AUDIO
-  QUIZ
-  CODE
-  OTHER
-=======
   PDF
   FILE
   EXTERNAL_LINK
@@ -491,7 +485,6 @@ enum ContentType {
   INTERACTIVE_LAB
   AUDIO
   EMBED
->>>>>>> 2adfd6e56fa3b2d257bf0ca1d386f22373efabe5
 }
 
 enum UserStatus {
