@@ -388,6 +388,11 @@ enum ContentType {
   TEXT
   LINK
   PRESENTATION
+  IMAGE
+  AUDIO
+  QUIZ
+  CODE
+  OTHER
 }
 
 enum UserStatus {
