@@ -2,21 +2,32 @@ const courseService = require("./course.service");
 
 const getCourses = async (req, res) => {
   try {
-    const search = req.query.search || "";
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
 
-    const courses = await courseService.getCourses(
-       req.user.role,
+    const { courses, total } = await courseService.getCourses(
+      req.user.role,
       req.user.id,
-      search,
-      page,
-      limit
+      {
+        search: req.query.search || "",
+        page,
+        limit,
+        status: req.query.status || undefined,
+        category: req.query.category || undefined,
+        level: req.query.level || undefined,
+        sortBy: req.query.sortBy || undefined,
+      }
     );
 
     res.status(200).json({
       success: true,
-      data: courses
+      data: courses,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
     });
   } catch (error) {
     res.status(500).json({
@@ -25,6 +36,15 @@ const getCourses = async (req, res) => {
     });
   }
 };
+const getCourseStatusCounts = async (req, res, next) => {
+  try {
+    const counts = await courseService.getCourseStatusCounts(req.user.id);
+    res.json({ success: true, data: counts });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getCourseById = async (
   req,
   res,
@@ -210,6 +230,24 @@ const getCourseBatches = async (req, res, next) => {
   }
 };
 
+const getInstructorBatches = async (req, res, next) => {
+  try {
+    const { courseId, status, startDate, endDate } = req.query;
+    const batches = await courseService.getInstructorBatches(req.user.id, {
+      courseId,
+      status,
+      startDate,
+      endDate
+    });
+    res.json({
+      success: true,
+      data: batches
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const createCourseBatch = async (req, res, next) => {
   try {
     const batch = await courseService.createCourseBatch(req.params.courseId, req.body);
@@ -234,5 +272,7 @@ module.exports = {
   getCourseStudents,
   sendAnnouncement,
   getCourseBatches,
-  createCourseBatch
+  getInstructorBatches,
+  createCourseBatch,
+  getCourseStatusCounts
 };

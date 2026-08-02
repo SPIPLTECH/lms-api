@@ -20,6 +20,13 @@ router.get(
   controller.getQueries
 );
 
+router.get(
+  "/mine",
+  verifyToken,
+  checkRole(["INSTRUCTOR", "ADMIN"]),
+  controller.getMyQueries
+);
+
 router.post(
   "/",
   verifyToken,

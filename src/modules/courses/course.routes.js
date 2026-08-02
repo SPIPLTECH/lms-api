@@ -47,6 +47,13 @@ router.get(
   controller.getCourses
 );
 
+router.get(
+  "/stats/mine",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  controller.getCourseStatusCounts
+);
+
 // Public read — optionalToken allows unauthenticated access for course preview.
 // Students/guests only receive PUBLISHED course data; the service enforces this.
 router.get(
@@ -126,6 +133,13 @@ router.post(
   verifyCourseOwnership,
   validate(sendAnnouncementSchema),
   controller.sendAnnouncement
+);
+
+router.get(
+  "/batches/mine",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  controller.getInstructorBatches
 );
 
 router.get(

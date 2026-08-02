@@ -46,6 +46,50 @@ const createQuery = async (userId, data) => {
   });
 };
 
+/** Doubts across every course the instructor owns, filterable for the Q&A page. */
+const getQueriesForInstructor = async (instructorId, filters = {}) => {
+  const courseWhere = { creatorId: instructorId };
+  if (filters.courseId) {
+    courseWhere.id = filters.courseId;
+  }
+
+  const where = {
+    lesson: { module: { course: courseWhere } }
+  };
+
+  if (filters.status) {
+    where.status = filters.status;
+  }
+  if (filters.startDate || filters.endDate) {
+    where.createdAt = {};
+    if (filters.startDate) where.createdAt.gte = new Date(filters.startDate);
+    if (filters.endDate) where.createdAt.lte = new Date(filters.endDate);
+  }
+
+  return prisma.lessonQuery.findMany({
+    where,
+    include: {
+      student: {
+        include: { user: { select: { id: true, name: true } } }
+      },
+      lesson: {
+        select: {
+          id: true,
+          title: true,
+          module: {
+            select: {
+              id: true,
+              title: true,
+              course: { select: { id: true, title: true } }
+            }
+          }
+        }
+      }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+};
+
 /** Loads a query plus enough of the relation chain to verify course ownership. */
 const findQueryWithCourseOwner = async (queryId) => {
   const query = await prisma.lessonQuery.findUnique({
@@ -96,6 +140,7 @@ const updateStatus = async (queryId, user, status) => {
 
 module.exports = {
   getQueriesForLesson,
+  getQueriesForInstructor,
   createQuery,
   replyToQuery,
   updateStatus

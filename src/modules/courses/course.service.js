@@ -290,25 +290,42 @@ const attachCourseStats = async (courses) => {
   return Array.isArray(courses) ? withStats : withStats[0];
 };
 
+const SORT_MAP = {
+  newest: { createdAt: "desc" },
+  oldest: { createdAt: "asc" },
+  recently_updated: { updatedAt: "desc" },
+  most_students: { enrollments: { _count: "desc" } },
+  alphabetical: { title: "asc" },
+};
+
 const getCourses = async (
   role,
   userId,
-  search = "",
-  page = 1,
-  limit = 10
+  {
+    search = "",
+    page = 1,
+    limit = 10,
+    status,
+    category,
+    level,
+    sortBy = "newest",
+  } = {}
 ) => {
+  const where = {};
+  if (search) {
+    where.OR = [
+      { title: { contains: search, mode: "insensitive" } },
+      { category: { contains: search, mode: "insensitive" } },
+      { tags: { has: search } },
+      { creator: { name: { contains: search, mode: "insensitive" } } },
+    ];
+  }
+
   const query = {
-    where: {
-      title: {
-        contains: search,
-        mode: "insensitive",
-      },
-    },
+    where,
     skip: (page - 1) * limit,
     take: limit,
-    orderBy: {
-      createdAt: "desc",
-    },
+    orderBy: SORT_MAP[sortBy] || SORT_MAP.newest,
   };
   // Student should see only published courses
 
@@ -338,15 +355,37 @@ const getCourses = async (
 
   if (role === "ADMIN") {
     query.include = commonInclude;
+    if (status) where.status = status;
   } else if (role === "INSTRUCTOR") {
-    query.where.creatorId = userId;
+    where.creatorId = userId;
     query.include = commonInclude;
+    if (status) where.status = status;
   } else {
-    query.where.status = "PUBLISHED";
+    where.status = "PUBLISHED";
     query.include = commonInclude;
   }
-  const courses = await prisma.course.findMany(query);
-  return attachCourseStats(courses);
+
+  if (category) where.category = category;
+  if (level) where.level = level;
+
+  const [courses, total] = await Promise.all([
+    prisma.course.findMany(query),
+    prisma.course.count({ where }),
+  ]);
+
+  return { courses: await attachCourseStats(courses), total };
+};
+
+/** Real status-breakdown counts for the instructor's own courses (used by the My Courses summary cards). */
+const getCourseStatusCounts = async (instructorId) => {
+  const [total, published, draft, archived] = await Promise.all([
+    prisma.course.count({ where: { creatorId: instructorId } }),
+    prisma.course.count({ where: { creatorId: instructorId, status: "PUBLISHED" } }),
+    prisma.course.count({ where: { creatorId: instructorId, status: "DRAFT" } }),
+    prisma.course.count({ where: { creatorId: instructorId, status: "ARCHIVED" } }),
+  ]);
+
+  return { total, published, draft, archived };
 };
 
 const getCourseById = async (courseId, role) => {
@@ -651,6 +690,7 @@ const getCourseStudents = async (courseId) => {
 
     return {
       id: enrollment.student.user.id,
+      studentProfileId: enrollment.studentId,
       name: enrollment.student.user.name,
       email: enrollment.student.user.email,
       enrolledAt: enrollment.enrolledAt,
@@ -665,6 +705,38 @@ const getCourseBatches = async (courseId) => {
     where: { courseId },
     orderBy: { createdAt: "desc" },
     include: {
+      _count: { select: { students: true } }
+    }
+  });
+
+  return batches.map(({ _count, ...batch }) => ({
+    ...batch,
+    studentsCount: _count.students
+  }));
+};
+
+const getInstructorBatches = async (instructorId, filters = {}) => {
+  const where = {
+    course: { creatorId: instructorId }
+  };
+
+  if (filters.courseId) {
+    where.courseId = filters.courseId;
+  }
+  if (filters.status) {
+    where.status = filters.status;
+  }
+  if (filters.startDate || filters.endDate) {
+    where.startDate = {};
+    if (filters.startDate) where.startDate.gte = new Date(filters.startDate);
+    if (filters.endDate) where.startDate.lte = new Date(filters.endDate);
+  }
+
+  const batches = await prisma.batch.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    include: {
+      course: { select: { id: true, title: true } },
       _count: { select: { students: true } }
     }
   });
@@ -701,5 +773,7 @@ module.exports = {
   duplicateCourse,
   getCourseStudents,
   getCourseBatches,
-  createCourseBatch
+  getInstructorBatches,
+  createCourseBatch,
+  getCourseStatusCounts
 };

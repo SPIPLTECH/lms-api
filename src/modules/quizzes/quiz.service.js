@@ -305,6 +305,7 @@ const submitQuiz = async (studentId, quizId, answers = []) => {
 };
 
 module.exports = {
+  evaluateAnswer,
   calculateSubmissionResult,
   getQuizzes,
   getQuizById,

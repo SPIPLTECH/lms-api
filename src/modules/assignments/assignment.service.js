@@ -155,6 +155,9 @@ const createAssignment = async (data) => {
             totalQuestions: data.totalQuestions ? parseInt(data.totalQuestions) : 0,
             estimatedTime: data.estimatedTime ? parseInt(data.estimatedTime) : 0,
             resources: data.resources ? parseInt(data.resources) : 0,
+            marks: data.marks !== undefined && data.marks !== null ? parseInt(data.marks) : null,
+            assessmentType: data.assessmentType || null,
+            attachments: data.attachments ?? undefined,
             courseId: data.courseId,
             isPublished: data.isPublished !== undefined ? data.isPublished : true,
         }
@@ -171,6 +174,9 @@ const updateAssignment = async (assignmentId, data) => {
             totalQuestions: data.totalQuestions !== undefined ? parseInt(data.totalQuestions) : undefined,
             estimatedTime: data.estimatedTime !== undefined ? parseInt(data.estimatedTime) : undefined,
             resources: data.resources !== undefined ? parseInt(data.resources) : undefined,
+            marks: data.marks !== undefined ? (data.marks === null ? null : parseInt(data.marks)) : undefined,
+            assessmentType: data.assessmentType !== undefined ? data.assessmentType : undefined,
+            attachments: data.attachments !== undefined ? data.attachments : undefined,
             isPublished: data.isPublished !== undefined ? data.isPublished : undefined,
         }
     });

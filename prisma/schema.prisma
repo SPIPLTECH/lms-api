@@ -613,6 +613,9 @@ model Assignment {
   availableUntil DateTime?
   isPublished    Boolean                @default(true)
   status         String?                @default("ACTIVE")
+  marks          Int?
+  assessmentType String?
+  attachments    Json?
   courseId       String
   createdAt      DateTime               @default(now())
   updatedAt      DateTime               @updatedAt
@@ -659,6 +662,7 @@ model Exam {
   id             String    @id @default(cuid())
   title          String
   description    String?
+  instructions   String?   @db.Text
   startDate      DateTime
   duration       Int? // in minutes
   dueDate        DateTime?
@@ -671,11 +675,14 @@ model Exam {
   status         String?   @default("SCHEDULED")
   isPublished    Boolean   @default(true)
   courseId       String
+  batchId        String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   course         Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  batch          Batch?    @relation(fields: [batchId], references: [id], onDelete: SetNull)
 
   @@index([courseId])
+  @@index([batchId])
 }
 
 model Batch {
@@ -696,6 +703,7 @@ model Batch {
   course         Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
   students       StudentProfile[]
   sessions       BatchSession[]
+  exams          Exam[]
 
   @@index([courseId])
 }
@@ -823,6 +831,8 @@ model InstructorLessonNote {
   lessonId         String
   content          String
   timestampSeconds Int?
+  attachments      Json?
+  status           String?  @default("DRAFT")
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   instructor       User     @relation(fields: [instructorId], references: [id], onDelete: Cascade)
