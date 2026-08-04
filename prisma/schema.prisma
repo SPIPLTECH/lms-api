@@ -397,14 +397,17 @@ model Conversation {
   name         String?
   image        String?
   createdById  String
+  batchId      String?
   createdAt    DateTime                  @default(now())
   updatedAt    DateTime                  @updatedAt
   User         User                      @relation(fields: [createdById], references: [id])
   participants ConversationParticipant[]
   Message      Message[]
+  batch        Batch?                    @relation(fields: [batchId], references: [id], onDelete: SetNull)
 
   @@index([createdById])
   @@index([updatedAt])
+  @@index([batchId])
 }
 
 model ConversationParticipant {
@@ -704,6 +707,8 @@ model Batch {
   students       StudentProfile[]
   sessions       BatchSession[]
   exams          Exam[]
+  announcements  Announcement[]
+  conversations  Conversation[]
 
   @@index([courseId])
 }
@@ -803,12 +808,15 @@ model Announcement {
   message      String
   courseId     String
   instructorId String
+  batchId      String?
   createdAt    DateTime @default(now())
   course       Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
   instructor   User     @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+  batch        Batch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
 
   @@index([courseId])
   @@index([instructorId])
+  @@index([batchId])
 }
 
 model TeachingGoal {

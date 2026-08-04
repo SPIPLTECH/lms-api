@@ -44,28 +44,33 @@ const markAllAsRead = async (userId) => {
   });
 };
 
-const notifyEnrolledStudents = async (courseId, notificationData) => {
+const notifyEnrolledStudents = async (courseId, notificationData, batchId = null) => {
   try {
-    const enrollments = await prisma.enrollment.findMany({
-      where: { courseId },
-      include: {
-        student: {
-          select: {
-            userId: true,
-          },
-        },
-      },
-    });
+    // When a batchId is given, only notify that batch's roster instead of
+    // every student enrolled in the course.
+    const userIds = batchId
+      ? (
+          await prisma.batch.findUnique({
+            where: { id: batchId },
+            select: { students: { select: { userId: true } } },
+          })
+        )?.students.map((s) => s.userId) || []
+      : (
+          await prisma.enrollment.findMany({
+            where: { courseId },
+            include: { student: { select: { userId: true } } },
+          })
+        )
+          .map((e) => e.student?.userId)
+          .filter(Boolean);
 
-    for (const enrollment of enrollments) {
-      if (enrollment.student && enrollment.student.userId) {
-        await createNotification(enrollment.student.userId, {
-          title: notificationData.title || "New Announcement 📢",
-          message: notificationData.message,
-          type: "ANNOUNCEMENT",
-          link: notificationData.link || `/student/dashboard`,
-        });
-      }
+    for (const userId of userIds) {
+      await createNotification(userId, {
+        title: notificationData.title || "New Announcement 📢",
+        message: notificationData.message,
+        type: "ANNOUNCEMENT",
+        link: notificationData.link || `/student/dashboard`,
+      });
     }
   } catch (error) {
     console.error("Failed to notify enrolled students:", error.message);
