@@ -50,8 +50,12 @@ const sendAnnouncementSchema = Joi.object({
 const createCourseBatchSchema = Joi.object({
   name: Joi.string().required(),
   startDate: Joi.date().iso().required(),
-  endDate: Joi.date().iso().min(Joi.ref('startDate')).required(),
-  maxStudents: Joi.number().integer().min(1).optional()
+  dueDate: Joi.date().iso().min(Joi.ref('startDate')).optional().allow(null, ""),
+  startTime: Joi.string().optional().allow(null, ""),
+  endTime: Joi.string().optional().allow(null, ""),
+  meetingLink: Joi.string().uri().optional().allow(null, ""),
+  status: Joi.string().valid("ACTIVE", "ARCHIVED", "COMPLETED").optional(),
+  isPublished: Joi.boolean().optional()
 });
 
 module.exports = {

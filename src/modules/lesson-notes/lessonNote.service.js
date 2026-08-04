@@ -1,5 +1,6 @@
 const prisma = require("../../config/database");
 const ApiError = require("../../utils/ApiError");
+const { sanitizeContent } = require("../../utils/sanitizer");
 
 const getNotes = async (lessonId, instructorId) => {
   return prisma.instructorLessonNote.findMany({
@@ -13,8 +14,10 @@ const createNote = async (instructorId, data) => {
     data: {
       instructorId,
       lessonId: data.lessonId,
-      content: data.content,
-      timestampSeconds: data.timestampSeconds ?? null
+      content: sanitizeContent(data.content),
+      timestampSeconds: data.timestampSeconds ?? null,
+      attachments: data.attachments ?? undefined,
+      status: data.status || "DRAFT"
     }
   });
 };
@@ -39,8 +42,10 @@ const updateNote = async (noteId, instructorId, data) => {
   return prisma.instructorLessonNote.update({
     where: { id: noteId },
     data: {
-      ...(data.content !== undefined ? { content: data.content } : {}),
-      ...(data.timestampSeconds !== undefined ? { timestampSeconds: data.timestampSeconds } : {})
+      ...(data.content !== undefined ? { content: sanitizeContent(data.content) } : {}),
+      ...(data.timestampSeconds !== undefined ? { timestampSeconds: data.timestampSeconds } : {}),
+      ...(data.attachments !== undefined ? { attachments: data.attachments } : {}),
+      ...(data.status !== undefined ? { status: data.status } : {})
     }
   });
 };

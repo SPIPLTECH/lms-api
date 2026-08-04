@@ -115,6 +115,8 @@ app.use("/teaching-goals", require("./modules/teaching-goals/teachingGoal.routes
 app.use("/lesson-notes", require("./modules/lesson-notes/lessonNote.routes"));
 app.use("/lesson-queries", require("./modules/lesson-queries/lessonQuery.routes"));
 app.use("/discussions", require("./modules/discussions/discussion.routes"));
+app.use("/exams", require("./modules/exams/exam.routes"));
+app.use("/results", require("./modules/results/results.routes"));
 app.use(errorHandler);
 
 module.exports = app;

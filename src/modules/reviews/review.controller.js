@@ -19,6 +19,25 @@ const getReviews = async (req, res, next) => {
   }
 };
 
+const getMyReviews = async (req, res, next) => {
+  try {
+    const { courseId, rating, startDate, endDate } = req.query;
+    const result = await reviewService.getInstructorReviews(req.user.id, {
+      courseId,
+      rating,
+      startDate,
+      endDate
+    });
+
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getReviewById = async (req, res, next) => {
   try {
     const review = await reviewService.getReviewById(
@@ -125,6 +144,7 @@ const deleteReview = async (req, res, next) => {
 
 module.exports = {
   getReviews,
+  getMyReviews,
   getReviewById,
   createReview,
   updateReview,

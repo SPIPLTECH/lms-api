@@ -202,6 +202,47 @@ const deleteReview = async (
   });
 };
 
+/** Reviews across every course the instructor owns, filterable for the Feedback page. */
+const getInstructorReviews = async (instructorId, filters = {}) => {
+  const courseWhere = { creatorId: instructorId };
+  if (filters.courseId) {
+    courseWhere.id = filters.courseId;
+  }
+
+  const where = { course: courseWhere };
+
+  if (filters.rating) {
+    where.rating = parseInt(filters.rating);
+  }
+  if (filters.startDate || filters.endDate) {
+    where.createdAt = {};
+    if (filters.startDate) where.createdAt.gte = new Date(filters.startDate);
+    if (filters.endDate) where.createdAt.lte = new Date(filters.endDate);
+  }
+
+  const [reviews, stats] = await Promise.all([
+    prisma.review.findMany({
+      where,
+      include: {
+        student: { include: { user: { select: { id: true, name: true } } } },
+        course: { select: { id: true, title: true } }
+      },
+      orderBy: { createdAt: "desc" }
+    }),
+    prisma.review.aggregate({
+      where,
+      _avg: { rating: true },
+      _count: { id: true }
+    })
+  ]);
+
+  return {
+    reviews,
+    averageRating: stats._avg.rating || 0,
+    totalReviews: stats._count.id
+  };
+};
+
 const getCourseReviewStats =
   async (courseId) => {
     const stats =
@@ -228,6 +269,7 @@ const getCourseReviewStats =
 module.exports = {
   getReviews,
   getReviewById,
+  getInstructorReviews,
   createReview,
   updateReview,
   deleteReview,
