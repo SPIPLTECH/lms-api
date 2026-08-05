@@ -141,66 +141,50 @@ const getConversationById = async (conversationId, userId) => {
 };
 
 const createConversation = async (data, userId) => {
-    try {
-        const participantIds = [...new Set([userId, ...data.participantIds])];
+    // Validation and the messaging-permission check are intentionally OUTSIDE
+    // any try/catch: they throw on purpose when the request is invalid or
+    // disallowed, and that must reach the client as a real error (400/403),
+    // never be swallowed. This function used to catch everything here —
+    // including these deliberate rejections — and paper over them with a
+    // fabricated, never-persisted "mock_conv_..." conversation, which just
+    // deferred the failure to the next request (loading messages for a
+    // conversation that was never actually created) as an unrelated-looking
+    // 500 instead of showing the real reason at the point of failure.
+    const participantIds = [...new Set([userId, ...data.participantIds])];
 
-        if (
-            data.type === "DIRECT" &&
-            data.participantIds.includes(userId)
-        ) {
-            throw new Error("You cannot create a conversation with yourself.");
-        }
+    if (
+        data.type === "DIRECT" &&
+        data.participantIds.includes(userId)
+    ) {
+        const error = new Error("You cannot create a conversation with yourself.");
+        error.statusCode = 400;
+        throw error;
+    }
 
-        if (data.type === "DIRECT") {
-            if (participantIds.length !== 2) {
-                throw new Error(
-                    "Direct conversation must have exactly two participants."
-                );
-            }
-
-            await messagingPermissionService.canCreateConversation(
-                userId,
-                participantIds[1]
+    if (data.type === "DIRECT") {
+        if (participantIds.length !== 2) {
+            const error = new Error(
+                "Direct conversation must have exactly two participants."
             );
-
-            const existingConversation = await prisma.conversation.findFirst({
-                where: {
-                    type: "DIRECT",
-                    AND: participantIds.map((participantId) => ({
-                        participants: {
-                            some: {
-                                userId: participantId,
-                            },
-                        },
-                    })),
-                },
-
-                include: {
-                    participants: participantInclude,
-                },
-            });
-
-            if (
-                existingConversation &&
-                existingConversation.participants.length === 2
-            ) {
-                return formatConversation(existingConversation, userId);
-            }
+            error.statusCode = 400;
+            throw error;
         }
 
-        const conversation = await prisma.conversation.create({
-            data: {
-                type: data.type,
-                name: data.type === "GROUP" ? data.name : null,
-                description: data.type === "GROUP" ? data.description : null,
-                image: data.type === "GROUP" ? data.image : null,
-                createdById: userId,
+        await messagingPermissionService.canCreateConversation(
+            userId,
+            participantIds[1]
+        );
 
-                participants: {
-                    create: participantIds.map((participantId) => ({
-                        userId: participantId,
-                    })),
-                },
+        const existingConversation = await prisma.conversation.findFirst({
+            where: {
+                type: "DIRECT",
+                AND: participantIds.map((participantId) => ({
+                    participants: {
+                        some: {
+                            userId: participantId,
+                        },
+                    },
+                })),
             },
 
             include: {
@@ -208,27 +192,35 @@ const createConversation = async (data, userId) => {
             },
         });
 
-        const formattedConversation = formatConversation(conversation, userId);
-
-        // console.log("Returning Conversation:");
-        // console.log(formattedConversation);
-
-        return formattedConversation;
-    } catch (error) {
-        console.error("Failed to create conversation in db, returning mock:", error.message);
-        const sortedIds = [userId, ...(data.participantIds || [])].sort().join("_");
-        return {
-            id: `mock_conv_shared_${sortedIds}`,
-            type: data.type || "DIRECT",
-            name: data.name || "Private Chat",
-            participants: [
-                { userId, user: { id: userId, name: "Instructor" } },
-                ...(data.participantIds || []).map(id => ({ userId: id, user: { id, name: "User" } }))
-            ],
-            lastMessage: "",
-            lastSeen: ""
-        };
+        if (
+            existingConversation &&
+            existingConversation.participants.length === 2
+        ) {
+            return formatConversation(existingConversation, userId);
+        }
     }
+
+    const conversation = await prisma.conversation.create({
+        data: {
+            type: data.type,
+            name: data.type === "GROUP" ? data.name : null,
+            description: data.type === "GROUP" ? data.description : null,
+            image: data.type === "GROUP" ? data.image : null,
+            createdById: userId,
+
+            participants: {
+                create: participantIds.map((participantId) => ({
+                    userId: participantId,
+                })),
+            },
+        },
+
+        include: {
+            participants: participantInclude,
+        },
+    });
+
+    return formatConversation(conversation, userId);
 };
 
 const updateConversation = async (conversationId, data) => {
