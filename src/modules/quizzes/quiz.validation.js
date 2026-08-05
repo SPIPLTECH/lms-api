@@ -38,11 +38,17 @@ const updateQuizQuestionMarksSchema = Joi.object({
   marks: Joi.number().integer().min(0).required()
 });
 
+const generateSelfAssessmentQuizSchema = Joi.object({
+  courseId: Joi.string().required(),
+  questionCount: Joi.number().integer().min(1).max(50).optional()
+});
+
 module.exports = {
   createQuizSchema,
   updateQuizSchema,
   submitQuizSchema,
   importQuestionsToQuizSchema,
   reorderQuizQuestionsSchema,
-  updateQuizQuestionMarksSchema
+  updateQuizQuestionMarksSchema,
+  generateSelfAssessmentQuizSchema
 };

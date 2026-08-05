@@ -131,6 +131,47 @@ const uploadQuestions = async (req, res, next) => {
 };
 
 // =========================
+// Bulk Create Questions (JSON payload, optionally attached to a quiz)
+// =========================
+const bulkCreateQuestions = async (req, res, next) => {
+  try {
+    const { quizId, questions } = req.body;
+    const result = await questionService.bulkCreateQuestions(questions, quizId || null);
+
+    res.status(201).json({
+      success: true,
+      message: `Processed ${result.total} questions. Inserted ${result.inserted}.`,
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// =========================
+// Import Questions From File (optionally attached to a quiz)
+// =========================
+const importQuestionsFile = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Please upload an Excel (.xlsx), CSV (.csv), or JSON (.json) file.",
+      });
+    }
+
+    const result = await questionService.importQuestions(req.file, req.body.quizId || null);
+
+    res.status(201).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// =========================
 // Update Question
 // =========================
 const updateQuestion = async (req, res, next) => {
@@ -214,6 +255,8 @@ module.exports = {
   getQuestionsByQuizId,
   getQuestionById,
   createQuestion,
+  bulkCreateQuestions,
+  importQuestionsFile,
   uploadQuestions,
   updateQuestion,
   deleteQuestion,

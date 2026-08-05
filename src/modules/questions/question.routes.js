@@ -6,9 +6,11 @@ const controller = require("./question.controller");
 const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
+const { importUpload } = require("../../middleware/upload.middleware");
 const {
   createQuestionSchema,
-  updateQuestionSchema
+  updateQuestionSchema,
+  bulkCreateQuestionsSchema
 } = require("./question.validation");
 
 // Multer memory storage for handling Excel, CSV, JSON file upload buffers
@@ -49,6 +51,24 @@ router.post(
   checkRole(["ADMIN", "INSTRUCTOR"]),
   validate(createQuestionSchema),
   controller.createQuestion
+);
+
+// POST /questions/bulk - Bulk create from a JSON payload, optionally attached to a quiz
+router.post(
+  "/bulk",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  validate(bulkCreateQuestionsSchema),
+  controller.bulkCreateQuestions
+);
+
+// POST /questions/import - Bulk create from an uploaded file, optionally attached to a quiz
+router.post(
+  "/import",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  importUpload.single("file"),
+  controller.importQuestionsFile
 );
 
 // POST /questions/:questionId/archive - Archive question

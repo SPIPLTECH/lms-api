@@ -28,6 +28,22 @@ router.get(
   userController.getUsers
 );
 
+// Registered before the /:userId routes below — otherwise Express would
+// match "/profile/me" as "/:userId" with userId="profile" and gate it
+// behind ADMIN-only access, making these self-profile routes unreachable.
+router.get(
+  "/profile/me",
+  verifyToken,
+  userController.getMyProfile
+);
+
+router.put(
+  "/profile/me",
+  verifyToken,
+  validate(updateUserSchema),
+  userController.updateMyProfile
+);
+
 router.get(
   "/:userId",
   verifyToken,
@@ -64,19 +80,6 @@ router.patch(
   checkRole(["ADMIN"]),
   validate(updateUserRoleSchema),
   userController.updateUserRole
-);
-
-router.get(
-  "/profile/me",
-  verifyToken,
-  userController.getMyProfile
-);
-
-router.put(
-  "/profile/me",
-  verifyToken,
-  validate(updateUserSchema),
-  userController.updateMyProfile
 );
 
 module.exports = router;

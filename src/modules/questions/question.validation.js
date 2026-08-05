@@ -25,7 +25,13 @@ const updateQuestionSchema = Joi.object({
   tags: Joi.array().items(Joi.string()).optional(),
 });
 
+const bulkCreateQuestionsSchema = Joi.object({
+  quizId: Joi.string().optional().allow(null, ""),
+  questions: Joi.array().items(Joi.object().unknown(true)).min(1).required()
+});
+
 module.exports = {
   createQuestionSchema,
-  updateQuestionSchema
+  updateQuestionSchema,
+  bulkCreateQuestionsSchema
 };

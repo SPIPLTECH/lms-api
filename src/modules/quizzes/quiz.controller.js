@@ -227,10 +227,12 @@ const updateQuizQuestionMarks = async (req, res, next) => {
 
 const generateSelfAssessmentQuiz = async (req, res, next) => {
   try {
-    res.status(200).json({
+    const { courseId, questionCount } = req.body;
+    const quiz = await quizService.generateSelfAssessmentQuiz(courseId, questionCount);
+
+    res.status(201).json({
       success: true,
-      message: "Self assessment quiz generation not implemented yet",
-      data: null,
+      data: quiz,
     });
   } catch (error) {
     next(error);

@@ -135,11 +135,11 @@ const getUpcomingTasks = async (userId) => {
   // ── 5. Batches (startDate in window, student enrolled) ───────────────────
   const batches = await prisma.batch.findMany({
     where: {
-      courseId: { in: enrolledCourseIds },
+      courses: { some: { id: { in: enrolledCourseIds } } },
       id: { notIn: joinedBatchIds },
       startDate: { gte: windowStart, lte: windowEnd },
     },
-    include: { course: { select: { title: true } } },
+    include: { courses: { select: { title: true } } },
     orderBy: { startDate: "asc" },
   });
 
@@ -148,7 +148,7 @@ const getUpcomingTasks = async (userId) => {
     tasks.push({
       id: b.id,
       title: b.name,
-      subtitle: b.course?.title || "Batch",
+      subtitle: b.courses.map((c) => c.title).join(", ") || "Batch",
       type: "batch",
       startDate: b.startDate,
       dueDateLabel: `Starts ${_formatLabel(startDate)}`,

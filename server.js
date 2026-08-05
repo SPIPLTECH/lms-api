@@ -19,6 +19,10 @@ initializeSocket(server);
 const { initMessageCleanupCron } = require("./src/modules/messages/messageCleanup.service");
 initMessageCleanupCron();
 
+// Initialize Batch Expiry Cleanup Cron Job (removes students from expired batches)
+const { initBatchExpiryCron } = require("./src/modules/batches/batchExpiry.service");
+initBatchExpiryCron();
+
 server.listen(PORT, () => {
     console.log(
         `🚀 Server running on port ${PORT}`

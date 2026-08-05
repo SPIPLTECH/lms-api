@@ -47,52 +47,9 @@ const sendAnnouncementSchema = Joi.object({
   content: Joi.string().required()
 });
 
-const createCourseBatchSchema = Joi.object({
-  name: Joi.string().required(),
-  startDate: Joi.date().iso().required(),
-  dueDate: Joi.date().iso().min(Joi.ref('startDate')).optional().allow(null, ""),
-  startTime: Joi.string().optional().allow(null, ""),
-  endTime: Joi.string().optional().allow(null, ""),
-  meetingLink: Joi.string().uri().optional().allow(null, ""),
-  status: Joi.string().valid("ACTIVE", "ARCHIVED", "COMPLETED").optional(),
-  isPublished: Joi.boolean().optional()
-});
-
-const addStudentToBatchSchema = Joi.object({
-  studentId: Joi.string().required().messages({
-    "any.required": "studentId is required",
-    "string.empty": "studentId is required"
-  })
-});
-
-const updateBatchStatusSchema = Joi.object({
-  status: Joi.string()
-    .valid("ACTIVE", "ARCHIVED", "COMPLETED")
-    .required()
-    .messages({
-      "any.required": "Status is required",
-      "any.only": "Status must be ACTIVE, ARCHIVED, or COMPLETED"
-    })
-});
-
-const createBatchAnnouncementSchema = Joi.object({
-  title: Joi.string().required().messages({
-    "any.required": "Title is required",
-    "string.empty": "Title cannot be empty"
-  }),
-  message: Joi.string().required().messages({
-    "any.required": "Message is required",
-    "string.empty": "Message cannot be empty"
-  })
-});
-
 module.exports = {
   createCourseSchema,
   updateCourseSchema,
   updateCourseStatusSchema,
-  sendAnnouncementSchema,
-  createCourseBatchSchema,
-  addStudentToBatchSchema,
-  updateBatchStatusSchema,
-  createBatchAnnouncementSchema
+  sendAnnouncementSchema
 };

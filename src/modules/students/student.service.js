@@ -116,6 +116,7 @@ const getStudents = async (user) => {
 
     return {
       id: student.id,
+      userId: student.user.id,
       name: student.user.name,
       email: student.user.email,
       role: student.user.role,
