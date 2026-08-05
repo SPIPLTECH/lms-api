@@ -56,6 +56,37 @@ const createCourseBatchSchema = Joi.object({
   meetingLink: Joi.string().uri().optional().allow(null, ""),
   status: Joi.string().valid("ACTIVE", "ARCHIVED", "COMPLETED").optional(),
   isPublished: Joi.boolean().optional()
+<<<<<<< HEAD
+=======
+});
+
+const addStudentToBatchSchema = Joi.object({
+  studentId: Joi.string().required().messages({
+    "any.required": "studentId is required",
+    "string.empty": "studentId is required"
+  })
+});
+
+const updateBatchStatusSchema = Joi.object({
+  status: Joi.string()
+    .valid("ACTIVE", "ARCHIVED", "COMPLETED")
+    .required()
+    .messages({
+      "any.required": "Status is required",
+      "any.only": "Status must be ACTIVE, ARCHIVED, or COMPLETED"
+    })
+});
+
+const createBatchAnnouncementSchema = Joi.object({
+  title: Joi.string().required().messages({
+    "any.required": "Title is required",
+    "string.empty": "Title cannot be empty"
+  }),
+  message: Joi.string().required().messages({
+    "any.required": "Message is required",
+    "string.empty": "Message cannot be empty"
+  })
+>>>>>>> af25cb44ad8133fb2159ff1ee3bee3d570f3279f
 });
 
 module.exports = {
@@ -63,5 +94,8 @@ module.exports = {
   updateCourseSchema,
   updateCourseStatusSchema,
   sendAnnouncementSchema,
-  createCourseBatchSchema
+  createCourseBatchSchema,
+  addStudentToBatchSchema,
+  updateBatchStatusSchema,
+  createBatchAnnouncementSchema
 };

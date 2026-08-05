@@ -252,6 +252,93 @@ const deleteConversation = async (conversationId) => {
     });
 };
 
+/**
+ * Find-or-create the GROUP conversation for a batch (instructor + every
+ * current batch student). Deliberately does NOT go through the generic
+ * `createConversation` above: that function's GROUP branch has no
+ * permission check at all (only DIRECT is validated), and its catch block
+ * silently swallows any thrown error into a fake "mock" conversation —
+ * both wrong for a feature that must only ever include this batch's real
+ * roster. This does its own explicit ownership check and lets errors
+ * propagate normally.
+ */
+const startBatchConversation = async (batchId, instructorId) => {
+    const batch = await prisma.batch.findUnique({
+        where: { id: batchId },
+        select: {
+            id: true,
+            name: true,
+            course: { select: { creatorId: true } },
+            students: { select: { userId: true } },
+        },
+    });
+
+    if (!batch) {
+        const error = new Error("Batch not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    if (batch.course.creatorId !== instructorId) {
+        const error = new Error("Forbidden: you do not own this batch");
+        error.statusCode = 403;
+        throw error;
+    }
+
+    if (batch.students.length === 0) {
+        const error = new Error("This batch has no students yet.");
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const studentUserIds = batch.students.map((s) => s.userId);
+    const desiredParticipantIds = new Set([instructorId, ...studentUserIds]);
+
+    const existing = await prisma.conversation.findFirst({
+        where: { batchId, type: "GROUP" },
+        include: { participants: participantInclude },
+    });
+
+    if (existing) {
+        const currentParticipantIds = new Set(existing.participants.map((p) => p.userId));
+        const toAdd = [...desiredParticipantIds].filter((id) => !currentParticipantIds.has(id));
+        const toRemove = [...currentParticipantIds].filter((id) => !desiredParticipantIds.has(id));
+
+        if (toAdd.length > 0) {
+            await prisma.conversationParticipant.createMany({
+                data: toAdd.map((userId) => ({ conversationId: existing.id, userId })),
+                skipDuplicates: true,
+            });
+        }
+        if (toRemove.length > 0) {
+            await prisma.conversationParticipant.deleteMany({
+                where: { conversationId: existing.id, userId: { in: toRemove } },
+            });
+        }
+
+        const refreshed = await prisma.conversation.findUnique({
+            where: { id: existing.id },
+            include: { participants: participantInclude },
+        });
+        return formatConversation(refreshed, instructorId);
+    }
+
+    const conversation = await prisma.conversation.create({
+        data: {
+            type: "GROUP",
+            name: batch.name,
+            createdById: instructorId,
+            batchId,
+            participants: {
+                create: [...desiredParticipantIds].map((userId) => ({ userId })),
+            },
+        },
+        include: { participants: participantInclude },
+    });
+
+    return formatConversation(conversation, instructorId);
+};
+
 const isParticipant = async (conversationId, userId) => {
     const participant = await prisma.conversationParticipant.findFirst({
         where: {
@@ -270,4 +357,5 @@ module.exports = {
     updateConversation,
     deleteConversation,
     isParticipant,
+    startBatchConversation,
 };

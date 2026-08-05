@@ -50,7 +50,28 @@ const verifyCourseOwnershipFromQuery = buildOwnershipCheck({
   attachAs: "course",
 });
 
+const findBatch = (id) =>
+  prisma.batch.findUnique({
+    where: { id },
+    select: { id: true, courseId: true, course: { select: { creatorId: true } } },
+  });
+
+/**
+ * Verifies the caller owns the course behind the batch identified by
+ * req.params.batchId. ADMIN always passes. Used on batch-detail and
+ * batch-membership routes (add/remove student, etc).
+ */
+const verifyBatchOwnership = buildOwnershipCheck({
+  getResourceId: (req) => req.params.batchId,
+  findResource: findBatch,
+  getCourseCreatorId: (batch) => batch.course?.creatorId,
+  notFoundMessage: "Batch not found",
+  missingIdMessage: "batchId is required",
+  attachAs: "batch",
+});
+
 module.exports = verifyCourseOwnership;
 module.exports.verifyCourseOwnership = verifyCourseOwnership;
 module.exports.fromBody = verifyCourseOwnershipFromBody;
 module.exports.fromQuery = verifyCourseOwnershipFromQuery;
+module.exports.verifyBatchOwnership = verifyBatchOwnership;

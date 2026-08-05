@@ -22,13 +22,19 @@ const checkRole = require(
 const verifyCourseOwnership = require(
   "../../middleware/courseOwnership.middleware"
 );
+const { verifyBatchOwnership } = require(
+  "../../middleware/courseOwnership.middleware"
+);
 const validate = require("../../middleware/joiValidation.middleware");
 const {
   createCourseSchema,
   updateCourseSchema,
   updateCourseStatusSchema,
   sendAnnouncementSchema,
-  createCourseBatchSchema
+  createCourseBatchSchema,
+  addStudentToBatchSchema,
+  updateBatchStatusSchema,
+  createBatchAnnouncementSchema
 } = require("./course.validation");
 
 // Public read — optionalToken allows unauthenticated (GUEST) access.
@@ -143,6 +149,13 @@ router.get(
 );
 
 router.get(
+  "/batches/overview",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  controller.getBatchPerformanceOverview
+);
+
+router.get(
   "/:courseId/batches",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
@@ -157,6 +170,81 @@ router.post(
   verifyCourseOwnership,
   validate(createCourseBatchSchema),
   controller.createCourseBatch
+);
+
+router.get(
+  "/batches/:batchId",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyBatchOwnership,
+  controller.getBatchById
+);
+
+router.get(
+  "/batches/:batchId/enrollable-students",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyBatchOwnership,
+  controller.getEnrollableStudentsForBatch
+);
+
+router.post(
+  "/batches/:batchId/students",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyBatchOwnership,
+  validate(addStudentToBatchSchema),
+  controller.addStudentToBatch
+);
+
+router.delete(
+  "/batches/:batchId/students/:studentId",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyBatchOwnership,
+  controller.removeStudentFromBatch
+);
+
+router.get(
+  "/batches/:batchId/dashboard",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyBatchOwnership,
+  controller.getBatchDetailDashboard
+);
+
+router.patch(
+  "/batches/:batchId/status",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyBatchOwnership,
+  validate(updateBatchStatusSchema),
+  controller.updateBatchStatus
+);
+
+router.get(
+  "/batches/:batchId/announcements",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyBatchOwnership,
+  controller.getBatchAnnouncements
+);
+
+router.post(
+  "/batches/:batchId/announcements",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyBatchOwnership,
+  validate(createBatchAnnouncementSchema),
+  controller.createBatchAnnouncement
+);
+
+router.post(
+  "/batches/:batchId/message",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyBatchOwnership,
+  controller.startBatchConversation
 );
 
 module.exports = router;
