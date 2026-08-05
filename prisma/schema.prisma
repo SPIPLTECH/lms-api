@@ -20,6 +20,7 @@ model User {
   createdAt               DateTime                  @default(now())
   updatedAt               DateTime                  @updatedAt
   isVerified              Boolean                   @default(false)
+  avatar                  String?
   otp                     String?
   otpExpiresAt            DateTime?
   adminProfile            AdminProfile?
@@ -46,6 +47,9 @@ model StudentProfile {
   createdAt             DateTime               @default(now())
   dateOfBirth           DateTime?
   guardianName          String?
+  institution           String?
+  graduationYear        String?
+  gender                String?
   profileVisibility     String?                @default("Public")
   focusTopics           String?                @default("")
   interests             String?                @default("")

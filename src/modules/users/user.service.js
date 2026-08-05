@@ -121,9 +121,10 @@ const updateMyProfile = async (userId, data) => {
 
   // Fields allowed to be updated on the User model
   const userUpdate = {};
-  if (data.name) userUpdate.name = data.name;
-  if (data.phoneNumber) userUpdate.phoneNumber = data.phoneNumber;
-  if (data.address) userUpdate.address = data.address;
+  if (data.name !== undefined) userUpdate.name = data.name;
+  if (data.phoneNumber !== undefined) userUpdate.phoneNumber = data.phoneNumber;
+  if (data.address !== undefined) userUpdate.address = data.address;
+  if (data.avatar !== undefined) userUpdate.avatar = data.avatar;
 
   // Update User base fields
   if (Object.keys(userUpdate).length > 0) {
@@ -134,6 +135,9 @@ const updateMyProfile = async (userId, data) => {
   if (user.role === "STUDENT" && user.studentProfile) {
     const profileUpdate = {};
     if (data.education !== undefined) profileUpdate.education = data.education;
+    if (data.institution !== undefined) profileUpdate.institution = data.institution;
+    if (data.graduationYear !== undefined) profileUpdate.graduationYear = data.graduationYear;
+    if (data.gender !== undefined) profileUpdate.gender = data.gender;
     if (data.dateOfBirth !== undefined) {
       profileUpdate.dateOfBirth = data.dateOfBirth ? new Date(data.dateOfBirth) : null;
     }

@@ -1,30 +1,35 @@
 const prisma = require("../../config/database");
 
 const getEvents = async (user) => {
-    if (!user) {
-        return await prisma.calendarEvent.findMany({
-            orderBy: { date: "asc" }
-        });
-    }
+    try {
+        if (!user) {
+            return await prisma.calendarEvent.findMany({
+                orderBy: { date: "asc" }
+            });
+        }
 
-    if (user.role === "STUDENT") {
-        const student = await prisma.studentProfile.findUnique({
-            where: { userId: user.id },
-            select: {
-                enrollments: { select: { courseId: true } }
-            }
-        });
-        const enrolledCourseIds = student?.enrollments.map(e => e.courseId) || [];
-        return await prisma.calendarEvent.findMany({
-            where: {
-                OR: [
-                    { courseId: null },
-                    { courseId: "" },
-                    { courseId: { in: enrolledCourseIds } }
-                ]
-            },
-            orderBy: { date: "asc" }
-        });
+        if (user.role === "STUDENT") {
+            const student = await prisma.studentProfile.findUnique({
+                where: { userId: user.id },
+                select: {
+                    enrollments: { select: { courseId: true } }
+                }
+            });
+            const enrolledCourseIds = student?.enrollments.map(e => e.courseId) || [];
+            return await prisma.calendarEvent.findMany({
+                where: {
+                    OR: [
+                        { courseId: null },
+                        { courseId: "" },
+                        { courseId: { in: enrolledCourseIds } }
+                    ]
+                },
+                orderBy: { date: "asc" }
+            });
+        }
+    } catch (error) {
+        console.error("Error fetching calendar events:", error);
+        return [];
     }
 
     if (user.role === "INSTRUCTOR") {

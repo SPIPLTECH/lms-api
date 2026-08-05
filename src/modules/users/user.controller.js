@@ -165,6 +165,44 @@ const updateMyProfile = async (req, res, next) => {
   }
 };
 
+const uploadAvatar = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "No avatar image uploaded",
+      });
+    }
+
+    const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+    const user = await userService.updateMyProfile(req.user.id, { avatar: avatarUrl });
+
+    res.json({
+      success: true,
+      message: "Profile photo uploaded successfully",
+      data: {
+        avatarUrl,
+        user,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const deleteAvatar = async (req, res, next) => {
+  try {
+    const user = await userService.updateMyProfile(req.user.id, { avatar: null });
+
+    res.json({
+      success: true,
+      message: "Profile photo removed successfully",
+      data: user,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
 module.exports = {
   getUsers,
@@ -175,4 +213,6 @@ module.exports = {
   updateUserStatus,
   getMyProfile,
   updateMyProfile,
+  uploadAvatar,
+  deleteAvatar,
 };

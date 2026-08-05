@@ -208,11 +208,39 @@ const getAttachmentType = (
 
 };
 
+const avatarUploadDir = path.join(__dirname, "../../uploads/avatars");
+if (!fs.existsSync(avatarUploadDir)) {
+  fs.mkdirSync(avatarUploadDir, { recursive: true });
+}
+
+const avatarStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, avatarUploadDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, `avatar-${uniqueSuffix}${ext}`);
+  },
+});
+
+const avatarUpload = multer({
+  storage: avatarStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only image files (jpg, png, webp, gif) are allowed!"), false);
+    }
+  },
+});
+
 module.exports = {
 
   upload,
 
   importUpload,
+
+  avatarUpload,
 
   getAttachmentType,
   

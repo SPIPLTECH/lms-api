@@ -66,6 +66,8 @@ router.patch(
   userController.updateUserRole
 );
 
+const { avatarUpload } = require("../../middleware/upload.middleware");
+
 router.get(
   "/profile/me",
   verifyToken,
@@ -77,6 +79,19 @@ router.put(
   verifyToken,
   validate(updateUserSchema),
   userController.updateMyProfile
+);
+
+router.post(
+  "/profile/avatar",
+  verifyToken,
+  avatarUpload.single("avatar"),
+  userController.uploadAvatar
+);
+
+router.delete(
+  "/profile/avatar",
+  verifyToken,
+  userController.deleteAvatar
 );
 
 module.exports = router;
