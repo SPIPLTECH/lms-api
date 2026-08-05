@@ -288,6 +288,22 @@ const getInstructorBatches = async (req, res, next) => {
   }
 };
 
+const getMyStudentBatches = async (req, res, next) => {
+  try {
+    const { courseId, status } = req.query;
+    const batches = await courseService.getStudentBatches(req.studentId, {
+      courseId,
+      status
+    });
+    res.json({
+      success: true,
+      data: batches
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getBatchPerformanceOverview = async (req, res, next) => {
   try {
     const { courseId, batchId, startDate, endDate } = req.query;
@@ -423,6 +439,7 @@ module.exports = {
   sendAnnouncement,
   getCourseBatches,
   getInstructorBatches,
+  getMyStudentBatches,
   getBatchPerformanceOverview,
   createCourseBatch,
   getCourseStatusCounts,

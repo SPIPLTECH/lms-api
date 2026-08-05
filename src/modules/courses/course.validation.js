@@ -56,8 +56,6 @@ const createCourseBatchSchema = Joi.object({
   meetingLink: Joi.string().uri().optional().allow(null, ""),
   status: Joi.string().valid("ACTIVE", "ARCHIVED", "COMPLETED").optional(),
   isPublished: Joi.boolean().optional()
-<<<<<<< HEAD
-=======
 });
 
 const addStudentToBatchSchema = Joi.object({
@@ -86,7 +84,6 @@ const createBatchAnnouncementSchema = Joi.object({
     "any.required": "Message is required",
     "string.empty": "Message cannot be empty"
   })
->>>>>>> af25cb44ad8133fb2159ff1ee3bee3d570f3279f
 });
 
 module.exports = {

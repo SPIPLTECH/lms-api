@@ -22,8 +22,11 @@ const checkRole = require(
 const verifyCourseOwnership = require(
   "../../middleware/courseOwnership.middleware"
 );
-const { verifyBatchOwnership } = require(
+const { verifyBatchOwnership, verifyBatchAccess } = require(
   "../../middleware/courseOwnership.middleware"
+);
+const checkEnrollmentAccess = require(
+  "../../middleware/enrollment.middleware"
 );
 const validate = require("../../middleware/joiValidation.middleware");
 const {
@@ -36,7 +39,6 @@ const {
   updateBatchStatusSchema,
   createBatchAnnouncementSchema
 } = require("./course.validation");
-
 // Public read — optionalToken allows unauthenticated (GUEST) access.
 // The service layer already filters: guests/students see only PUBLISHED courses;
 // admins/instructors see all. verifyToken is NOT used here because guests
@@ -148,6 +150,18 @@ router.get(
   controller.getInstructorBatches
 );
 
+// Student read-only counterpart of "/batches/mine" above — batches the
+// student is a member of, not batches they teach. checkEnrollmentAccess
+// resolves req.studentId from the authenticated user (same middleware
+// already used by GET /enrollments).
+router.get(
+  "/batches/student/mine",
+  verifyToken,
+  checkRole(["STUDENT"]),
+  checkEnrollmentAccess,
+  controller.getMyStudentBatches
+);
+
 router.get(
   "/batches/overview",
   verifyToken,
@@ -172,11 +186,14 @@ router.post(
   controller.createCourseBatch
 );
 
+// Read-only: instructor/admin owner OR a student who is a member of this
+// batch (verifyBatchAccess covers both; management routes below keep the
+// stricter owner-only verifyBatchOwnership).
 router.get(
   "/batches/:batchId",
   verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  verifyBatchOwnership,
+  checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  verifyBatchAccess,
   controller.getBatchById
 );
 
@@ -208,8 +225,8 @@ router.delete(
 router.get(
   "/batches/:batchId/dashboard",
   verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  verifyBatchOwnership,
+  checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  verifyBatchAccess,
   controller.getBatchDetailDashboard
 );
 
@@ -225,8 +242,8 @@ router.patch(
 router.get(
   "/batches/:batchId/announcements",
   verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  verifyBatchOwnership,
+  checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  verifyBatchAccess,
   controller.getBatchAnnouncements
 );
 

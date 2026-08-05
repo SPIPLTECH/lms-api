@@ -748,6 +748,58 @@ const getInstructorBatches = async (instructorId, filters = {}) => {
 };
 
 /**
+ * Batches a STUDENT belongs to — the read-only counterpart of
+ * getInstructorBatches above (same filter shape, same list-view restraint:
+ * no per-batch progress/analytics computation here, matching how
+ * getBatchPerformanceOverview below only computes that on the heavier
+ * overview/detail paths). Batch membership is StudentProfile <-> Batch
+ * directly (not via Enrollment), per schema.prisma.
+ */
+const getStudentBatches = async (studentId, filters = {}) => {
+  const where = {
+    students: { some: { id: studentId } }
+  };
+
+  if (filters.courseId) {
+    where.courseId = filters.courseId;
+  }
+  if (filters.status) {
+    where.status = filters.status;
+  }
+
+  const batches = await prisma.batch.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    include: {
+      course: {
+        select: {
+          id: true,
+          title: true,
+          thumbnailUrl: true,
+          category: true,
+          level: true,
+          creator: { select: { name: true } }
+        }
+      },
+      _count: { select: { students: true } }
+    }
+  });
+
+  return batches.map(({ _count, course, ...batch }) => ({
+    ...batch,
+    studentsCount: _count.students,
+    course: {
+      id: course.id,
+      title: course.title,
+      thumbnailUrl: course.thumbnailUrl,
+      category: course.category,
+      level: course.level,
+      instructor: course.creator?.name || "Unknown"
+    }
+  }));
+};
+
+/**
  * Batch Performance Overview — instructor Home dashboard widget.
  * Every metric is computed from real rows (Progress/QuizSubmission/
  * AssignmentSubmission). There is no attendance-tracking feature anywhere
@@ -1436,6 +1488,7 @@ module.exports = {
   getCourseStudents,
   getCourseBatches,
   getInstructorBatches,
+  getStudentBatches,
   getBatchPerformanceOverview,
   createCourseBatch,
   getCourseStatusCounts,
