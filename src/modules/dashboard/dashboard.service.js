@@ -1,6 +1,11 @@
 const prisma = require("../../config/database");
 
 const getAdminDashboard = async () => {
+  const now = new Date();
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
   const totalUsers = await prisma.user.count();
 
   const totalStudents =
@@ -58,6 +63,179 @@ const getAdminDashboard = async () => {
       }
     });
 
+  // Growth deltas for the KPI cards — only counters with a real, unambiguous
+  // "since when" (createdAt/enrolledAt/publishedAt/issuedAt), no revenue.
+  const [
+    newStudentsToday,
+    newCoursesThisMonth,
+    newEnrollmentsToday,
+    newUsersToday
+  ] = await Promise.all([
+    prisma.user.count({ where: { role: "STUDENT", createdAt: { gte: startOfToday } } }),
+    prisma.course.count({ where: { createdAt: { gte: startOfMonth } } }),
+    prisma.enrollment.count({ where: { enrolledAt: { gte: startOfToday } } }),
+    prisma.user.count({ where: { createdAt: { gte: startOfToday } } })
+  ]);
+
+  // Today's Snapshot
+  const [coursesPublishedToday, certificatesIssuedToday] = await Promise.all([
+    prisma.course.count({ where: { status: "PUBLISHED", publishedAt: { gte: startOfToday } } }),
+    prisma.certificate.count({ where: { issuedAt: { gte: startOfToday } } })
+  ]);
+
+  // Course Performance — top 6 courses by enrollment, with real rating +
+  // completion rate (mirrors the per-course completion math used on the
+  // instructor side, scoped down to just these courses for cost).
+  const topCourses = await prisma.course.findMany({
+    orderBy: { enrollments: { _count: "desc" } },
+    take: 6,
+    select: {
+      id: true,
+      title: true,
+      category: true,
+      level: true,
+      status: true,
+      _count: { select: { enrollments: true } }
+    }
+  });
+
+  const topCourseIds = topCourses.map((c) => c.id);
+
+  const [ratingGroups, courseModules, courseEnrollments] = await Promise.all([
+    topCourseIds.length
+      ? prisma.review.groupBy({
+          by: ["courseId"],
+          where: { courseId: { in: topCourseIds } },
+          _avg: { rating: true }
+        })
+      : [],
+    topCourseIds.length
+      ? prisma.module.findMany({
+          where: { courseId: { in: topCourseIds } },
+          select: { courseId: true, lessons: { select: { id: true } } }
+        })
+      : [],
+    topCourseIds.length
+      ? prisma.enrollment.findMany({
+          where: { courseId: { in: topCourseIds } },
+          select: { courseId: true, studentId: true }
+        })
+      : []
+  ]);
+
+  const ratingByCourse = new Map(
+    ratingGroups.map((r) => [r.courseId, r._avg.rating ? parseFloat(r._avg.rating.toFixed(1)) : 0])
+  );
+
+  const lessonIdsByCourse = new Map(topCourseIds.map((id) => [id, []]));
+  courseModules.forEach((m) => {
+    lessonIdsByCourse.get(m.courseId)?.push(...m.lessons.map((l) => l.id));
+  });
+
+  const allLessonIds = [...lessonIdsByCourse.values()].flat();
+  const allEnrolledStudentIds = [...new Set(courseEnrollments.map((e) => e.studentId))];
+
+  const progressRows =
+    allLessonIds.length && allEnrolledStudentIds.length
+      ? await prisma.progress.findMany({
+          where: {
+            lessonId: { in: allLessonIds },
+            studentId: { in: allEnrolledStudentIds },
+            completed: true
+          },
+          select: { lessonId: true, studentId: true }
+        })
+      : [];
+
+  const completedSet = new Set(progressRows.map((p) => `${p.lessonId}:${p.studentId}`));
+
+  const coursePerformance = topCourses.map((course) => {
+    const lessonIds = lessonIdsByCourse.get(course.id) || [];
+    const enrollmentsForCourse = courseEnrollments.filter((e) => e.courseId === course.id);
+
+    let completionRate = 0;
+    if (lessonIds.length > 0 && enrollmentsForCourse.length > 0) {
+      const perStudentRates = enrollmentsForCourse.map((e) => {
+        const completedCount = lessonIds.filter((lessonId) => completedSet.has(`${lessonId}:${e.studentId}`)).length;
+        return completedCount / lessonIds.length;
+      });
+      completionRate = Math.round(
+        (perStudentRates.reduce((sum, r) => sum + r, 0) / perStudentRates.length) * 100
+      );
+    }
+
+    return {
+      id: course.id,
+      title: course.title,
+      category: course.category || "General",
+      level: course.level || "—",
+      status: course.status,
+      students: course._count.enrollments,
+      avgRating: ratingByCourse.get(course.id) ?? 0,
+      completionRate
+    };
+  });
+
+  // Top Performing Instructor — ranked by real students taught, tie-broken
+  // by real average rating across their courses. No time window claimed.
+  const instructors = await prisma.user.findMany({
+    where: { role: "INSTRUCTOR" },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      courses: {
+        select: {
+          id: true,
+          _count: { select: { enrollments: true } }
+        }
+      }
+    }
+  });
+
+  let topInstructor = null;
+  if (instructors.length > 0) {
+    const allInstructorCourseIds = instructors.flatMap((i) => i.courses.map((c) => c.id));
+    const instructorRatingGroups = allInstructorCourseIds.length
+      ? await prisma.review.groupBy({
+          by: ["courseId"],
+          where: { courseId: { in: allInstructorCourseIds } },
+          _avg: { rating: true },
+          _count: { rating: true }
+        })
+      : [];
+    const instructorRatingByCourse = new Map(
+      instructorRatingGroups.map((r) => [r.courseId, { avg: r._avg.rating || 0, count: r._count.rating }])
+    );
+
+    const ranked = instructors
+      .map((i) => {
+        const coursesCount = i.courses.length;
+        const studentsCount = i.courses.reduce((sum, c) => sum + c._count.enrollments, 0);
+        let ratingSum = 0;
+        let ratingCount = 0;
+        i.courses.forEach((c) => {
+          const r = instructorRatingByCourse.get(c.id);
+          if (r) {
+            ratingSum += r.avg * r.count;
+            ratingCount += r.count;
+          }
+        });
+        const avgRating = ratingCount > 0 ? parseFloat((ratingSum / ratingCount).toFixed(1)) : 0;
+        return {
+          id: i.id,
+          name: i.name,
+          email: i.email,
+          coursesCount,
+          studentsCount,
+          avgRating
+        };
+      })
+      .sort((a, b) => b.studentsCount - a.studentsCount || b.avgRating - a.avgRating);
+
+    topInstructor = ranked[0] && (ranked[0].coursesCount > 0) ? ranked[0] : null;
+  }
+
   return {
     totalUsers,
     totalStudents,
@@ -68,7 +246,21 @@ const getAdminDashboard = async () => {
     publishedCourses,
     draftCourses,
     totalEnrollments,
-    recentUsers
+    recentUsers,
+    trends: {
+      newStudentsToday,
+      newCoursesThisMonth,
+      newEnrollmentsToday,
+      newUsersToday
+    },
+    todaySnapshot: {
+      newUsersToday,
+      newEnrollmentsToday,
+      coursesPublishedToday,
+      certificatesIssuedToday
+    },
+    coursePerformance,
+    topInstructor
   };
 };
 
