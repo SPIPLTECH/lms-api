@@ -260,7 +260,7 @@ const startBatchConversation = async (batchId, instructorId) => {
         select: {
             id: true,
             name: true,
-            course: { select: { creatorId: true } },
+            courses: { select: { creatorId: true } },
             students: { select: { userId: true } },
         },
     });
@@ -271,7 +271,7 @@ const startBatchConversation = async (batchId, instructorId) => {
         throw error;
     }
 
-    if (batch.course.creatorId !== instructorId) {
+    if (!batch.courses.some((course) => course.creatorId === instructorId)) {
         const error = new Error("Forbidden: you do not own this batch");
         error.statusCode = 403;
         throw error;

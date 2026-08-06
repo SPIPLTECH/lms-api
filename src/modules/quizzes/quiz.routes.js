@@ -12,7 +12,8 @@ const {
   submitQuizSchema,
   importQuestionsToQuizSchema,
   reorderQuizQuestionsSchema,
-  updateQuizQuestionMarksSchema
+  updateQuizQuestionMarksSchema,
+  generateSelfAssessmentQuizSchema
 } = require("./quiz.validation");
 
 // =========================
@@ -66,6 +67,14 @@ router.post(
   verifyToken,
   validate(submitQuizSchema),
   controller.submitQuiz
+);
+
+router.post(
+  "/self-generate",
+  verifyToken,
+  checkRole(["STUDENT"]),
+  validate(generateSelfAssessmentQuizSchema),
+  controller.generateSelfAssessmentQuiz
 );
 
 // =========================

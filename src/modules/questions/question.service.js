@@ -116,9 +116,34 @@ const createQuestion = async (data) => {
 };
 
 // =========================
+// Attach newly-created questions to a quiz, appended after whatever
+// questions the quiz already has.
+// =========================
+const attachQuestionsToQuiz = async (quizId, questionIds) => {
+    if (!quizId || questionIds.length === 0) return;
+
+    await verifyQuizExists(quizId);
+
+    const existingMax = await prisma.quizQuestion.aggregate({
+        where: { quizId },
+        _max: { order: true },
+    });
+    let nextOrder = (existingMax._max.order || 0) + 1;
+
+    await prisma.quizQuestion.createMany({
+        data: questionIds.map((questionId) => ({
+            quizId,
+            questionId,
+            order: nextOrder++,
+        })),
+        skipDuplicates: true,
+    });
+};
+
+// =========================
 // Bulk Create Questions
 // =========================
-const bulkCreateQuestions = async (questionsPayload) => {
+const bulkCreateQuestions = async (questionsPayload, quizId = null) => {
     let rawQuestions = questionsPayload;
     if (questionsPayload && !Array.isArray(questionsPayload) && Array.isArray(questionsPayload.questions)) {
         rawQuestions = questionsPayload.questions;
@@ -128,6 +153,10 @@ const bulkCreateQuestions = async (questionsPayload) => {
         const error = new Error("Questions array must not be empty.");
         error.statusCode = 400;
         throw error;
+    }
+
+    if (quizId) {
+        await verifyQuizExists(quizId);
     }
 
     const formattedQuestions = rawQuestions.map((q) => normalizeQuestion(q));
@@ -143,7 +172,7 @@ const bulkCreateQuestions = async (questionsPayload) => {
         };
     }
 
-    const result = await prisma.question.createMany({
+    const inserted = await prisma.question.createManyAndReturn({
         data: validQuestions.map((q) => ({
             question: q.question,
             questionType: q.questionType,
@@ -158,11 +187,14 @@ const bulkCreateQuestions = async (questionsPayload) => {
             order: q.order
         })),
         skipDuplicates: true,
+        select: { id: true },
     });
+
+    await attachQuestionsToQuiz(quizId, inserted.map((q) => q.id));
 
     return {
         total: rawQuestions.length,
-        inserted: result.count,
+        inserted: inserted.length,
         failed: failedQuestions.length,
         errors: failedQuestions,
     };
@@ -171,14 +203,18 @@ const bulkCreateQuestions = async (questionsPayload) => {
 // =========================
 // Import Questions
 // =========================
-const importQuestions = async (file) => {
+const importQuestions = async (file, quizId = null) => {
+    if (quizId) {
+        await verifyQuizExists(quizId);
+    }
+
     const { questions, report } = await importService.parseFile(file);
 
     if (questions.length === 0) {
         return report;
     }
 
-    const result = await prisma.question.createMany({
+    const inserted = await prisma.question.createManyAndReturn({
         data: questions.map((q) => ({
             question: q.question,
             questionType: q.questionType,
@@ -193,9 +229,12 @@ const importQuestions = async (file) => {
             order: q.order
         })),
         skipDuplicates: true,
+        select: { id: true },
     });
 
-    report.inserted = result.count;
+    await attachQuestionsToQuiz(quizId, inserted.map((q) => q.id));
+
+    report.inserted = inserted.length;
     return report;
 };
 

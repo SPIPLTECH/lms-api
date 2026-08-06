@@ -304,6 +304,98 @@ const submitQuiz = async (studentId, quizId, answers = []) => {
   return submission;
 };
 
+/**
+ * A student's submission for a quiz, plus the quiz's full question set
+ * (including answer keys) for the result-review page. Unlike getQuizById,
+ * this always includes correctAnswer/explanation — the student has already
+ * submitted, so there's nothing left to protect.
+ */
+const getQuizResult = async (studentId, quizId) => {
+  const submission = await prisma.quizSubmission.findUnique({
+    where: {
+      studentId_quizId: {
+        studentId,
+        quizId
+      }
+    }
+  });
+
+  if (!submission) return null;
+
+  const quiz = await prisma.quiz.findUnique({
+    where: { id: quizId },
+    include: {
+      quizQuestions: {
+        orderBy: { order: "asc" },
+        include: { question: true }
+      }
+    }
+  });
+
+  const questions = (quiz?.quizQuestions || []).map((qq) => ({
+    ...qq.question,
+    marks: qq.marks ?? qq.question?.marks ?? 1,
+    order: qq.order
+  }));
+
+  return {
+    ...submission,
+    quiz: quiz ? { ...quiz, questions } : null
+  };
+};
+
+const SELF_ASSESSMENT_QUIZ_TITLE = "Self-Generated Practice Quiz";
+
+/**
+ * Builds an ad-hoc practice quiz for a student from questions already used
+ * anywhere in the course's real quizzes — no new question authoring, just a
+ * random sample wrapped in a throwaway Quiz row so the existing attempt/
+ * result flow (which expects a real quiz id) works unchanged.
+ */
+const generateSelfAssessmentQuiz = async (courseId, questionCount = 5) => {
+  const course = await prisma.course.findUnique({ where: { id: courseId } });
+
+  if (!course) {
+    const error = new Error("Course not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const courseQuizQuestions = await prisma.quizQuestion.findMany({
+    where: { quiz: { courseId } },
+    select: { questionId: true },
+    distinct: ["questionId"]
+  });
+
+  const questionIds = courseQuizQuestions.map((qq) => qq.questionId);
+
+  if (questionIds.length === 0) {
+    const error = new Error("No questions found in this course to generate a practice quiz.");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const shuffled = [...questionIds].sort(() => Math.random() - 0.5);
+  const selectedIds = shuffled.slice(0, Math.max(1, Math.min(questionCount, shuffled.length)));
+
+  return prisma.quiz.create({
+    data: {
+      title: SELF_ASSESSMENT_QUIZ_TITLE,
+      description: "Auto-generated practice quiz from this course's question bank.",
+      passingScore: 60,
+      courseId,
+      isPublished: true,
+      status: "ACTIVE",
+      quizQuestions: {
+        create: selectedIds.map((questionId, index) => ({
+          questionId,
+          order: index + 1
+        }))
+      }
+    }
+  });
+};
+
 module.exports = {
   evaluateAnswer,
   calculateSubmissionResult,
@@ -312,5 +404,7 @@ module.exports = {
   createQuiz,
   updateQuiz,
   deleteQuiz,
-  submitQuiz
+  submitQuiz,
+  getQuizResult,
+  generateSelfAssessmentQuiz
 };
