@@ -31,6 +31,11 @@ model User {
   teacherProfile          TeacherProfile?
   notifications           Notification[]
   createdQuestions        Question[]
+  announcements           Announcement[]
+  teachingGoals           TeachingGoal[]
+  lessonNotes             InstructorLessonNote[]
+  discussions             Discussion[]
+  discussionReplies       DiscussionReply[]
   mentorConversations     MentorConversation[]
   mentorMemories          MentorMemory[]
   mentorFeedback          ResponseFeedback[]
@@ -163,6 +168,7 @@ model StudentProfile {
   courseStates                StudentCourseState[]
   lessonQueries               LessonQuery[]
   user                        User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videoAnalytics              VideoAnalytics[]
 }
 
 model TeacherProfile {
@@ -217,6 +223,9 @@ model Course {
   batches                 Batch[]
   batchSessions           BatchSession[]
   studentStates           StudentState[]
+  videoAnalytics          VideoAnalytics[]
+  announcements           Announcement[]
+  discussions             Discussion[]
   learningEvents          LearningEvent[]
   studentAlerts           StudentAlert[]
   courseInsights          CourseInsight[]
@@ -260,19 +269,21 @@ model Module {
 }
 
 model Lesson {
-  id          String        @id @default(cuid())
-  title       String
-  description String?
-  order       Int
-  isPublished Boolean       @default(false)
-  moduleId    String
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  contents    Content[]
-  module      Module        @relation(fields: [moduleId], references: [id], onDelete: Cascade)
-  progress    Progress[]
-  stickyNotes StickyNote[]
-  queries     LessonQuery[]
+  id              String                 @id @default(cuid())
+  title           String
+  description     String?
+  order           Int
+  isPublished     Boolean                @default(false)
+  moduleId        String
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  contents        Content[]
+  module          Module                 @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  progress        Progress[]
+  stickyNotes     StickyNote[]
+  queries         LessonQuery[]
+  videoAnalytics  VideoAnalytics[]
+  instructorNotes InstructorLessonNote[]
 
   @@unique([moduleId, order])
 }
@@ -808,6 +819,7 @@ model Batch {
   courses        Course[]
   students       StudentProfile[]
   sessions       BatchSession[]
+  announcements  Announcement[]
 }
 
 model BatchSession {
@@ -3819,4 +3831,103 @@ model ResponseFeedback {
   user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+model VideoAnalytics {
+  id        String   @id @default(cuid())
+  studentId String
+  lessonId  String
+  courseId  String
+  watchTime Int      @default(0)
+  completed Boolean  @default(false)
+  lastPing  DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lesson  Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  course  Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, lessonId])
+  @@index([courseId])
+}
+
+model Announcement {
+  id           String   @id @default(cuid())
+  title        String
+  message      String
+  courseId     String
+  instructorId String
+  batchId      String?
+  createdAt    DateTime @default(now())
+  course       Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  instructor   User     @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+  batch        Batch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  @@index([courseId])
+  @@index([instructorId])
+  @@index([batchId])
+}
+
+model TeachingGoal {
+  id           String   @id @default(cuid())
+  instructorId String
+  label        String
+  current      Int      @default(0)
+  target       Int      @default(1)
+  done         Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  instructor   User     @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+
+  @@index([instructorId])
+}
+
+model InstructorLessonNote {
+  id               String   @id @default(cuid())
+  instructorId     String
+  lessonId         String
+  content          String
+  timestampSeconds Int?
+  attachments      Json?
+  status           String?  @default("DRAFT")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  instructor       User     @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+  lesson           Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@index([instructorId])
+  @@index([lessonId])
+}
+
+model Discussion {
+  id        String            @id @default(cuid())
+  courseId  String
+  authorId  String
+  title     String
+  body      String
+  isPinned  Boolean           @default(false)
+  isLocked  Boolean           @default(false)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  course    Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  author    User              @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  replies   DiscussionReply[]
+
+  @@index([courseId])
+  @@index([authorId])
+}
+
+model DiscussionReply {
+  id           String     @id @default(cuid())
+  discussionId String
+  authorId     String
+  body         String
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  discussion   Discussion @relation(fields: [discussionId], references: [id], onDelete: Cascade)
+  author       User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([discussionId])
+  @@index([authorId])
 }
