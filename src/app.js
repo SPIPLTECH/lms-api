@@ -33,6 +33,7 @@ const achievementRoutes = require("./modules/achievements/achievement.routes");
 const assignmentRoutes = require("./modules/assignments/assignment.routes");
 const calendarRoutes = require("./modules/calendar/calendar.routes");
 const upcomingTasksRoutes = require("./modules/upcoming-tasks/upcoming-tasks.routes");
+const studentCourseStateRoutes = require("./modules/students/studentCourseState.routes");
 
 const notificationRoutes = require("./modules/notifications/notification.routes");
 const conversationRoutes = require("./modules/conversations/conversation.routes");
@@ -111,6 +112,7 @@ app.use("/achievements", achievementRoutes);
 app.use("/assignments", assignmentRoutes);
 app.use("/calendar", calendarRoutes);
 app.use("/upcoming-tasks", upcomingTasksRoutes);
+app.use("/student-state", studentCourseStateRoutes);
 app.use("/analytics", require("./modules/analytics/analytics.routes"));
 app.use("/announcements", require("./modules/announcements/announcement.routes"));
 app.use("/teaching-goals", require("./modules/teaching-goals/teachingGoal.routes"));
