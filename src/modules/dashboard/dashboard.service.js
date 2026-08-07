@@ -94,8 +94,7 @@ const getInstructorDashboard = async (instructorId, courseId) => {
           quizSubmissions: true
         }
       },
-      reviews: true,
-      videoAnalytics: true
+      reviews: true
     }
   });
 
