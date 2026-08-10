@@ -429,7 +429,9 @@ const getCourseById = async (courseId, role) => {
               order: "asc"
             },
             include: {
-              contents: true
+              _count: {
+                select: { contents: true }
+              }
             }
           }
         }

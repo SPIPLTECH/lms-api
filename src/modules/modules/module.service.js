@@ -28,7 +28,9 @@ const getModules = async (courseId, role, userId) => {
           order: "asc"
         },
         include: {
-          contents: true
+          _count: {
+            select: { contents: true }
+          }
         }
       }
     }
@@ -49,7 +51,9 @@ const getModuleById = async (moduleId, role) => {
           order: "asc"
         },
         include: {
-          contents: true
+          _count: {
+            select: { contents: true }
+          }
         }
       }
     }
