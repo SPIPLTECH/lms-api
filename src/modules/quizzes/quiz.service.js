@@ -131,7 +131,7 @@ const createQuiz = async (
       select: { title: true }
     });
 
-    if (course) {
+    if (course && quiz.isPublished) {
       await notificationService.notifyEnrolledStudents(quiz.courseId, {
         title: "New Quiz Available 📝",
         message: `A new quiz "${quiz.title}" has been added to your course "${course.title}".`,

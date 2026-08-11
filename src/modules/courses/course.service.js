@@ -1,5 +1,6 @@
 const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
+const ApiError = require("../../utils/ApiError");
 // const verifyToken = require(
 //   "../../middleware/auth.middleware"
 // );
@@ -141,6 +142,13 @@ const updateCourse = async (courseId, data) => {
 };
 
 const updateStatus = async (courseId, status) => {
+  if (status === "PUBLISHED") {
+    const moduleCount = await prisma.module.count({ where: { courseId } });
+    if (moduleCount === 0) {
+      throw new ApiError(400, "Add at least one module before publishing this course.");
+    }
+  }
+
   const course = await prisma.course.update({
     where: {
       id: courseId

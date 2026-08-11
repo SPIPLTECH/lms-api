@@ -27,7 +27,7 @@ const verifyLessonOwnership =
 
       if (
         req.user.role !==
-         ("INSTRUCTOR" || "ADMIN") &&
+          "ADMIN" &&
         lesson.module.course
           .creatorId !==
           req.user.id

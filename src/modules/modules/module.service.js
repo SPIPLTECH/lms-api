@@ -1,4 +1,5 @@
 const prisma = require("../../config/database");
+const ApiError = require("../../utils/ApiError");
 
 const getModules = async (courseId, role) => {
   const where = { courseId };
@@ -55,6 +56,10 @@ const getModuleById = async (moduleId, role) => {
 };
 
 const createModule = async (data) => {
+  if (data.isPublished) {
+    throw new ApiError(400, "A new module can't be published yet — add at least one lesson first.");
+  }
+
   return await prisma.module.create({
     data
   });
@@ -64,6 +69,13 @@ const updateModule = async (
   moduleId,
   data
 ) => {
+  if (data.isPublished) {
+    const lessonCount = await prisma.lesson.count({ where: { moduleId } });
+    if (lessonCount === 0) {
+      throw new ApiError(400, "Add at least one lesson before publishing this module.");
+    }
+  }
+
   return await prisma.module.update({
     where: {
       id: moduleId
@@ -85,7 +97,22 @@ const deleteModule = async (
 const reorderModules = async (
   modules
 ) => {
-  const updates = modules.map(
+  // Two-phase reorder: @@unique([courseId, order]) rejects a naive
+  // parallel swap (A->2 while B still holds 2), so first move every
+  // row to a disjoint negative placeholder, then to its final order.
+  const offsetUpdates = modules.map(
+    (module, index) =>
+      prisma.module.update({
+        where: {
+          id: module.id
+        },
+        data: {
+          order: -1000 - index
+        }
+      })
+  );
+
+  const finalUpdates = modules.map(
     (module) =>
       prisma.module.update({
         where: {
@@ -98,7 +125,7 @@ const reorderModules = async (
   );
 
   return await prisma.$transaction(
-    updates
+    [...offsetUpdates, ...finalUpdates]
   );
 };
 

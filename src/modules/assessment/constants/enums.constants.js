@@ -1,0 +1,58 @@
+/** Mirrors the Prisma enums in schema.prisma — keep both in sync. */
+
+const ASSESSMENT_TYPE = Object.freeze({
+  STANDARD: "STANDARD",
+  ADAPTIVE: "ADAPTIVE",
+  REVISION: "REVISION",
+});
+
+const ASSESSMENT_STATUS = Object.freeze({
+  RECOMMENDED: "RECOMMENDED",
+  IN_PROGRESS: "IN_PROGRESS",
+  COMPLETED: "COMPLETED",
+  EXPIRED: "EXPIRED",
+});
+
+const MASTERY_STATUS = Object.freeze({
+  UNASSESSED: "UNASSESSED",
+  WEAK: "WEAK",
+  DEVELOPING: "DEVELOPING",
+  MASTERED: "MASTERED",
+});
+
+const GAP_STATUS = Object.freeze({
+  OPEN: "OPEN",
+  CLOSED: "CLOSED",
+});
+
+const REASSESSMENT_STATUS = Object.freeze({
+  PENDING: "PENDING",
+  DUE: "DUE",
+  COMPLETED: "COMPLETED",
+  SKIPPED: "SKIPPED",
+});
+
+const REASSESSMENT_PRIORITY = Object.freeze({
+  LOW: "LOW",
+  MEDIUM: "MEDIUM",
+  HIGH: "HIGH",
+});
+
+const DIFFICULTY = Object.freeze({
+  EASY: "EASY",
+  MEDIUM: "MEDIUM",
+  HARD: "HARD",
+});
+
+const TRENDS = Object.freeze({ IMPROVING: "IMPROVING", DECLINING: "DECLINING", STABLE: "STABLE" });
+
+module.exports = {
+  ASSESSMENT_TYPE,
+  ASSESSMENT_STATUS,
+  MASTERY_STATUS,
+  GAP_STATUS,
+  REASSESSMENT_STATUS,
+  REASSESSMENT_PRIORITY,
+  DIFFICULTY,
+  TRENDS,
+};

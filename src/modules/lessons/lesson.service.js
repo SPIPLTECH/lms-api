@@ -1,6 +1,7 @@
 const prisma =
   require("../../config/database");
 const notificationService = require("../notifications/notification.service");
+const ApiError = require("../../utils/ApiError");
 
 const getLessons = async (moduleId, role) => {
   const where =
@@ -52,6 +53,10 @@ const getLessonById = async (
 const createLesson = async (
   data
 ) => {
+  if (data.isPublished) {
+    throw new ApiError(400, "A new lesson can't be published yet — add at least one content item first.");
+  }
+
   const lesson = await prisma.lesson.create({
     data
   });
@@ -88,6 +93,13 @@ const updateLesson = async (
   const oldLesson = await prisma.lesson.findUnique({
     where: { id: lessonId }
   });
+
+  if (data.isPublished) {
+    const contentCount = await prisma.content.count({ where: { lessonId } });
+    if (contentCount === 0) {
+      throw new ApiError(400, "Add at least one content item before publishing this lesson.");
+    }
+  }
 
   const lesson = await prisma.lesson.update({
     where: {
@@ -134,17 +146,33 @@ const deleteLesson = async (
 const reorderLessons = async (
   lessons
 ) => {
+  // Two-phase reorder: @@unique([moduleId, order]) rejects a naive
+  // parallel swap (A->2 while B still holds 2), so first move every
+  // row to a disjoint negative placeholder, then to its final order.
+  const offsetUpdates = lessons.map((lesson, index) =>
+    prisma.lesson.update({
+      where: {
+        id: lesson.lessonId
+      },
+      data: {
+        order: -1000 - index
+      }
+    })
+  );
+
+  const finalUpdates = lessons.map((lesson) =>
+    prisma.lesson.update({
+      where: {
+        id: lesson.lessonId
+      },
+      data: {
+        order: lesson.order
+      }
+    })
+  );
+
   return prisma.$transaction(
-    lessons.map((lesson) =>
-      prisma.lesson.update({
-        where: {
-          id: lesson.lessonId
-        },
-        data: {
-          order: lesson.order
-        }
-      })
-    )
+    [...offsetUpdates, ...finalUpdates]
   );
 };
 

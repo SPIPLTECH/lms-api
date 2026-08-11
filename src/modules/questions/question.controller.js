@@ -5,7 +5,11 @@ const questionService = require("./question.service");
 // =========================
 const getQuestions = async (req, res, next) => {
   try {
-    const questions = await questionService.getQuestions(req.query.quizId);
+    const questions = await questionService.getQuestions({
+      quizId: req.query.quizId,
+      courseId: req.query.courseId,
+      moduleId: req.query.moduleId,
+    });
 
     res.json({
       success: true,

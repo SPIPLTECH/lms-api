@@ -15,6 +15,10 @@ const checkRole = require(
   "../../middleware/role.middleware"
 );
 
+const verifyContentOwnership = require(
+  "../../middleware/contentOwnership.middleware"
+);
+
 const { upload } = require(
   "../../middleware/upload.middleware"
 );
@@ -49,6 +53,16 @@ router.post(
   }
 );
 
+router.patch(
+  "/reorder",
+  verifyToken,
+  checkRole([
+    "ADMIN",
+    "INSTRUCTOR"
+  ]),
+  controller.reorderContents
+);
+
 router.get(
   "/",
   controller.getContents
@@ -76,6 +90,7 @@ router.put(
     "ADMIN",
     "INSTRUCTOR"
   ]),
+  verifyContentOwnership,
   controller.updateContent
 );
 
@@ -86,6 +101,7 @@ router.delete(
     "ADMIN",
     "INSTRUCTOR"
   ]),
+  verifyContentOwnership,
   controller.deleteContent
 );
 

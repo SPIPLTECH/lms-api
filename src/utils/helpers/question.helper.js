@@ -190,6 +190,12 @@ const normalizeQuestion = (row) => {
     if (row.quizId) {
         normalized.quizId = String(row.quizId);
     }
+    if (row.courseId) {
+        normalized.courseId = String(row.courseId);
+    }
+    if (row.moduleId) {
+        normalized.moduleId = String(row.moduleId);
+    }
     if (row.id) {
         normalized.id = String(row.id);
     }
