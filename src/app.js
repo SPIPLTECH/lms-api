@@ -121,6 +121,10 @@ app.use("/lesson-queries", require("./modules/lesson-queries/lessonQuery.routes"
 app.use("/discussions", require("./modules/discussions/discussion.routes"));
 app.use("/exams", require("./modules/exams/exam.routes"));
 app.use("/results", require("./modules/results/results.routes"));
+app.use("/llm", require("./modules/llm/llm.routes"));
+app.use("/learner-model", require("./modules/learner-model/learnerModel.routes"));
+app.use("/adaptive-learning", require("./modules/adaptive-learning/adaptiveLearning.routes"));
+app.use("/learning-path", require("./modules/learning-path/learningPath.routes"));
 app.use(errorHandler);
 
 module.exports = app;
