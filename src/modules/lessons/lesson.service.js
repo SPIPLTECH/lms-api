@@ -166,11 +166,13 @@ const getTranscriptForContent = async (
         throw error;
       }
 
-      const segments = await youtubeTranscript.fetchTranscript(
-        videoId
-      );
-
-      return { videoId, segments };
+      try {
+        const segments = await youtubeTranscript.fetchTranscript(videoId);
+        return { videoId, segments };
+      } catch (err) {
+        console.warn(`Could not fetch YouTube transcript for videoId ${videoId}:`, err.message);
+        return { videoId, segments: [] };
+      }
     }
 
     default: {

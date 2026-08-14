@@ -39,14 +39,20 @@ const getMyInstructorAnalyticsTool = {
   },
   execute: async (reqUser, params = {}) => {
     const data = await dashboardService.getInstructorDashboard(reqUser.id, params.courseId);
+
+    const totalEnrollmentsKpi = (data.kpis || []).find((k) => k.title === "Total Enrollments");
+    const inactiveStudentsPriority = (data.priorities || []).find((p) => p.title === "Inactive Students");
+
     return {
-      coursesCount: data.targetCourses ? data.targetCourses.length : 0,
-      totalStudentsEnrolled: data.totalStudentsEnrolled || 0,
-      inactiveStudentsCount: data.inactiveStudentsCount || 0,
-      coursesSummary: (data.targetCourses || []).map((c) => ({
+      coursesCount: (data.courses || []).length,
+      totalStudentsEnrolled: totalEnrollmentsKpi ? totalEnrollmentsKpi.value : 0,
+      inactiveStudentsCount: inactiveStudentsPriority ? Number(inactiveStudentsPriority.value) || 0 : 0,
+      coursesSummary: (data.coursePerformance || []).map((c) => ({
         id: c.id,
-        title: c.title,
-        status: c.status,
+        title: c.course,
+        enrollments: c.enrollments,
+        completion: c.completion,
+        health: c.health,
       })),
       priorities: data.priorities || [],
     };

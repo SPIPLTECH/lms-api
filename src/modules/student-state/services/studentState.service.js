@@ -103,15 +103,11 @@ const refreshInactivityRisk = async (studentId, now = new Date()) => {
 };
 
 const getAggregateOrThrow = async (studentId) => {
-  const aggregate = await studentStateRepository.getAggregate(studentId);
-  if (aggregate.isNew) {
-    throw new ApiError(404, "No learning state recorded yet for this student");
-  }
-  return aggregate;
+  return await studentStateRepository.getAggregate(studentId);
 };
 
 const getFullState = async (studentId) => {
-  const aggregate = await getAggregateOrThrow(studentId);
+  const aggregate = await studentStateRepository.getAggregate(studentId);
   return toFullStateResponse(aggregate);
 };
 

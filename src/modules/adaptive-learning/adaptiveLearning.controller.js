@@ -30,8 +30,8 @@ const respondStream = async (req, res) => {
   // client disconnecting mid-response in Express: `req`'s "close" can fire
   // as soon as the request body has been fully read (i.e. right after
   // express.json() parses it), well before the response is done.
-  res.on("close", () => {
-    if (!res.writableEnded) {
+  req.on("close", () => {
+    if (req.aborted || !res.writable) {
       abortController.abort();
     }
   });

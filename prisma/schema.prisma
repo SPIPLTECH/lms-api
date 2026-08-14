@@ -27,7 +27,6 @@ model User {
   Conversation            Conversation[]
   ConversationParticipant ConversationParticipant[]
   courses                 Course[]
-  CourseImportJob         CourseImportJob[]
   discussions             Discussion[]
   discussionReplies       DiscussionReply[]
   lessonNotes             InstructorLessonNote[]
@@ -39,49 +38,8 @@ model User {
   mentorFeedback          ResponseFeedback[]
   studentProfile          StudentProfile?
   teacherProfile          TeacherProfile?
-  notifications           Notification[]
-  createdQuestions        Question[]
-  mentorConversations     MentorConversation[]
-  mentorMemories          MentorMemory[]
-  mentorFeedback          ResponseFeedback[]
+  teachingGoals           TeachingGoal[]
   courseImportJobs        CourseImportJob[]
-}
-
-/**
- * |--------------------------------------------------------------------------
- * | AI Student Entry Phase — StudentProfile extension
- * |--------------------------------------------------------------------------
- * | Demographic/academic/career/learning-preference fields the AI Entry
- * | Assessment personalizes against. Added as flat columns on StudentProfile,
- * | matching this model's existing style (education/phone/guardianName are
- * | already flat here) rather than a new 1:1 satellite — this is onboarding
- * | identity data, not a versioned or event-sourced projection.
- * |
- * | dateOfBirth already existed (age is computed on read, never stored).
- * | language/learningGoals already existed and are reused as "Preferred
- * | Language"/"Learning Goal" rather than duplicated.
- */
-
-enum EmploymentStatus {
-  STUDENT
-  EMPLOYED
-  UNEMPLOYED
-  FREELANCER
-  ENTREPRENEUR
-}
-
-enum PreferredLearningStyle {
-  VISUAL
-  AUDITORY
-  READING_WRITING
-  KINESTHETIC
-}
-
-enum PreferredStudyTime {
-  MORNING
-  AFTERNOON
-  EVENING
-  NIGHT
 }
 
 model StudentProfile {
@@ -103,7 +61,6 @@ model StudentProfile {
   themeMode         String?   @default("Dark Mode")
   plan              String?   @default("Free Plan")
 
-  // --- AI Student Entry Phase fields ---
   gender                 String?
   country                String?
   state                  String?
@@ -118,7 +75,7 @@ model StudentProfile {
   employmentStatus       EmploymentStatus?
   yearsOfExperience      Float?                  @default(0)
   currentJobRole         String?
-  careerGoalText         String? // free-text onboarding answer; distinct from the Career Guidance Agent's structured `careerGoals` relation below
+  careerGoalText         String?
   preferredLearningStyle PreferredLearningStyle?
   weeklyStudyHours       Int?
   preferredStudyTime     PreferredStudyTime?
@@ -135,7 +92,9 @@ model StudentProfile {
   bookmarks                   Bookmark[]
   achievements                StudentAchievement[]
   assignmentSubmissions       AssignmentSubmission[]
-  batches                     Batch[]
+  batches                     Batch[]                       @relation("BatchToStudentProfile")
+  lessonQueries               LessonQuery[]
+  videoAnalytics              VideoAnalytics[]
   studentState                StudentState?
   learningEvents              LearningEvent[]
   activityState               StudentActivityState?
@@ -224,11 +183,16 @@ model Course {
   liveClasses             LiveClass[]
   assignments             Assignment[]
   exams                   Exam[]
-  batches                 Batch[]
+  batches                 Batch[]                  @relation("BatchToCourse")
+
+  batchesByCourseId       Batch[]                  @relation("Batch_courseIdToCourse")
   batchSessions           BatchSession[]
   studentStates           StudentState[]
   learningEvents          LearningEvent[]
   studentAlerts           StudentAlert[]
+  videoAnalytics          VideoAnalytics[]
+  announcements           Announcement[]
+  discussions             Discussion[]
   courseInsights          CourseInsight[]
   courseHealth            CourseHealth?
   teachingRecommendations TeachingRecommendation[]
@@ -303,7 +267,6 @@ model Content {
   data        Json?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
-  data        Json?
   lesson      Lesson      @relation(fields: [lessonId], references: [id], onDelete: Cascade)
 
   @@unique([lessonId, order])
@@ -453,22 +416,6 @@ model QuizQuestion {
   @@index([questionId])
 }
 
-model QuizQuestion {
-  id          String   @id @default(cuid())
-  quizId      String
-  questionId  String
-  order       Int      @default(1)
-  marks       Int      @default(1)
-  isMandatory Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  question    Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
-  quiz        Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
-
-  @@unique([quizId, questionId])
-  @@index([quizId])
-  @@index([questionId])
-}
-
 model Review {
   id        String         @id @default(cuid())
   rating    Int
@@ -574,79 +521,6 @@ model MessageAttachment {
   Message   Message        @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
   @@index([messageId])
-}
-
-enum Role {
-  ADMIN
-  INSTRUCTOR
-  STUDENT
-}
-
-enum CourseStatus {
-  DRAFT
-  PUBLISHED
-  ARCHIVED
-}
-
-enum CourseVisibility {
-  PUBLIC
-  PRIVATE
-  UNLISTED
-}
-
-enum ContentType {
-  VIDEO
-  DOCUMENT
-  TEXT
-  LINK
-  PRESENTATION
-  IMAGE
-  PDF
-  FILE
-  EXTERNAL_LINK
-  HTML
-  CODE
-  ASSIGNMENT
-  CODING_EXERCISE
-  SCORM
-  INTERACTIVE_LAB
-  AUDIO
-  EMBED
-}
-
-enum UserStatus {
-  ACTIVE
-  INACTIVE
-  SUSPENDED
-  BLOCKED
-}
-
-enum AttachmentType {
-  IMAGE
-  VIDEO
-  DOCUMENT
-  AUDIO
-  OTHER
-}
-
-enum ConversationType {
-  DIRECT
-  GROUP
-}
-
-enum LiveClassStatus {
-  SCHEDULED
-  LIVE
-  COMPLETED
-  CANCELLED
-}
-
-enum AchievementType {
-  COURSE
-  QUIZ
-  STREAK
-  NOTE
-  GENERAL
 }
 
 model Note {
@@ -870,7 +744,8 @@ model Notification {
 
 model StudentState {
   id        String         @id @default(cuid())
-  studentId String
+
+  studentId String         @unique
   courseId  String
   moduleId  String?
   lessonId  String?
@@ -880,1781 +755,32 @@ model StudentState {
   course    Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
   student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
-  @@unique([studentId, courseId])
-  @@index([studentId])
   @@index([courseId])
-}
-
-model LearningEvent {
-  id              String         @id @default(cuid())
-  studentId       String
-  courseId        String?
-  moduleId        String?
-  lessonId        String?
-  contentId       String?
-  quizId          String?
-  assignmentId    String?
-  sessionId       String
-  eventType       EventType
-  eventCategory   EventCategory
-  payload         Json?
-  metadata        Json?
-  source          String?
-  ipAddress       String?
-  userAgent       String?
-  clientTimestamp DateTime?
-  createdAt       DateTime       @default(now())
-  course          Course?        @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  student         StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([studentId, createdAt])
-  @@index([courseId, createdAt])
-  @@index([sessionId])
-  @@index([eventType, createdAt])
-  @@index([eventCategory, createdAt])
-  @@index([createdAt])
-}
-
-model StudentActivityState {
-  id                 String         @id @default(cuid())
-  studentId          String         @unique
-  totalEventsCount   Int            @default(0)
-  totalSessionsCount Int            @default(0)
-  lastEventType      EventType?
-  lastEventCategory  EventCategory?
-  lastSessionId      String?
-  lastCourseId       String?
-  lastModuleId       String?
-  lastLessonId       String?
-  lastActiveAt       DateTime?
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
-  student            StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([lastActiveAt])
-}
-
-model StudentLearningState {
-  id                   String              @id @default(cuid())
-  studentId            String              @unique
-  overallLearningScore Float               @default(0)
-  engagementScore      Float               @default(0)
-  performanceScore     Float               @default(0)
-  consistencyScore     Float               @default(0)
-  learningHealthScore  Float               @default(0)
-  lastEventId          String?
-  lastEventAt          DateTime?
-  lastRecalculatedAt   DateTime?
-  version              Int                 @default(0)
-  createdAt            DateTime            @default(now())
-  updatedAt            DateTime            @updatedAt
-  behavior             StudentBehavior?
-  engagement           StudentEngagement?
-  student              StudentProfile      @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  performance          StudentPerformance?
-  progress             StudentProgress?
-  risk                 StudentRisk?
-
-  @@index([updatedAt])
-}
-
-model StudentProgress {
-  id                      String               @id @default(cuid())
-  stateId                 String               @unique
-  currentCourseId         String?
-  currentModuleId         String?
-  currentLessonId         String?
-  courseCompletionPercent Float                @default(0)
-  moduleCompletionPercent Float                @default(0)
-  lessonCompletionPercent Float                @default(0)
-  videoProgressPercent    Float                @default(0)
-  readingProgressPercent  Float                @default(0)
-  coursesCompletedCount   Int                  @default(0)
-  modulesCompletedCount   Int                  @default(0)
-  lessonsCompletedCount   Int                  @default(0)
-  updatedAt               DateTime             @updatedAt
-  state                   StudentLearningState @relation(fields: [stateId], references: [id], onDelete: Cascade)
-}
-
-model StudentPerformance {
-  id                        String               @id @default(cuid())
-  stateId                   String               @unique
-  quizAttemptsCount         Int                  @default(0)
-  quizSumScorePercent       Float                @default(0)
-  quizAverage               Float                @default(0)
-  quizPassCount             Int                  @default(0)
-  passRate                  Float                @default(0)
-  assignmentAttemptsCount   Int                  @default(0)
-  assignmentScoredCount     Int                  @default(0)
-  assignmentSumScorePercent Float                @default(0)
-  assignmentAverage         Float                @default(0)
-  correctAnswersCount       Int                  @default(0)
-  totalAnswersCount         Int                  @default(0)
-  accuracy                  Float                @default(0)
-  recentQuizScores          Json?
-  improvementTrend          String               @default("STABLE")
-  topicStats                Json?
-  weakTopics                Json?
-  strongTopics              Json?
-  updatedAt                 DateTime             @updatedAt
-  state                     StudentLearningState @relation(fields: [stateId], references: [id], onDelete: Cascade)
-}
-
-model StudentEngagement {
-  id                            String               @id @default(cuid())
-  stateId                       String               @unique
-  dailyStudyTimeSeconds         Int                  @default(0)
-  weeklyStudyTimeSeconds        Int                  @default(0)
-  totalStudyTimeSeconds         Int                  @default(0)
-  loginStreakDays               Int                  @default(0)
-  longestLoginStreakDays        Int                  @default(0)
-  consecutiveLearningDays       Int                  @default(0)
-  lastActiveAt                  DateTime?
-  lastActiveDate                DateTime?            @db.Date
-  lastLoginDate                 DateTime?            @db.Date
-  dailyBucketDate               DateTime?            @db.Date
-  weeklyBucketStart             DateTime?            @db.Date
-  sessionCount                  Int                  @default(0)
-  totalSessionDurationSeconds   Int                  @default(0)
-  averageSessionDurationSeconds Float                @default(0)
-  currentSessionId              String?
-  currentSessionStartedAt       DateTime?
-  updatedAt                     DateTime             @updatedAt
-  state                         StudentLearningState @relation(fields: [stateId], references: [id], onDelete: Cascade)
-}
-
-model StudentBehavior {
-  id                            String               @id @default(cuid())
-  stateId                       String               @unique
-  rewatchCount                  Int                  @default(0)
-  lessonSkipCount               Int                  @default(0)
-  quizRetryCount                Int                  @default(0)
-  aiHelpRequestCount            Int                  @default(0)
-  startedQuizIds                Json?
-  hourHistogram                 Json?
-  preferredLearningHour         Int?
-  preferredStudyDurationSeconds Int?
-  preferredLearningSpeed        String?
-  speedSumForAvg                Float                @default(0)
-  speedSampleCount              Int                  @default(0)
-  lastPlayedContentId           String?
-  lastStartedLessonId           String?
-  lastStartedLessonCompleted    Boolean              @default(false)
-  updatedAt                     DateTime             @updatedAt
-  state                         StudentLearningState @relation(fields: [stateId], references: [id], onDelete: Cascade)
-}
-
-model StudentRisk {
-  id                         String               @id @default(cuid())
-  stateId                    String               @unique
-  inactivityDays             Int                  @default(0)
-  inactivityScore            Float                @default(0)
-  lowEngagementFlag          Boolean              @default(false)
-  dropoutRiskScore           Float                @default(0)
-  dropoutRiskLevel           String               @default("LOW")
-  deadlineRiskScore          Float                @default(0)
-  pendingAssignmentStartedAt DateTime?
-  completionProbability      Float                @default(0)
-  updatedAt                  DateTime             @updatedAt
-  state                      StudentLearningState @relation(fields: [stateId], references: [id], onDelete: Cascade)
-}
-
-model StudentCourseState {
-  id                       String              @id @default(cuid())
-  studentId                String
-  courseId                 String
-  knowledgeLevel           EntryKnowledgeLevel @default(INTERMEDIATE)
-  entryAssessmentScore     Float               @default(0)
-  confidenceScore          Float               @default(0)
-  conceptMastery           Json
-  strongConcepts           Json
-  weakConcepts             Json
-  originalTotalMinutes     Int                 @default(0)
-  personalizedTotalMinutes Int                 @default(0)
-  timeSavedMinutes         Int                 @default(0)
-  initializedAt            DateTime            @default(now())
-  updatedAt                DateTime            @updatedAt
-  course                   Course              @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  student                  StudentProfile      @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, courseId])
-  @@index([studentId])
-}
-
-model Assessment {
-  id             String              @id @default(cuid())
-  studentId      String
-  type           AssessmentType      @default(STANDARD)
-  status         AssessmentStatus    @default(RECOMMENDED)
-  courseId       String?
-  quizId         String?
-  assignmentId   String?
-  targetConcepts Json?
-  difficulty     DifficultyLevel?
-  rationale      String?
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
-  student        StudentProfile      @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  attempts       AssessmentAttempt[]
-
-  @@index([studentId, createdAt])
-  @@index([status])
-  @@index([courseId])
-}
-
-model AssessmentAttempt {
-  id                    String            @id @default(cuid())
-  assessmentId          String
-  studentId             String
-  attemptNumber         Int
-  sourceEventId         String?
-  scorePercent          Float?
-  passed                Boolean?
-  timeSpentSeconds      Int?
-  conceptScoresSnapshot Json?
-  submittedAt           DateTime          @default(now())
-  assessment            Assessment        @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
-  result                AssessmentResult?
-
-  @@unique([assessmentId, attemptNumber])
-  @@index([studentId, submittedAt])
-}
-
-model AssessmentResult {
-  id               String            @id @default(cuid())
-  attemptId        String            @unique
-  studentId        String
-  overallScore     Float
-  masteryDeltas    Json?
-  gapsDetected     Json?
-  gapsClosed       Json?
-  confidenceAtTime Float             @default(0)
-  evaluatedAt      DateTime          @default(now())
-  attempt          AssessmentAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
-
-  @@index([studentId, evaluatedAt])
-}
-
-model ConceptMastery {
-  id                 String         @id @default(cuid())
-  studentId          String
-  concept            String
-  masteryScore       Float          @default(0)
-  confidenceLevel    Float          @default(0)
-  status             MasteryStatus  @default(UNASSESSED)
-  attemptsCount      Int            @default(0)
-  recentScores       Json?
-  trend              String         @default("STABLE")
-  lastCourseId       String?
-  lastAssessedAt     DateTime?
-  nextReassessmentAt DateTime?
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
-  student            StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, concept])
-  @@index([studentId, status])
-  @@index([nextReassessmentAt])
 }
 
 model KnowledgeGap {
   id          String         @id @default(cuid())
   studentId   String
   concept     String
-  /// Knowledge Component this gap belongs to. Nullable: legacy/direct-evidence
-  /// rows never set it; Tier 1/Tier 2-originated rows do, via a narrow
-  /// follow-up write — see quiz.service.js. Not consumed by
-  /// misconception.service.js or decision.service.js (both untouched).
+
   kc          String?
-  /// Controlled misconception taxonomy slug (see misconceptionTaxonomy.config.js).
-  /// By convention, equal to `concept` for every Tier 1/Tier 2-originated row —
-  /// `concept` remains the actual identity key misconception.service.js
-  /// upserts by; `type` is the clean, taxonomy-validated field new code
-  /// should read going forward. Nullable for legacy rows.
+
   type        String?
   severity    Float          @default(0)
   status      GapStatus      @default(OPEN)
   detectedAt  DateTime       @default(now())
   closedAt    DateTime?
-  /// Human-readable explanation, sourced from the taxonomy (Tier 1) or a
-  /// bounded classifier response (future Tier 2). Not authored freely.
+
   description String?
-  /// Detection confidence in [0,1]. Fixed at 1.0 for authored (Tier 1) tags.
+
   confidence  Float?
-  /// Deterministic, server-constructed factual snippet (e.g. the selected
-  /// answer vs. the correct one) — never free LLM text.
+
   evidence    String?
   student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@index([studentId, status])
   @@index([concept])
   @@index([studentId, kc, status])
-}
-
-model ReassessmentPlan {
-  id           String               @id @default(cuid())
-  studentId    String
-  concept      String
-  scheduledFor DateTime
-  reason       String
-  priority     ReassessmentPriority @default(MEDIUM)
-  status       ReassessmentStatus   @default(PENDING)
-  createdAt    DateTime             @default(now())
-  completedAt  DateTime?
-  student      StudentProfile       @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([studentId, scheduledFor])
-  @@index([status])
-}
-
-model EntryAssessment {
-  id               String                @id @default(cuid())
-  studentId        String
-  courseId         String
-  status           EntryAssessmentStatus @default(PENDING)
-  model            String?
-  questions        Json?
-  syllabusSnapshot Json?
-  failureReason    String?
-  answers          Json?
-  overallScore     Float?
-  knowledgeLevel   EntryKnowledgeLevel?
-  confidenceScore  Float?
-  conceptScores    Json?
-  strongConcepts   Json?
-  weakConcepts     Json?
-  generatedAt      DateTime?
-  submittedAt      DateTime?
-  evaluatedAt      DateTime?
-  createdAt        DateTime              @default(now())
-  updatedAt        DateTime              @updatedAt
-  course           Course                @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  student          StudentProfile        @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, courseId])
-  @@index([studentId])
-  @@index([courseId])
-}
-
-model Recommendation {
-  id                   String                   @id @default(cuid())
-  studentId            String
-  type                 RecommendationType
-  priority             RecommendationPriority   @default(MEDIUM)
-  status               RecommendationStatus     @default(ACTIVE)
-  dedupeKey            String
-  score                Float                    @default(0)
-  confidenceScore      Float                    @default(0)
-  reason               String
-  estimatedTimeMinutes Int?
-  courseId             String?
-  moduleId             String?
-  lessonId             String?
-  metadata             Json?
-  version              Int                      @default(1)
-  generatedAt          DateTime                 @default(now())
-  expiresAt            DateTime?
-  updatedAt            DateTime                 @updatedAt
-  student              StudentProfile           @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  feedback             RecommendationFeedback[]
-  history              RecommendationHistory[]
-
-  @@unique([studentId, dedupeKey])
-  @@index([studentId, status, priority])
-  @@index([studentId, type])
-  @@index([expiresAt])
-}
-
-model RecommendationHistory {
-  id               String                      @id @default(cuid())
-  recommendationId String
-  studentId        String
-  type             RecommendationType
-  priority         RecommendationPriority
-  status           RecommendationStatus
-  score            Float
-  confidenceScore  Float
-  reason           String
-  version          Int
-  retiredReason    RecommendationRetiredReason
-  generatedAt      DateTime
-  retiredAt        DateTime                    @default(now())
-  recommendation   Recommendation              @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
-
-  @@index([studentId, retiredAt])
-  @@index([recommendationId])
-  @@index([type])
-}
-
-model RecommendationFeedback {
-  id               String                       @id @default(cuid())
-  recommendationId String
-  studentId        String
-  action           RecommendationFeedbackAction
-  comment          String?
-  createdAt        DateTime                     @default(now())
-  recommendation   Recommendation               @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
-
-  @@index([studentId, action])
-  @@index([recommendationId])
-}
-
-/// *
-///  * Admin-tunable scoring overrides — global, no student relation.
-model RecommendationRule {
-  id               String              @id @default(cuid())
-  ruleKey          String              @unique
-  type             RecommendationType?
-  weightMultiplier Float               @default(1)
-  isActive         Boolean             @default(true)
-  description      String?
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
-
-  @@index([type, isActive])
-}
-
-/// *
-///  * Aggregated per (type, date) counters — feeds the future Analytics Agent.
-model RecommendationAnalytics {
-  id             String             @id @default(cuid())
-  type           RecommendationType
-  date           DateTime           @db.Date
-  generatedCount Int                @default(0)
-  viewedCount    Int                @default(0)
-  acceptedCount  Int                @default(0)
-  dismissedCount Int                @default(0)
-  completedCount Int                @default(0)
-  updatedAt      DateTime           @updatedAt
-
-  @@unique([type, date])
-  @@index([date])
-}
-
-model MotivationAction {
-  id              String               @id @default(cuid())
-  studentId       String
-  type            MotivationActionType
-  priority        MotivationPriority   @default(MEDIUM)
-  status          MotivationStatus     @default(ACTIVE)
-  dedupeKey       String
-  triggerReason   String
-  confidenceScore Float                @default(0)
-  recommendedAt   DateTime
-  expiresAt       DateTime?
-  courseId        String?
-  moduleId        String?
-  lessonId        String?
-  metadata        Json?
-  version         Int                  @default(1)
-  generatedAt     DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
-  student         StudentProfile       @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  history         MotivationHistory[]
-
-  @@unique([studentId, dedupeKey])
-  @@index([studentId, status, priority])
-  @@index([studentId, type])
-  @@index([expiresAt])
-  @@index([recommendedAt])
-}
-
-model MotivationHistory {
-  id                 String                  @id @default(cuid())
-  motivationActionId String
-  studentId          String
-  type               MotivationActionType
-  priority           MotivationPriority
-  status             MotivationStatus
-  confidenceScore    Float
-  triggerReason      String
-  version            Int
-  retiredReason      MotivationRetiredReason
-  generatedAt        DateTime
-  retiredAt          DateTime                @default(now())
-  action             MotivationAction        @relation(fields: [motivationActionId], references: [id], onDelete: Cascade)
-
-  @@index([studentId, retiredAt])
-  @@index([motivationActionId])
-  @@index([type])
-}
-
-/// *
-///  * The actual scheduling logic: a per-student recurring cadence, not a one-off action.
-model ReminderSchedule {
-  id            String               @id @default(cuid())
-  studentId     String
-  reminderType  MotivationActionType
-  cadence       ReminderCadence      @default(DAILY)
-  preferredHour Int?                 @default(18)
-  nextRunAt     DateTime
-  lastRunAt     DateTime?
-  isActive      Boolean              @default(true)
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
-  student       StudentProfile       @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, reminderType])
-  @@index([nextRunAt, isActive])
-  @@index([studentId])
-}
-
-/// *
-///  * Reconciled from Student State's engagement domain, plus motivation-specific celebration bookkeeping.
-model StudentStreak {
-  id                         String         @id @default(cuid())
-  studentId                  String         @unique
-  currentStreakDays          Int            @default(0)
-  longestStreakDays          Int            @default(0)
-  streakStatus               StreakStatus   @default(ACTIVE)
-  lastActiveDate             DateTime?      @db.Date
-  lastBrokenAt               DateTime?
-  celebratedStreakMilestones Json?
-  updatedAt                  DateTime       @updatedAt
-  student                    StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([streakStatus])
-}
-
-/// *
-///  * Daily per-student snapshot — enables trend detection that a single point-in-time read can't give.
-model EngagementTrend {
-  id                    String         @id @default(cuid())
-  studentId             String
-  date                  DateTime       @db.Date
-  engagementScore       Float          @default(0)
-  performanceScore      Float          @default(0)
-  dropoutRiskScore      Float          @default(0)
-  dailyStudyTimeSeconds Int            @default(0)
-  createdAt             DateTime       @default(now())
-  student               StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, date])
-  @@index([studentId, date])
-}
-
-/// *
-///  * Aggregated per (type, date) counters — feeds the future Analytics Agent.
-model MotivationAnalytics {
-  id                String               @id @default(cuid())
-  type              MotivationActionType
-  date              DateTime             @db.Date
-  generatedCount    Int                  @default(0)
-  acknowledgedCount Int                  @default(0)
-  dismissedCount    Int                  @default(0)
-  expiredCount      Int                  @default(0)
-  updatedAt         DateTime             @updatedAt
-
-  @@unique([type, date])
-  @@index([date])
-}
-
-model StudentAlert {
-  id              String          @id @default(cuid())
-  courseId        String
-  studentId       String
-  alertType       AlertType
-  priority        InsightPriority @default(MEDIUM)
-  status          InsightStatus   @default(ACTIVE)
-  confidenceScore Float           @default(0)
-  reason          String
-  evidence        Json?
-  version         Int             @default(1)
-  generatedAt     DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  course          Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  student         StudentProfile  @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([courseId, studentId, alertType])
-  @@index([courseId, status, priority])
-  @@index([studentId])
-}
-
-model CourseInsight {
-  id                   String            @id @default(cuid())
-  courseId             String
-  insightType          CourseInsightType
-  priority             InsightPriority   @default(MEDIUM)
-  status               InsightStatus     @default(ACTIVE)
-  confidenceScore      Float             @default(0)
-  dedupeKey            String
-  title                String
-  reason               String
-  affectedStudentCount Int               @default(0)
-  evidence             Json?
-  moduleId             String?
-  lessonId             String?
-  quizId               String?
-  assignmentId         String?
-  version              Int               @default(1)
-  generatedAt          DateTime          @default(now())
-  updatedAt            DateTime          @updatedAt
-  course               Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
-
-  @@unique([courseId, insightType, dedupeKey])
-  @@index([courseId, status, priority])
-  @@index([insightType])
-}
-
-/// *
-///  * Singleton per course — the current health snapshot, version-bumped in place like StudentLearningState.
-model CourseHealth {
-  id                    String    @id @default(cuid())
-  courseId              String    @unique
-  courseHealthScore     Float     @default(0)
-  classEngagementScore  Float     @default(0)
-  classPerformanceScore Float     @default(0)
-  completionRate        Float     @default(0)
-  atRiskStudentPercent  Float     @default(0)
-  enrolledCount         Int       @default(0)
-  activeStudentCount    Int       @default(0)
-  version               Int       @default(1)
-  lastCalculatedAt      DateTime?
-  updatedAt             DateTime  @updatedAt
-  course                Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
-
-  @@index([courseHealthScore])
-}
-
-model TeachingRecommendation {
-  id                   String                     @id @default(cuid())
-  courseId             String
-  recommendationType   TeachingRecommendationType
-  priority             InsightPriority            @default(MEDIUM)
-  status               InsightStatus              @default(ACTIVE)
-  dedupeKey            String
-  suggestedAction      String
-  reason               String
-  evidence             Json?
-  affectedStudentCount Int                        @default(0)
-  moduleId             String?
-  lessonId             String?
-  quizId               String?
-  assignmentId         String?
-  confidenceScore      Float                      @default(0)
-  version              Int                        @default(1)
-  generatedAt          DateTime                   @default(now())
-  updatedAt            DateTime                   @updatedAt
-  course               Course                     @relation(fields: [courseId], references: [id], onDelete: Cascade)
-
-  @@unique([courseId, recommendationType, dedupeKey])
-  @@index([courseId, status, priority])
-}
-
-/// *
-///  * The umbrella periodic report — Weekly/Monthly, bundling counts from the other four models. Naturally append-only by period, so never routed through InsightHistory.
-model TeacherInsight {
-  id              String            @id @default(cuid())
-  courseId        String
-  teacherId       String
-  reportType      TeacherReportType
-  periodStart     DateTime
-  periodEnd       DateTime
-  summary         String
-  highlights      Json
-  confidenceScore Float             @default(0)
-  generatedAt     DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  course          Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
-
-  @@unique([courseId, reportType, periodStart])
-  @@index([teacherId, reportType])
-  @@index([courseId, periodStart])
-}
-
-/// *
-///  * Polymorphic retirement history, spanning StudentAlert/CourseInsight/
-///  * TeachingRecommendation — no hard FK possible across three different
-///  * source tables, so sourceId is a loose indexed reference by design.
-model InsightHistory {
-  id              String               @id @default(cuid())
-  sourceModel     InsightSourceModel
-  sourceId        String
-  courseId        String
-  studentId       String?
-  insightType     String
-  priority        InsightPriority
-  status          InsightStatus
-  confidenceScore Float
-  summary         String
-  version         Int
-  retiredReason   InsightRetiredReason
-  generatedAt     DateTime
-  retiredAt       DateTime             @default(now())
-
-  @@index([courseId, retiredAt])
-  @@index([sourceModel, sourceId])
-  @@index([studentId])
-}
-
-/// *
-///  * Aggregated per (courseId, insightType, date) counters — feeds the future Analytics Agent.
-model InsightAnalytics {
-  id             String   @id @default(cuid())
-  courseId       String
-  insightType    String
-  date           DateTime @db.Date
-  generatedCount Int      @default(0)
-  resolvedCount  Int      @default(0)
-  updatedAt      DateTime @updatedAt
-
-  @@unique([courseId, insightType, date])
-  @@index([date])
-}
-
-/// *
-///  * Live current value per (scope, metric) — version-bumped in place, same "current row" pattern as CourseHealth.
-model KPI {
-  id               String                   @id @default(cuid())
-  scopeType        AnalyticsScopeType
-  scopeId          String
-  metricKey        AnalyticsMetricKey
-  value            Float
-  unit             String?
-  trend            AnalyticsTrendDirection?
-  changePercent    Float?
-  metadata         Json?
-  version          Int                      @default(1)
-  lastCalculatedAt DateTime                 @default(now())
-  createdAt        DateTime                 @default(now())
-  updatedAt        DateTime                 @updatedAt
-
-  @@unique([scopeType, scopeId, metricKey])
-  @@index([scopeType, scopeId])
-  @@index([metricKey])
-}
-
-/// *
-///  * Append-only per-metric daily fact — the time-series fuel behind TrendAnalysis and Forecast. One row per (scope, metric, day); same-day recompute overwrites, never duplicates.
-model AnalyticsHistory {
-  id         String             @id @default(cuid())
-  scopeType  AnalyticsScopeType
-  scopeId    String
-  metricKey  AnalyticsMetricKey
-  value      Float
-  date       DateTime           @db.Date
-  recordedAt DateTime           @default(now())
-
-  @@unique([scopeType, scopeId, metricKey, date])
-  @@index([scopeType, scopeId, metricKey, date])
-}
-
-/// *
-///  * Wide daily rollup bundling every metric active for a scope into one document — a single-fetch "what did this scope look like on date X", distinct granularity from AnalyticsHistory's narrow per-metric log. Built by the daily sweep, not on every recompute.
-model AnalyticsSnapshot {
-  id        String             @id @default(cuid())
-  scopeType AnalyticsScopeType
-  scopeId   String
-  date      DateTime           @db.Date
-  metrics   Json
-  meta      Json?
-  createdAt DateTime           @default(now())
-
-  @@unique([scopeType, scopeId, date])
-  @@index([scopeType, scopeId, date])
-}
-
-/// *
-///  * Precomputed, chart-ready datasets (arrays/breakdowns) — the caching layer GET /analytics/dashboard reads directly instead of recomputing joins per request.
-model DashboardMetric {
-  id           String             @id @default(cuid())
-  scopeType    AnalyticsScopeType
-  scopeId      String
-  dashboardKey String
-  data         Json
-  version      Int                @default(1)
-  computedAt   DateTime           @default(now())
-
-  @@unique([scopeType, scopeId, dashboardKey])
-  @@index([scopeType, scopeId])
-}
-
-/// *
-///  * Current trend judgment per (scope, metric) — version-bumped in place, refreshed every recompute from AnalyticsHistory.
-model TrendAnalysis {
-  id            String                  @id @default(cuid())
-  scopeType     AnalyticsScopeType
-  scopeId       String
-  metricKey     AnalyticsMetricKey
-  direction     AnalyticsTrendDirection
-  changePercent Float
-  currentValue  Float
-  previousValue Float
-  windowDays    Int
-  version       Int                     @default(1)
-  computedAt    DateTime                @default(now())
-
-  @@unique([scopeType, scopeId, metricKey])
-  @@index([scopeType, scopeId])
-}
-
-/// *
-///  * Predicted future value per (scope, metric, target date) — upserted per recompute for idempotency. Only written once enough AnalyticsHistory exists (see forecastEngine.js); no row is better than a fabricated confident guess from zero history.
-model Forecast {
-  id                String             @id @default(cuid())
-  scopeType         AnalyticsScopeType
-  scopeId           String
-  metricKey         AnalyticsMetricKey
-  forecastDate      DateTime           @db.Date
-  predictedValue    Float
-  confidenceScore   Int
-  method            String
-  basedOnDataPoints Int
-  computedAt        DateTime           @default(now())
-
-  @@unique([scopeType, scopeId, metricKey, forecastDate])
-  @@index([scopeType, scopeId, metricKey])
-}
-
-/// *
-///  * Periodic administrative report — PLATFORM-scoped only (see index.js docs for why per-course/instructor reports aren't duplicated here). Get-or-generate semantics, same as TeacherInsight's report model.
-model Report {
-  id          String              @id @default(cuid())
-  scopeType   AnalyticsScopeType
-  scopeId     String
-  reportType  AnalyticsReportType
-  periodStart DateTime
-  periodEnd   DateTime
-  summary     String
-  kpiSnapshot Json
-  trends      Json
-  forecasts   Json
-  version     Int                 @default(1)
-  generatedAt DateTime            @default(now())
-
-  @@unique([scopeType, scopeId, reportType, periodStart])
-  @@index([scopeType, scopeId])
-}
-
-/// *
-///  * Seeded skill taxonomy + target-role catalog — see ai/jobMarketProvider.js for how industryDemandScore/avgSalary get refreshed.
-model IndustryRole {
-  id                    String                 @id @default(cuid())
-  name                  String                 @unique
-  category              String
-  description           String?
-  requiredSkills        Json
-  minReadinessScore     Int                    @default(60)
-  avgSalaryMin          Int?
-  avgSalaryMax          Int?
-  currency              String                 @default("INR")
-  industryDemandScore   Int                    @default(50)
-  isActive              Boolean                @default(true)
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
-  careerGoals           CareerGoal[]
-  careerProfiles        CareerProfile[]
-  careerRecommendations CareerRecommendation[]
-  careerRoadmaps        CareerRoadmap[]
-  skillGaps             SkillGap[]
-
-  @@index([category])
-  @@index([isActive])
-}
-
-/// *
-///  * A student may hold several goals over time (history via status transitions), but only one ACTIVE at once — enforced in the service layer.
-model CareerGoal {
-  id           String           @id @default(cuid())
-  studentId    String
-  targetRoleId String
-  status       CareerGoalStatus @default(ACTIVE)
-  targetDate   DateTime?
-  notes        String?
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
-  student      StudentProfile   @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  targetRole   IndustryRole     @relation(fields: [targetRoleId], references: [id], onDelete: Cascade)
-
-  @@index([studentId, status])
-}
-
-/// *
-///  * Current-row aggregate, one per student, version-bumped in place — same pattern as CourseHealth/StudentLearningState.
-model CareerProfile {
-  id                   String                 @id @default(cuid())
-  studentId            String                 @unique
-  readinessScore       Int
-  confidenceLevel      CareerConfidenceLevel
-  industryReadiness    IndustryReadinessLevel
-  skillMatchPercent    Int
-  primaryTargetRoleId  String?
-  topMatchedRoles      Json
-  missingSkillsSummary Json
-  version              Int                    @default(1)
-  lastCalculatedAt     DateTime               @default(now())
-  createdAt            DateTime               @default(now())
-  updatedAt            DateTime               @updatedAt
-  primaryTargetRole    IndustryRole?          @relation(fields: [primaryTargetRoleId], references: [id])
-  student              StudentProfile         @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([studentId])
-  @@index([industryReadiness])
-}
-
-/// *
-///  * Career Guidance's own materialized skill snapshot, sourced from Assessment's ConceptMastery — this agent's historical skill record, not a live cross-schema join.
-model SkillAssessment {
-  id             String         @id @default(cuid())
-  studentId      String
-  skillName      String
-  proficiency    Int
-  status         String
-  source         String         @default("ASSESSMENT_AGENT")
-  version        Int            @default(1)
-  lastAssessedAt DateTime
-  updatedAt      DateTime       @updatedAt
-  student        StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, skillName])
-  @@index([studentId])
-}
-
-/// *
-///  * Current row per (student, target role, skill) — recomputed every cycle, closed rather than deleted when the gap resolves.
-model SkillGap {
-  id            String           @id @default(cuid())
-  studentId     String
-  targetRoleId  String
-  skillName     String
-  requiredLevel Int
-  currentLevel  Int
-  gapSize       Int
-  severity      SkillGapSeverity
-  status        SkillGapStatus   @default(OPEN)
-  version       Int              @default(1)
-  detectedAt    DateTime         @default(now())
-  closedAt      DateTime?
-  updatedAt     DateTime         @updatedAt
-  student       StudentProfile   @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  targetRole    IndustryRole     @relation(fields: [targetRoleId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, targetRoleId, skillName])
-  @@index([studentId, status])
-}
-
-/// *
-///  * Current row, version-bumped in place, upsert by dedupeKey — identical pattern to Recommendation Agent's Recommendation model.
-model CareerRecommendation {
-  id                   String                     @id @default(cuid())
-  studentId            String
-  type                 CareerRecommendationType
-  priority             CareerPriority
-  status               CareerRecommendationStatus @default(ACTIVE)
-  dedupeKey            String
-  score                Int
-  confidenceScore      Int
-  reason               String
-  estimatedTimeMinutes Int?
-  targetRoleId         String?
-  metadata             Json?
-  version              Int                        @default(1)
-  generatedAt          DateTime                   @default(now())
-  createdAt            DateTime                   @default(now())
-  student              StudentProfile             @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  targetRole           IndustryRole?              @relation(fields: [targetRoleId], references: [id])
-
-  @@unique([studentId, dedupeKey])
-  @@index([studentId, status])
-  @@index([type])
-}
-
-/// *
-///  * Immutable snapshot of a CareerRecommendation at the moment it's retired — same convention as RecommendationHistory/MotivationHistory/InsightHistory.
-model CareerRecommendationHistory {
-  id               String                   @id @default(cuid())
-  studentId        String
-  recommendationId String
-  type             CareerRecommendationType
-  priority         CareerPriority
-  score            Int
-  reason           String
-  version          Int
-  retiredReason    CareerRetiredReason
-  generatedAt      DateTime
-  retiredAt        DateTime                 @default(now())
-  student          StudentProfile           @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([studentId, retiredAt])
-  @@index([recommendationId])
-}
-
-/// *
-///  * One current row per (student, horizon) — regenerated whole on every recompute, not incrementally patched.
-model CareerRoadmap {
-  id           String         @id @default(cuid())
-  studentId    String
-  targetRoleId String?
-  horizon      RoadmapHorizon
-  status       RoadmapStatus  @default(ACTIVE)
-  milestones   Json
-  version      Int            @default(1)
-  generatedAt  DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  student      StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  targetRole   IndustryRole?  @relation(fields: [targetRoleId], references: [id])
-
-  @@unique([studentId, horizon])
-  @@index([studentId])
-}
-
-/// *
-///  * Append-only daily fact — the time-series backbone for "track career progress over time", same pattern as Analytics' AnalyticsHistory.
-model CareerReadinessHistory {
-  id                String         @id @default(cuid())
-  studentId         String
-  readinessScore    Int
-  skillMatchPercent Int
-  date              DateTime       @db.Date
-  recordedAt        DateTime       @default(now())
-  student           StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, date])
-  @@index([studentId, date])
-}
-
-/// *
-///  * Current-row aggregate, one per student, version-bumped in place — same pattern as CourseHealth/StudentLearningState/CareerProfile.
-model LearningPath {
-  id                          String                           @id @default(cuid())
-  studentId                   String                           @unique
-  currentCourseId             String?
-  nextLessonId                String?
-  nextModuleId                String?
-  recommendedLearningOrder    Json
-  priorityTopics              Json
-  difficultyAdjustment        LearningPathDifficultyAdjustment @default(STANDARD)
-  suggestedStudyMinutesPerDay Int                              @default(30)
-  estimatedCompletionDate     DateTime?
-  version                     Int                              @default(1)
-  lastCalculatedAt            DateTime                         @default(now())
-  createdAt                   DateTime                         @default(now())
-  updatedAt                   DateTime                         @updatedAt
-  student                     StudentProfile                   @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([studentId])
-}
-
-/// *
-///  * Current row, version-bumped in place, upsert by dedupeKey — a small fixed set of types (not a competing-candidates pool), so no ranking/cap needed unlike Recommendation/CareerRecommendation.
-model LearningRecommendation {
-  id          String                         @id @default(cuid())
-  studentId   String
-  type        LearningRecommendationType
-  priority    LearningRecommendationPriority @default(MEDIUM)
-  status      LearningRecommendationStatus   @default(ACTIVE)
-  dedupeKey   String
-  reason      String
-  courseId    String?
-  moduleId    String?
-  lessonId    String?
-  metadata    Json?
-  version     Int                            @default(1)
-  generatedAt DateTime                       @default(now())
-  updatedAt   DateTime                       @updatedAt
-  student     StudentProfile                 @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, dedupeKey])
-  @@index([studentId, status])
-  @@index([type])
-}
-
-/// *
-///  * One row per (student, planType, period) — DAILY's periodStart is today, WEEKLY's is the Monday of the current week; the daily plan is literally day-zero of the same weekly computation, not a separately derived one.
-model StudyPlan {
-  id                    String         @id @default(cuid())
-  studentId             String
-  planType              StudyPlanType
-  periodStart           DateTime       @db.Date
-  periodEnd             DateTime       @db.Date
-  scheduledItems        Json
-  suggestedStudyMinutes Int            @default(0)
-  version               Int            @default(1)
-  generatedAt           DateTime       @default(now())
-  student               StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, planType, periodStart])
-  @@index([studentId, planType])
-}
-
-/// *
-///  * Genuinely append-only historical progress — achieved milestones are never deleted, satisfying "Historical Progress" without a dedicated audit table. milestoneKey (e.g. "MODULE_COMPLETION:{moduleId}"/"COURSE_COMPLETION:{courseId}") keeps the unique constraint non-null-safe.
-model LearningMilestone {
-  id            String          @id @default(cuid())
-  studentId     String
-  courseId      String
-  milestoneType MilestoneType
-  milestoneKey  String
-  moduleId      String?
-  title         String
-  status        MilestoneStatus @default(PENDING)
-  targetDate    DateTime?
-  achievedAt    DateTime?
-  version       Int             @default(1)
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  course        Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  student       StudentProfile  @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, courseId, milestoneKey])
-  @@index([studentId, status])
-}
-
-/// *
-///  * Current row per (student, topic) — a topic no longer weak on recompute is inferred COMPLETED, not deleted, same "no longer generated -> superseded" logic every other recommendation-owning agent in this series uses.
-model RevisionPlan {
-  id            String             @id @default(cuid())
-  studentId     String
-  topic         String
-  reason        String
-  courseId      String?
-  lessonId      String?
-  scheduledDate DateTime?
-  status        RevisionPlanStatus @default(PENDING)
-  version       Int                @default(1)
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  student       StudentProfile     @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, topic])
-  @@index([studentId, status])
-}
-
-/// *
-///  * Read-ready per the schema requirement — this agent's required API surface (see routes/learningPath.routes.js) has no write endpoint for this model, so rows are only ever created by a future endpoint or direct seeding; context/studentContextBuilder.js reads it defensively (null-safe) either way.
-model LearningGoal {
-  id          String             @id @default(cuid())
-  studentId   String
-  courseId    String
-  goalType    LearningGoalType
-  description String?
-  targetDate  DateTime?
-  status      LearningGoalStatus @default(ACTIVE)
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
-  course      Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  student     StudentProfile     @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([studentId, status])
-}
-
-/// *
-///  * This agent's own seeded employer catalog.
-model Company {
-  id                      String                  @id @default(cuid())
-  name                    String                  @unique
-  industry                String
-  website                 String?
-  logoUrl                 String?
-  description             String?
-  isVerified              Boolean                 @default(true)
-  isActive                Boolean                 @default(true)
-  createdAt               DateTime                @default(now())
-  updatedAt               DateTime                @updatedAt
-  internshipOpportunities InternshipOpportunity[]
-  jobOpportunities        JobOpportunity[]
-  placementDrives         PlacementDrive[]
-
-  @@index([industry])
-  @@index([isActive])
-}
-
-model JobOpportunity {
-  id                  String            @id @default(cuid())
-  companyId           String
-  title               String
-  description         String?
-  requiredSkills      Json
-  minExperienceYears  Int               @default(0)
-  employmentType      EmploymentType    @default(FULL_TIME)
-  location            String?
-  isRemote            Boolean           @default(false)
-  salaryMin           Int?
-  salaryMax           Int?
-  currency            String            @default("INR")
-  applicationDeadline DateTime?
-  status              OpportunityStatus @default(OPEN)
-  source              OpportunitySource @default(INTERNAL)
-  externalUrl         String?
-  postedAt            DateTime          @default(now())
-  createdAt           DateTime          @default(now())
-  updatedAt           DateTime          @updatedAt
-  company             Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  @@unique([companyId, title])
-  @@index([companyId])
-  @@index([status])
-  @@index([postedAt])
-}
-
-model InternshipOpportunity {
-  id                  String            @id @default(cuid())
-  companyId           String
-  title               String
-  description         String?
-  requiredSkills      Json
-  durationWeeks       Int               @default(8)
-  stipend             Int?
-  currency            String            @default("INR")
-  location            String?
-  isRemote            Boolean           @default(false)
-  isPPO               Boolean           @default(false)
-  applicationDeadline DateTime?
-  status              OpportunityStatus @default(OPEN)
-  source              OpportunitySource @default(INTERNAL)
-  externalUrl         String?
-  postedAt            DateTime          @default(now())
-  createdAt           DateTime          @default(now())
-  updatedAt           DateTime          @updatedAt
-  company             Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  @@unique([companyId, title])
-  @@index([companyId])
-  @@index([status])
-  @@index([postedAt])
-}
-
-/// *
-///  * Campus hiring event for one company, distinct from its individual job/internship postings.
-model PlacementDrive {
-  id                   String        @id @default(cuid())
-  companyId            String
-  title                String
-  description          String?
-  driveDate            DateTime?
-  eligibilityCriteria  Json?
-  registrationDeadline DateTime?
-  status               DriveStatus   @default(UPCOMING)
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
-  applications         Application[]
-  company              Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  @@unique([companyId, title])
-  @@index([companyId])
-  @@index([status])
-}
-
-/// *
-///  * Current row per (student, opportunity), version-bumped in place — same
-///  * pattern as CareerRecommendation. opportunityId is a loose polymorphic
-///  * reference (spans JobOpportunity and InternshipOpportunity, disambiguated
-///  * by opportunityType) — the same convention Teacher Insight's InsightHistory
-///  * and Analytics' scopeId already established for one column referencing
-///  * more than one heterogeneous parent table.
-model JobMatch {
-  id              String           @id @default(cuid())
-  studentId       String
-  opportunityType OpportunityType
-  opportunityId   String
-  dedupeKey       String
-  matchPercent    Int
-  missingSkills   Json
-  priority        JobMatchPriority
-  status          JobMatchStatus   @default(ACTIVE)
-  reason          String
-  version         Int              @default(1)
-  generatedAt     DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  student         StudentProfile   @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, dedupeKey])
-  @@index([studentId, status])
-  @@index([opportunityType, opportunityId])
-}
-
-/// *
-///  * A student-initiated tracking record only — per the constraint that this
-///  * agent must NEVER auto-apply on a student's behalf, creating this row
-///  * never submits anything to a real ATS/company; it's this agent's own
-///  * record of "the student says they applied," nothing more.
-model Application {
-  id              String            @id @default(cuid())
-  studentId       String
-  opportunityType OpportunityType
-  opportunityId   String
-  driveId         String?
-  status          ApplicationStatus @default(APPLIED)
-  notes           String?
-  appliedAt       DateTime          @default(now())
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  drive           PlacementDrive?   @relation(fields: [driveId], references: [id])
-  student         StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  interviews      Interview[]
-  offer           Offer?
-
-  @@unique([studentId, opportunityType, opportunityId])
-  @@index([studentId, status])
-  @@index([opportunityType, opportunityId])
-}
-
-/// *
-///  * One row per interview round/stage for a tracked application.
-model Interview {
-  id            String           @id @default(cuid())
-  applicationId String
-  studentId     String
-  round         Int              @default(1)
-  interviewType InterviewType
-  scheduledAt   DateTime?
-  status        InterviewStatus  @default(SCHEDULED)
-  outcome       InterviewOutcome @default(PENDING)
-  feedback      String?
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
-  application   Application      @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  student       StudentProfile   @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([applicationId])
-  @@index([studentId, status])
-}
-
-/// *
-///  * 1:1 with Application — the offer's status transitions (ACCEPTED/DECLINED)
-///  * represent the student's own decision, never made by this agent, per the
-///  * constraint that it must never accept/decline offers on their behalf.
-model Offer {
-  id              String          @id @default(cuid())
-  applicationId   String          @unique
-  studentId       String
-  opportunityType OpportunityType
-  opportunityId   String
-  role            String
-  salary          Int?
-  currency        String          @default("INR")
-  joiningDate     DateTime?
-  status          OfferStatus     @default(PENDING)
-  offeredAt       DateTime        @default(now())
-  respondedAt     DateTime?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  application     Application     @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  student         StudentProfile  @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([studentId, status])
-}
-
-/// *
-///  * Append-only daily snapshot of resume/portfolio quality — the historical record behind PlacementProfile's current scores, same pattern as CareerReadinessHistory.
-model ResumeReview {
-  id                    String         @id @default(cuid())
-  studentId             String
-  resumeQualityScore    Int
-  portfolioQualityScore Int
-  suggestions           Json
-  date                  DateTime       @db.Date
-  createdAt             DateTime       @default(now())
-  student               StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, date])
-  @@index([studentId, date])
-}
-
-/// *
-///  * Current-row aggregate, one per student, version-bumped in place — same pattern as CareerProfile.
-model PlacementProfile {
-  id                      String           @id @default(cuid())
-  studentId               String           @unique
-  placementReadinessScore Int
-  interviewReadinessScore Int
-  resumeQualityScore      Int
-  portfolioQualityScore   Int
-  topJobMatchPercent      Int
-  topCompanyMatchScore    Int
-  topCompanyId            String?
-  topOpportunityType      OpportunityType?
-  topOpportunityId        String?
-  missingSkillsSummary    Json
-  preparationSuggestions  Json
-  version                 Int              @default(1)
-  lastCalculatedAt        DateTime         @default(now())
-  createdAt               DateTime         @default(now())
-  updatedAt               DateTime         @updatedAt
-  student                 StudentProfile   @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([studentId])
-}
-
-/// *
-///  * Daily platform-wide health snapshot — the "current" row is simply the
-///  * latest date, so this one table is both InstitutionHealth's live state and
-///  * its own history/time-series, no paired history model needed.
-model InstitutionHealth {
-  id                      String   @id @default(cuid())
-  date                    DateTime @unique @db.Date
-  lmsHealthScore          Float
-  academicHealthScore     Float
-  facultyPerformanceScore Float
-  studentSuccessRate      Float
-  completionRate          Float
-  aiAdoptionScore         Float
-  retentionRate           Float
-  churnRate               Float
-  revenueEstimate         Float
-  platformGrowthRate      Float
-  activeStudentCount      Int
-  activeInstructorCount   Int
-  totalEnrollmentCount    Int
-  metadata                Json?
-  computedAt              DateTime @default(now())
-
-  @@index([date])
-}
-
-/// *
-///  * Per-department (Course.category proxy) daily snapshot/time-series.
-model DepartmentAnalytics {
-  id                       String   @id @default(cuid())
-  departmentKey            String
-  date                     DateTime @db.Date
-  courseCount              Int
-  activeStudentCount       Int
-  averageCompletionRate    Float
-  averageCourseHealthScore Float
-  atRiskStudentPercent     Float
-  enrollmentTrendPercent   Float
-  healthScore              Float
-  computedAt               DateTime @default(now())
-
-  @@unique([departmentKey, date])
-  @@index([departmentKey, date])
-}
-
-/// *
-///  * Per-instructor ("faculty") daily snapshot/time-series. instructorId is a
-///  * plain loose reference (User.id, role=INSTRUCTOR) — never a hard FK, same
-///  * convention Teacher Insight already uses for instructor-scoped rows.
-model FacultyAnalytics {
-  id                           String   @id @default(cuid())
-  instructorId                 String
-  date                         DateTime @db.Date
-  courseCount                  Int
-  activeStudentCount           Int
-  averageCourseHealthScore     Float
-  averageEngagementScore       Float
-  averageTeachingEffectiveness Float
-  overloadFlag                 Boolean  @default(false)
-  inactiveFlag                 Boolean  @default(false)
-  performanceScore             Float
-  computedAt                   DateTime @default(now())
-
-  @@unique([instructorId, date])
-  @@index([instructorId, date])
-}
-
-/// *
-///  * Executive-facing generated insight — same current-row + retire-on-EXPIRED
-///  * shape as Recommendation/CareerRecommendation, scoped polymorphically since
-///  * an insight can be about the platform, a department, a faculty member, a
-///  * course, or a specific at-risk student.
-model AdminInsight {
-  id              String               @id @default(cuid())
-  category        AdminInsightCategory
-  scopeType       AdminScopeType
-  scopeId         String
-  status          AdminInsightStatus   @default(ACTIVE)
-  dedupeKey       String
-  title           String
-  summary         String
-  priority        InsightPriority      @default(MEDIUM)
-  confidenceScore Int
-  evidence        Json?
-  version         Int                  @default(1)
-  generatedAt     DateTime             @default(now())
-  createdAt       DateTime             @default(now())
-
-  @@unique([scopeType, scopeId, dedupeKey])
-  @@index([scopeType, scopeId, status])
-  @@index([category])
-}
-
-/// *
-///  * Actionable strategic recommendation for administrators — same
-///  * dedupeKey/urgency/impact/confidence competing-candidates shape as
-///  * Recommendation Agent's own pipeline. Read-only from this agent's HTTP
-///  * surface: no dismiss/act-on endpoint exists in this spec's API list, so
-///  * status only ever moves ACTIVE -> EXPIRED via regeneration, never by a
-///  * missing write route (same restraint as Learning Path's LearningGoal).
-model StrategicRecommendation {
-  id              String                        @id @default(cuid())
-  type            StrategicRecommendationType
-  scopeType       AdminScopeType
-  scopeId         String
-  status          StrategicRecommendationStatus @default(ACTIVE)
-  dedupeKey       String
-  title           String
-  reason          String
-  urgency         Int
-  impact          Int
-  confidenceScore Int
-  evidence        Json?
-  version         Int                           @default(1)
-  generatedAt     DateTime                      @default(now())
-  createdAt       DateTime                      @default(now())
-
-  @@unique([scopeType, scopeId, dedupeKey])
-  @@index([scopeType, scopeId, status])
-  @@index([type])
-}
-
-/// *
-///  * Genuinely append-only audit-run ledger — each run of a governance check
-///  * produces a new row, never overwritten, the real "Audit AI decisions /
-///  * Track policy compliance" record this agent's own Governance framework
-///  * generates (there is no pre-existing platform AuditLog to consume).
-model ComplianceAudit {
-  id        String                 @id @default(cuid())
-  checkType ComplianceCheckType
-  outcome   ComplianceAuditOutcome
-  severity  ComplianceSeverity
-  scopeType AdminScopeType
-  scopeId   String
-  findings  String
-  evidence  Json?
-  runAt     DateTime               @default(now())
-
-  @@index([checkType, runAt])
-  @@index([scopeType, scopeId])
-}
-
-/// *
-///  * Predicted future resource demand — own linear-regression engine, same OLS
-///  * shape as Analytics' Forecast/forecastEngine.js but a separate copy (each
-///  * agent owns its own near-identical logic, per established precedent).
-model CapacityForecast {
-  id                String               @id @default(cuid())
-  resourceType      CapacityResourceType
-  forecastDate      DateTime             @db.Date
-  predictedValue    Float
-  confidenceScore   Int
-  method            String
-  basedOnDataPoints Int
-  computedAt        DateTime             @default(now())
-
-  @@unique([resourceType, forecastDate])
-  @@index([resourceType])
-}
-
-/// *
-///  * High-priority operational alert — reuses the existing shared
-///  * InsightPriority/InsightStatus enums (same lifecycle as StudentAlert:
-///  * ACTIVE until the underlying condition clears on the next generation
-///  * cycle, then auto-flips to RESOLVED — no acknowledge/dismiss endpoint
-///  * exists in this spec's API list).
-model AdminAlert {
-  id          String          @id @default(cuid())
-  scopeType   AdminScopeType
-  scopeId     String
-  alertType   AdminAlertType
-  priority    InsightPriority @default(MEDIUM)
-  status      InsightStatus   @default(ACTIVE)
-  dedupeKey   String
-  reason      String
-  evidence    Json?
-  version     Int             @default(1)
-  generatedAt DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-
-  @@unique([scopeType, scopeId, dedupeKey])
-  @@index([scopeType, status, priority])
-}
-
-/// *
-///  * Periodic institution-wide bundle for export — same shape as Analytics'
-///  * Report, extended with department/faculty/insight/recommendation/alert
-///  * sections since this is the platform-wide executive rollup, not a
-///  * metrics-only one.
-model ExecutiveReport {
-  id                String              @id @default(cuid())
-  reportType        ExecutiveReportType
-  periodStart       DateTime
-  periodEnd         DateTime
-  summary           String
-  healthSnapshot    Json
-  departmentSummary Json
-  facultySummary    Json
-  insights          Json
-  recommendations   Json
-  alerts            Json
-  forecasts         Json
-  version           Int                 @default(1)
-  generatedAt       DateTime            @default(now())
-
-  @@unique([reportType, periodStart])
-  @@index([reportType])
-}
-
-/// *
-///  * Governance/compliance/accreditation metric time series — daily
-///  * per-metricKey rows, same AnalyticsHistory-style shape.
-model GovernanceMetric {
-  id         String              @id @default(cuid())
-  metricKey  GovernanceMetricKey
-  date       DateTime            @db.Date
-  value      Float
-  unit       String?
-  metadata   Json?
-  computedAt DateTime            @default(now())
-
-  @@unique([metricKey, date])
-  @@index([metricKey, date])
-}
-
-/// *
-///  * One conversation thread per user. userRole is a snapshot of User.role at
-///  * creation time (not a live join) — access control and agent selection
-///  * both need "what role was this conversation started as," which must stay
-///  * stable even if an admin later changes the user's role.
-model MentorConversation {
-  id            String                   @id @default(cuid())
-  userId        String
-  userRole      Role
-  title         String?
-  status        MentorConversationStatus @default(ACTIVE)
-  lastIntent    MentorIntent?
-  lastMessageAt DateTime                 @default(now())
-  createdAt     DateTime                 @default(now())
-  updatedAt     DateTime                 @updatedAt
-  invocations   AgentInvocation[]
-  contexts      ConversationContext[]
-  summary       ConversationSummary?
-  user          User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  messages      MentorMessage[]
-
-  @@index([userId, status, lastMessageAt])
-}
-
-/// *
-///  * One row per turn (both the user's message and the assistant's reply are
-///  * separate rows, same USER/ASSISTANT/SYSTEM shape every LLM chat API uses).
-///  * intent is only ever set on USER rows (the classified intent that drove
-///  * this turn's orchestration).
-model MentorMessage {
-  id               String                @id @default(cuid())
-  conversationId   String
-  role             MentorMessageRole
-  content          String
-  intent           MentorIntent?
-  intentConfidence Int?
-  metadata         Json?
-  createdAt        DateTime              @default(now())
-  invocations      AgentInvocation[]
-  contexts         ConversationContext[]
-  conversation     MentorConversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  feedback         ResponseFeedback?
-
-  @@index([conversationId, createdAt])
-}
-
-/// *
-///  * Append-only per-turn snapshot of the merged context gathered for one
-///  * assistant reply — the real "what did the mentor know when it answered
-///  * this" audit record, distinct from MentorMemory (cross-conversation) and
-///  * ConversationSummary (compacted history).
-model ConversationContext {
-  id             String             @id @default(cuid())
-  conversationId String
-  messageId      String?
-  snapshot       Json
-  agentsQueried  Json
-  gatheredAt     DateTime           @default(now())
-  conversation   MentorConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  message        MentorMessage?     @relation(fields: [messageId], references: [id])
-
-  @@index([conversationId, gatheredAt])
-}
-
-/// *
-///  * Genuinely append-only orchestration audit ledger — one row per real
-///  * downstream agent call (never updated), the real "which agents were
-///  * queried, in what order, how long did it take, did it succeed" record the
-///  * spec's Orchestration section asks the mentor to decide.
-model AgentInvocation {
-  id             String                @id @default(cuid())
-  conversationId String
-  messageId      String?
-  agentName      String
-  method         String
-  status         AgentInvocationStatus
-  durationMs     Int
-  argsSummary    Json?
-  resultSummary  Json?
-  errorMessage   String?
-  invokedAt      DateTime              @default(now())
-  conversation   MentorConversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  message        MentorMessage?        @relation(fields: [messageId], references: [id])
-
-  @@index([conversationId, invokedAt])
-  @@index([agentName, status])
-}
-
-/// *
-///  * Cross-conversation fact ledger — current-row per (userId, memoryKey),
-///  * upserted in place, same pattern as CourseHealth/StudentLearningState. A
-///  * small fixed vocabulary (see constants/memoryKeys.constants.js), not a
-///  * fabricated open-ended semantic memory — this stack has no vector-store
-///  * dependency, so "remember previous conversations" is real structured
-///  * facts, not embedding similarity retrieval.
-model MentorMemory {
-  id        String   @id @default(cuid())
-  userId    String
-  memoryKey String
-  value     Json
-  updatedAt DateTime @updatedAt
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, memoryKey])
-  @@index([userId])
-}
-
-/// *
-///  * Current-row, regenerated in place as a conversation grows past the
-///  * compaction threshold — recent turns stay verbatim in MentorMessage, older
-///  * ones compact here so subsequent prompts don't re-send the entire history.
-model ConversationSummary {
-  id                    String             @id @default(cuid())
-  conversationId        String             @unique
-  summaryText           String
-  keyTopics             Json
-  messageCountAtSummary Int
-  version               Int                @default(1)
-  updatedAt             DateTime           @updatedAt
-  createdAt             DateTime           @default(now())
-  conversation          MentorConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-}
-
-/// *
-///  * This agent's own seeded reference data (role-specific system prompts) —
-///  * same seeded-catalog precedent as Career Guidance's IndustryRole /
-///  * Placement's Company. Idempotently upserted at bootstrap.
-model PromptTemplate {
-  id          String   @id @default(cuid())
-  key         String   @unique
-  role        Role?
-  version     Int      @default(1)
-  template    String
-  description String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-
-/// *
-///  * One feedback row per assistant message — real POST /mentor/feedback
-///  * write, this agent's own data only.
-model ResponseFeedback {
-  id        String         @id @default(cuid())
-  messageId String         @unique
-  userId    String
-  rating    FeedbackRating
-  comment   String?
-  createdAt DateTime       @default(now())
-  message   MentorMessage  @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
 }
 
 model VideoAnalytics {
@@ -2753,23 +879,6 @@ model DiscussionReply {
 
   @@index([discussionId])
   @@index([authorId])
-}
-
-model CourseImportJob {
-  id               String             @id
-  instructorId     String
-  status           CourseImportStatus @default(UPLOADED)
-  sourceFileName   String
-  sourcePath       String
-  canonicalJson    Json?
-  validationReport Json?
-  courseId         String?
-  errorMessage     String?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime
-  User             User               @relation(fields: [instructorId], references: [id], onDelete: Cascade)
-
-  @@index([instructorId])
 }
 
 enum EmploymentStatus {
@@ -2892,16 +1001,6 @@ enum QuestionType {
   LONG_ANSWER
 }
 
-/**
- * |--------------------------------------------------------------------------
- * | Observation Agent
- * |--------------------------------------------------------------------------
- * | LearningEvent is the append-only activity log for every student action
- * | across the LMS. StudentActivityState is a cheap, denormalized "current
- * | pointer" derived from that log (counts + last-seen fields only — no
- * | scores, streaks, or interpretation; that belongs to future agents).
- */
-
 enum EventCategory {
   AUTHENTICATION
   COURSE
@@ -2917,7 +1016,7 @@ enum EventCategory {
 }
 
 enum EventType {
-  // Authentication
+
   USER_REGISTERED
   USER_LOGIN
   USER_LOGOUT
@@ -2925,7 +1024,6 @@ enum EventType {
   SESSION_EXPIRED
   TOKEN_REFRESHED
 
-  // Course
   COURSE_VIEWED
   COURSE_ENROLLED
   COURSE_UNENROLLED
@@ -2933,19 +1031,16 @@ enum EventType {
   COURSE_COMPLETED
   COURSE_RATED
 
-  // Module
   MODULE_VIEWED
   MODULE_STARTED
   MODULE_COMPLETED
 
-  // Lesson
   LESSON_VIEWED
   LESSON_STARTED
   LESSON_COMPLETED
   LESSON_BOOKMARKED
   LESSON_NOTE_ADDED
 
-  // Video
   VIDEO_PLAYED
   VIDEO_PAUSED
   VIDEO_SEEKED
@@ -2954,31 +1049,26 @@ enum EventType {
   VIDEO_SPEED_CHANGED
   VIDEO_QUALITY_CHANGED
 
-  // Reading
   READING_STARTED
   READING_PROGRESS
   READING_COMPLETED
 
-  // Quiz
   QUIZ_STARTED
   QUIZ_QUESTION_ANSWERED
   QUIZ_SUBMITTED
   QUIZ_COMPLETED
   QUIZ_ABANDONED
 
-  // Assignment
   ASSIGNMENT_STARTED
   ASSIGNMENT_SUBMITTED
   ASSIGNMENT_RESUBMITTED
   ASSIGNMENT_GRADE_VIEWED
 
-  // Discussion
   DISCUSSION_POST_CREATED
   DISCUSSION_REPLY_CREATED
   DISCUSSION_POST_LIKED
   DISCUSSION_VIEWED
 
-  // AI Chat
   AI_CHAT_SESSION_STARTED
   AI_CHAT_MESSAGE_SENT
   AI_CHAT_RESPONSE_RECEIVED
@@ -2986,7 +1076,6 @@ enum EventType {
   AI_CHAT_FEEDBACK_GIVEN
   AI_HINT_REQUESTED
 
-  // Navigation
   PAGE_VIEWED
   ROUTE_CHANGED
   SEARCH_PERFORMED
@@ -3000,7 +1089,6 @@ model LearningEvent {
   studentId String
   courseId  String?
 
-  // Loosely-related dimensions: indexed, not FK-constrained (see module docs).
   moduleId     String?
   lessonId     String?
   contentId    String?
@@ -3055,24 +1143,6 @@ model StudentActivityState {
   @@index([lastActiveAt])
 }
 
-/**
- * |--------------------------------------------------------------------------
- * | Student State Agent
- * |--------------------------------------------------------------------------
- * | Consumes LearningEvent (via the Observation Agent's event bus) and
- * | maintains a materialized "current understanding" of each student.
- * | StudentLearningState is the aggregate root; the five satellites below
- * | are its 1:1 domain slices. Named `StudentLearningState` rather than
- * | `StudentState` because that name is already taken by the pre-existing
- * | continue-watching pointer model above.
- * |
- * | Every accumulator here (counts, sums, histograms) is maintained
- * | incrementally per event — O(1) per update. recalculate() rebuilds a
- * | student's full state by replaying their LearningEvent history through
- * | the same reducers, so this data is always a reconstructable, disposable
- * | projection of the event log, never a second source of truth.
- */
-
 model StudentLearningState {
   id        String @id @default(cuid())
   studentId String @unique
@@ -3083,7 +1153,6 @@ model StudentLearningState {
   consistencyScore     Float @default(0)
   learningHealthScore  Float @default(0)
 
-  // Idempotency / ordering: the last LearningEvent this state reflects.
   lastEventId String?
   lastEventAt DateTime?
 
@@ -3137,9 +1206,7 @@ model StudentPerformance {
   passRate            Float @default(0)
 
   assignmentAttemptsCount   Int   @default(0)
-  // Assignment grades are free-text in this LMS (see AssignmentSubmission.grade),
-  // so not every attempt carries a numeric score — this counts only the
-  // ones that did, so assignmentAverage isn't diluted by unscored attempts.
+
   assignmentScoredCount     Int   @default(0)
   assignmentSumScorePercent Float @default(0)
   assignmentAverage         Float @default(0)
@@ -3148,13 +1215,9 @@ model StudentPerformance {
   totalAnswersCount   Int   @default(0)
   accuracy            Float @default(0)
 
-  // Bounded rolling window of recent quiz percentages, e.g. [72, 80, 65, ...].
-  // Used to derive improvementTrend without rescanning history.
   recentQuizScores Json?
   improvementTrend String @default("STABLE")
 
-  // { [concept]: { correct: number, total: number } }, sourced from
-  // QuizSubmission-shaped payloads (payload.conceptScores).
   topicStats   Json?
   weakTopics   Json?
   strongTopics Json?
@@ -3202,20 +1265,16 @@ model StudentBehavior {
   quizRetryCount     Int @default(0)
   aiHelpRequestCount Int @default(0)
 
-  // Bounded by distinct quizzes ever started (not event volume) — used to
-  // detect QUIZ_STARTED on a quiz already attempted before (a retry).
   startedQuizIds Json?
 
-  // 24-slot histogram of activity by hour-of-day, e.g. [2,0,0,...,5,9,3].
   hourHistogram                 Json?
   preferredLearningHour         Int?
   preferredStudyDurationSeconds Int?
 
-  preferredLearningSpeed String? // SLOW | NORMAL | FAST
+  preferredLearningSpeed String?
   speedSumForAvg         Float   @default(0)
   speedSampleCount       Int     @default(0)
 
-  // Tracks last content/lesson touched, to detect rewatch/skip on the next event.
   lastPlayedContentId        String?
   lastStartedLessonId        String?
   lastStartedLessonCompleted Boolean @default(false)
@@ -3234,11 +1293,8 @@ model StudentRisk {
   lowEngagementFlag Boolean @default(false)
 
   dropoutRiskScore Float  @default(0)
-  dropoutRiskLevel String @default("LOW") // LOW | MEDIUM | HIGH
+  dropoutRiskLevel String @default("LOW")
 
-  // Approximated from event-derivable signals only (no cross-module due-date
-  // coupling): time-since-last ASSIGNMENT_STARTED without a matching
-  // ASSIGNMENT_SUBMITTED. Documented limitation, not a stub.
   deadlineRiskScore          Float     @default(0)
   pendingAssignmentStartedAt DateTime?
 
@@ -3248,26 +1304,6 @@ model StudentRisk {
 
   state StudentLearningState @relation(fields: [stateId], references: [id], onDelete: Cascade)
 }
-
-/**
- * |--------------------------------------------------------------------------
- * | AI Student Entry Phase — per-course baseline state
- * |--------------------------------------------------------------------------
- * | StudentLearningState above is deliberately global (one row per student
- * | across their whole platform history). Entry-phase personalization is
- * | inherently per-course — a student's baseline in "Java Fundamentals" says
- * | nothing about their baseline in "Spanish for Beginners" — so this is a
- * | new, separate per-(studentId, courseId) model, not an extension of the
- * | global aggregate.
- * |
- * | Initialized by initializeCourseState() when the Assessment Agent
- * | publishes an evaluated EntryAssessment (see events/eventConsumer.js).
- * | recommendedMode/recommendedMinutes are computed here (explicit
- * | thresholds in constants/entryPhase.constants.js) and consumed as-is by
- * | the Learning Path Agent — it never re-derives the mode itself, only
- * | applies the same originalMinutes:recommendedMinutes ratio down to each
- * | lesson within a module (see learning-path/services/domain/pathPersonalizer.js).
- */
 
 enum LearningMode {
   SMART_REVISION
@@ -3284,10 +1320,9 @@ model StudentCourseState {
   entryAssessmentScore Float               @default(0)
   confidenceScore      Float               @default(0)
 
-  // [{concept, moduleId, masteryScore, recommendedMode, originalMinutes, recommendedMinutes}]
   conceptMastery Json
-  strongConcepts Json // string[]
-  weakConcepts   Json // string[]
+  strongConcepts Json
+  weakConcepts   Json
 
   originalTotalMinutes     Int @default(0)
   personalizedTotalMinutes Int @default(0)
@@ -3303,21 +1338,10 @@ model StudentCourseState {
   @@index([studentId])
 }
 
-/**
- * |--------------------------------------------------------------------------
- * | Assessment Agent
- * |--------------------------------------------------------------------------
- * | Evaluates learning outcomes from quiz/assignment/coding-exercise events
- * | and maintains an authoritative concept-mastery ledger. Deliberately no
- * | hard FK into Quiz/Assignment — a student's assessment history must
- * | survive course content being edited or deleted, so quizId/assignmentId
- * | are loose, indexed references only.
- */
-
 enum AssessmentType {
-  STANDARD // wraps a real Quiz/Assignment the student actually took
-  ADAPTIVE // agent-generated adaptive quiz recommendation
-  REVISION // agent-generated revision/reassessment recommendation
+  STANDARD
+  ADAPTIVE
+  REVISION
 }
 
 enum AssessmentStatus {
@@ -3363,9 +1387,9 @@ model Assessment {
   quizId       String?
   assignmentId String?
 
-  targetConcepts Json? // string[] — concepts this assessment covers
+  targetConcepts Json?
   difficulty     DifficultyLevel?
-  rationale      String?          @db.Text // why the agent generated this (ADAPTIVE/REVISION)
+  rationale      String?          @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3381,18 +1405,16 @@ model Assessment {
 model AssessmentAttempt {
   id           String @id @default(cuid())
   assessmentId String
-  studentId    String // denormalized for direct queries; ownership cascades via assessmentId
+  studentId    String
 
   attemptNumber Int
 
-  // Traceable to the originating LearningEvent, but not FK-constrained —
-  // same loose-coupling rationale as the rest of this agent.
   sourceEventId String?
 
   scorePercent          Float?
   passed                Boolean?
   timeSpentSeconds      Int?
-  conceptScoresSnapshot Json? // raw conceptScores payload, preserved for audit
+  conceptScoresSnapshot Json?
 
   submittedAt DateTime @default(now())
 
@@ -3406,12 +1428,12 @@ model AssessmentAttempt {
 model AssessmentResult {
   id        String @id @default(cuid())
   attemptId String @unique
-  studentId String // denormalized
+  studentId String
 
   overallScore     Float
-  masteryDeltas    Json? // { [concept]: delta }
-  gapsDetected     Json? // string[]
-  gapsClosed       Json? // string[]
+  masteryDeltas    Json?
+  gapsDetected     Json?
+  gapsClosed       Json?
   confidenceAtTime Float @default(0)
 
   evaluatedAt DateTime @default(now())
@@ -3426,13 +1448,13 @@ model ConceptMastery {
   studentId String
   concept   String
 
-  masteryScore    Float         @default(0) // 0-100, exponential moving average of evidence
-  confidenceLevel Float         @default(0) // 0-100, from sample size + consistency
+  masteryScore    Float         @default(0)
+  confidenceLevel Float         @default(0)
   status          MasteryStatus @default(UNASSESSED)
 
   attemptsCount Int    @default(0)
-  recentScores  Json? // bounded rolling window, for trend + consistency calc
-  trend         String @default("STABLE") // IMPROVING | DECLINING | STABLE
+  recentScores  Json?
+  trend         String @default("STABLE")
 
   lastCourseId       String?
   lastAssessedAt     DateTime?
@@ -3448,30 +1470,13 @@ model ConceptMastery {
   @@index([nextReassessmentAt])
 }
 
-model KnowledgeGap {
-  id        String @id @default(cuid())
-  studentId String
-  concept   String
-
-  severity Float     @default(0) // 0-100, how far below the weak threshold
-  status   GapStatus @default(OPEN)
-
-  detectedAt DateTime  @default(now())
-  closedAt   DateTime?
-
-  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([studentId, status])
-  @@index([concept])
-}
-
 model ReassessmentPlan {
   id        String @id @default(cuid())
   studentId String
   concept   String
 
   scheduledFor DateTime
-  reason       String // e.g. "spaced-repetition", "risk-escalation", "gap-detected"
+  reason       String
   priority     ReassessmentPriority @default(MEDIUM)
   status       ReassessmentStatus   @default(PENDING)
 
@@ -3484,28 +1489,11 @@ model ReassessmentPlan {
   @@index([status])
 }
 
-/**
- * |--------------------------------------------------------------------------
- * | AI Student Entry Phase — Entry Assessment
- * |--------------------------------------------------------------------------
- * | One row per (studentId, courseId), updated in place through its
- * | lifecycle — same "current row" convention as Assessment's own
- * | recommendation rows, not an append-only log (a student only ever has
- * | one entry assessment per course; retaking overwrites it).
- * |
- * | Concepts are generated from real Module titles (this LMS's closest
- * | equivalent to a "syllabus"), stored as free-text `concept` alongside a
- * | loose (non-FK) `moduleId` hint — same deliberate loose-coupling as
- * | ConceptMastery/KnowledgeGap above, so this survives course-content edits.
- * | correctAnswer/explanation are never sent to the client before
- * | submission (see dto/entryAssessmentResponse.dto.js).
- */
-
 enum EntryAssessmentStatus {
-  PENDING // enrollment happened, generation not yet requested
+  PENDING
   GENERATING
-  READY // questions generated, awaiting the student's answers
-  SUBMITTED // answers received, evaluation pipeline running
+  READY
+  SUBMITTED
   EVALUATED
   FAILED
 }
@@ -3522,19 +1510,19 @@ model EntryAssessment {
   courseId  String
 
   status           EntryAssessmentStatus @default(PENDING)
-  model            String? // "claude-sonnet-4-5" | "fallback-question-bank"
-  questions        Json? // [{id, concept, moduleId, difficulty, question, options, correctAnswer, explanation}]
-  syllabusSnapshot Json? // [{moduleId, title}] — what the generator was given, for audit/debugging
-  failureReason    String? // set when generation couldn't produce a real assessment (see llm/fallbackQuestionBank.js)
+  model            String?
+  questions        Json?
+  syllabusSnapshot Json?
+  failureReason    String?
 
-  answers Json? // { [questionId]: selectedOptionIndex }
+  answers Json?
 
   overallScore    Float?
   knowledgeLevel  EntryKnowledgeLevel?
   confidenceScore Float?
-  conceptScores   Json? // [{concept, moduleId, masteryScore}]
-  strongConcepts  Json? // string[]
-  weakConcepts    Json? // string[]
+  conceptScores   Json?
+  strongConcepts  Json?
+  weakConcepts    Json?
 
   generatedAt DateTime?
   submittedAt DateTime?
@@ -3550,19 +1538,6 @@ model EntryAssessment {
   @@index([studentId])
   @@index([courseId])
 }
-
-/**
- * |--------------------------------------------------------------------------
- * | Recommendation Agent
- * |--------------------------------------------------------------------------
- * | Pure consumer/synthesizer: reads Observation, Student State, Assessment,
- * | Learning Path (once it exists) and the read-only course catalog to
- * | generate personalized "what to do next" recommendations. Owns no
- * | source-of-truth learning data — only its own recommendation ledger.
- * | Deliberately no hard FK into Course/Module/Lesson/Quiz/Assignment, same
- * | loose-coupling rationale as Assessment: a recommendation must survive
- * | course content being edited or deleted.
- */
 
 enum RecommendationType {
   CONTINUE_LEARNING
@@ -3615,13 +1590,10 @@ model Recommendation {
   priority RecommendationPriority @default(MEDIUM)
   status   RecommendationStatus   @default(ACTIVE)
 
-  // Identifies "the same recommendation slot" across recomputes, e.g.
-  // "REVIEW_WEAK_TOPICS:algebra" or "CONTINUE_LEARNING:course_1" — lets
-  // recompute upsert in place instead of duplicating rows every cycle.
   dedupeKey String
 
-  score           Float @default(0) // raw ranked score (0-100), see scoringEngine
-  confidenceScore Float @default(0) // 0-100
+  score           Float @default(0)
+  confidenceScore Float @default(0)
 
   reason               String @db.Text
   estimatedTimeMinutes Int?
@@ -3630,8 +1602,6 @@ model Recommendation {
   moduleId String?
   lessonId String?
 
-  // Free-form structured extras per type: concept, quizId, assignmentId,
-  // exerciseType, etc. — avoids bloating the model with per-type columns.
   metadata Json?
 
   version     Int       @default(1)
@@ -3652,10 +1622,8 @@ model Recommendation {
 model RecommendationHistory {
   id               String @id @default(cuid())
   recommendationId String
-  studentId        String // denormalized for direct queries
+  studentId        String
 
-  // Immutable snapshot of the Recommendation at the moment it was retired
-  // or superseded — the live row keeps mutating, this row never does.
   type            RecommendationType
   priority        RecommendationPriority
   status          RecommendationStatus
@@ -3678,7 +1646,7 @@ model RecommendationHistory {
 model RecommendationFeedback {
   id               String @id @default(cuid())
   recommendationId String
-  studentId        String // denormalized for direct queries
+  studentId        String
 
   action  RecommendationFeedbackAction
   comment String?                      @db.Text
@@ -3691,9 +1659,6 @@ model RecommendationFeedback {
   @@index([recommendationId])
 }
 
-/**
- * Admin-tunable scoring overrides — global, no student relation.
- */
 model RecommendationRule {
   id      String              @id @default(cuid())
   ruleKey String              @unique
@@ -3709,9 +1674,6 @@ model RecommendationRule {
   @@index([type, isActive])
 }
 
-/**
- * Aggregated per (type, date) counters — feeds the future Analytics Agent.
- */
 model RecommendationAnalytics {
   id   String             @id @default(cuid())
   type RecommendationType
@@ -3728,18 +1690,6 @@ model RecommendationAnalytics {
   @@unique([type, date])
   @@index([date])
 }
-
-/**
- * |--------------------------------------------------------------------------
- * | Motivation Agent
- * |--------------------------------------------------------------------------
- * | Pure consumer/synthesizer, same boundary as Recommendation: reads
- * | Observation, Student State, Assessment, Recommendation, Learning Path
- * | (once it exists) and the read-only deadline catalog to decide when and
- * | how to motivate a student. Owns no source-of-truth learning data — only
- * | its own motivation ledger. Never sends anything directly; a separate
- * | Notification Service is responsible for delivery.
- */
 
 enum MotivationActionType {
   DAILY_REMINDER
@@ -3795,15 +1745,12 @@ model MotivationAction {
   priority MotivationPriority   @default(MEDIUM)
   status   MotivationStatus     @default(ACTIVE)
 
-  // Identifies "the same action slot" across recomputes, e.g.
-  // "INACTIVITY_ALERT:general" or "DEADLINE_ALERT:quiz:quiz_1" — lets
-  // recompute upsert in place instead of duplicating rows every cycle.
   dedupeKey String
 
   triggerReason   String @db.Text
-  confidenceScore Float  @default(0) // 0-100
+  confidenceScore Float  @default(0)
 
-  recommendedAt DateTime // when the Notification Service should ideally deliver this
+  recommendedAt DateTime
   expiresAt     DateTime?
 
   courseId String?
@@ -3829,7 +1776,7 @@ model MotivationAction {
 model MotivationHistory {
   id                 String @id @default(cuid())
   motivationActionId String
-  studentId          String // denormalized for direct queries
+  studentId          String
 
   type            MotivationActionType
   priority        MotivationPriority
@@ -3849,16 +1796,13 @@ model MotivationHistory {
   @@index([type])
 }
 
-/**
- * The actual scheduling logic: a per-student recurring cadence, not a one-off action.
- */
 model ReminderSchedule {
   id        String @id @default(cuid())
   studentId String
 
-  reminderType  MotivationActionType // DAILY_REMINDER | STUDY_SESSION_REMINDER | WEEKLY_GOAL_REMINDER | REVISION_REMINDER
+  reminderType  MotivationActionType
   cadence       ReminderCadence      @default(DAILY)
-  preferredHour Int?                 @default(18) // 0-23, sourced from Student State's behavior.preferredLearningHour when known
+  preferredHour Int?                 @default(18)
 
   nextRunAt DateTime
   lastRunAt DateTime?
@@ -3874,9 +1818,6 @@ model ReminderSchedule {
   @@index([studentId])
 }
 
-/**
- * Reconciled from Student State's engagement domain, plus motivation-specific celebration bookkeeping.
- */
 model StudentStreak {
   id        String @id @default(cuid())
   studentId String @unique
@@ -3887,9 +1828,7 @@ model StudentStreak {
   lastActiveDate    DateTime?    @db.Date
   lastBrokenAt      DateTime?
 
-  // Streak-day thresholds (7, 30, 100, ...) already celebrated, so the same
-  // milestone never triggers MILESTONE_CELEBRATION twice.
-  celebratedStreakMilestones Json? // number[]
+  celebratedStreakMilestones Json?
 
   updatedAt DateTime @updatedAt
 
@@ -3898,9 +1837,6 @@ model StudentStreak {
   @@index([streakStatus])
 }
 
-/**
- * Daily per-student snapshot — enables trend detection that a single point-in-time read can't give.
- */
 model EngagementTrend {
   id        String   @id @default(cuid())
   studentId String
@@ -3919,9 +1855,6 @@ model EngagementTrend {
   @@index([studentId, date])
 }
 
-/**
- * Aggregated per (type, date) counters — feeds the future Analytics Agent.
- */
 model MotivationAnalytics {
   id   String               @id @default(cuid())
   type MotivationActionType
@@ -3937,18 +1870,6 @@ model MotivationAnalytics {
   @@unique([type, date])
   @@index([date])
 }
-
-/**
- * |--------------------------------------------------------------------------
- * | Teacher Insight Agent
- * |--------------------------------------------------------------------------
- * | The first course-scoped (not student-scoped) agent: aggregates every
- * | enrolled student's Student State/Assessment/Recommendation/Motivation
- * | data to generate instructor-facing insights. Unlike the per-student
- * | agents, courseId here is a real cascading FK — an insight about a course
- * | has no meaning once that course is gone, unlike a student's personal
- * | history which must survive content edits.
- */
 
 enum AlertType {
   AT_RISK
@@ -4029,16 +1950,8 @@ model CourseInsight {
   priority InsightPriority @default(MEDIUM)
   status   InsightStatus   @default(ACTIVE)
 
-  // Was referenced by this model's own repository (orderBy/create/update)
-  // and DTO from the start but missing from the schema — an unambiguous
-  // pre-existing omission (every sibling model — StudentAlert,
-  // TeachingRecommendation — already has this exact field), discovered
-  // and fixed while wiring the Admin Intelligence Agent's own dependency
-  // on getTeacherDashboard(), which calls findActiveByCourse() below.
   confidenceScore Float @default(0)
 
-  // Identifies "the same insight slot" for upsert-in-place — a concept
-  // name, lessonId, quizId, or assignmentId depending on insightType.
   dedupeKey String
 
   title  String
@@ -4063,9 +1976,6 @@ model CourseInsight {
   @@index([insightType])
 }
 
-/**
- * Singleton per course — the current health snapshot, version-bumped in place like StudentLearningState.
- */
 model CourseHealth {
   id       String @id @default(cuid())
   courseId String @unique
@@ -4121,14 +2031,10 @@ model TeachingRecommendation {
   @@index([courseId, status, priority])
 }
 
-/**
- * The umbrella periodic report — Weekly/Monthly, bundling counts from the other four models. Naturally append-only by period, so never routed through InsightHistory.
- */
 model TeacherInsight {
   id        String @id @default(cuid())
   courseId  String
-  // Denormalized from Course.creatorId at generation time, so /teacher-insights/:teacherId
-  // can query directly without joining through Course on every read.
+
   teacherId String
 
   reportType  TeacherReportType
@@ -4136,7 +2042,7 @@ model TeacherInsight {
   periodEnd   DateTime
 
   summary         String @db.Text
-  highlights      Json // structured bundle: top issues, top performers, health score, etc.
+  highlights      Json
   confidenceScore Float  @default(0)
 
   generatedAt DateTime @default(now())
@@ -4149,19 +2055,14 @@ model TeacherInsight {
   @@index([courseId, periodStart])
 }
 
-/**
- * Polymorphic retirement history, spanning StudentAlert/CourseInsight/
- * TeachingRecommendation — no hard FK possible across three different
- * source tables, so sourceId is a loose indexed reference by design.
- */
 model InsightHistory {
   id          String             @id @default(cuid())
   sourceModel InsightSourceModel
   sourceId    String
   courseId    String
-  studentId   String? // only present for StudentAlert snapshots
+  studentId   String?
 
-  insightType String // the specific enum value from whichever source model, stored as a string since it spans three different Prisma enums
+  insightType String
   priority    InsightPriority
   status      InsightStatus
 
@@ -4178,13 +2079,10 @@ model InsightHistory {
   @@index([studentId])
 }
 
-/**
- * Aggregated per (courseId, insightType, date) counters — feeds the future Analytics Agent.
- */
 model InsightAnalytics {
   id          String   @id @default(cuid())
   courseId    String
-  insightType String // spans multiple enums, stored as a string
+  insightType String
   date        DateTime @db.Date
 
   generatedCount Int @default(0)
@@ -4196,22 +2094,6 @@ model InsightAnalytics {
   @@index([date])
 }
 
-/**
- * |--------------------------------------------------------------------------
- * | Analytics Agent
- * |--------------------------------------------------------------------------
- * | Every model below is scoped generically via (scopeType, scopeId) rather
- * | than four parallel Student/Instructor/Course/PlatformAnalytics model
- * | families, so one calculation/trend/forecast engine serves all four
- * | levels. scopeId is the real StudentProfile.id/User.id/Course.id for
- * | STUDENT/INSTRUCTOR/COURSE scope, or the literal string "platform" for
- * | the singleton PLATFORM scope (see constants/enums.constants.js).
- * |
- * | No hard FK on scopeId: a single column can't reference four
- * | heterogeneous parent tables. This follows the same polymorphic loose-
- * | reference convention InsightHistory above already established, rather
- * | than denormalizing three nullable FK columns onto every model here.
- */
 enum AnalyticsScopeType {
   PLATFORM
   COURSE
@@ -4220,24 +2102,24 @@ enum AnalyticsScopeType {
 }
 
 enum AnalyticsMetricKey {
-  // Student
+
   STUDY_TIME
   LEARNING_STREAK
   PROGRESS_TREND
   COMPLETION_RATE
   ASSESSMENT_TREND
-  // Instructor
+
   COURSE_PERFORMANCE
   STUDENT_ENGAGEMENT
   TEACHING_EFFECTIVENESS
   ASSESSMENT_QUALITY
-  // Course
+
   ENROLLMENT_TREND
   COMPLETION_TREND
   DROPOUT_RATE
   AVERAGE_SCORE
   DIFFICULTY_SCORE
-  // Platform
+
   ACTIVE_USERS
   DAILY_ACTIVE_USERS
   MONTHLY_ACTIVE_USERS
@@ -4262,9 +2144,6 @@ enum AnalyticsReportType {
   ANNUAL
 }
 
-/**
- * Live current value per (scope, metric) — version-bumped in place, same "current row" pattern as CourseHealth.
- */
 model KPI {
   id               String                   @id @default(cuid())
   scopeType        AnalyticsScopeType
@@ -4285,9 +2164,6 @@ model KPI {
   @@index([metricKey])
 }
 
-/**
- * Append-only per-metric daily fact — the time-series fuel behind TrendAnalysis and Forecast. One row per (scope, metric, day); same-day recompute overwrites, never duplicates.
- */
 model AnalyticsHistory {
   id         String             @id @default(cuid())
   scopeType  AnalyticsScopeType
@@ -4301,9 +2177,6 @@ model AnalyticsHistory {
   @@index([scopeType, scopeId, metricKey, date])
 }
 
-/**
- * Wide daily rollup bundling every metric active for a scope into one document — a single-fetch "what did this scope look like on date X", distinct granularity from AnalyticsHistory's narrow per-metric log. Built by the daily sweep, not on every recompute.
- */
 model AnalyticsSnapshot {
   id        String             @id @default(cuid())
   scopeType AnalyticsScopeType
@@ -4317,9 +2190,6 @@ model AnalyticsSnapshot {
   @@index([scopeType, scopeId, date])
 }
 
-/**
- * Precomputed, chart-ready datasets (arrays/breakdowns) — the caching layer GET /analytics/dashboard reads directly instead of recomputing joins per request.
- */
 model DashboardMetric {
   id           String             @id @default(cuid())
   scopeType    AnalyticsScopeType
@@ -4333,9 +2203,6 @@ model DashboardMetric {
   @@index([scopeType, scopeId])
 }
 
-/**
- * Current trend judgment per (scope, metric) — version-bumped in place, refreshed every recompute from AnalyticsHistory.
- */
 model TrendAnalysis {
   id            String                  @id @default(cuid())
   scopeType     AnalyticsScopeType
@@ -4353,9 +2220,6 @@ model TrendAnalysis {
   @@index([scopeType, scopeId])
 }
 
-/**
- * Predicted future value per (scope, metric, target date) — upserted per recompute for idempotency. Only written once enough AnalyticsHistory exists (see forecastEngine.js); no row is better than a fabricated confident guess from zero history.
- */
 model Forecast {
   id                String             @id @default(cuid())
   scopeType         AnalyticsScopeType
@@ -4372,9 +2236,6 @@ model Forecast {
   @@index([scopeType, scopeId, metricKey])
 }
 
-/**
- * Periodic administrative report — PLATFORM-scoped only (see index.js docs for why per-course/instructor reports aren't duplicated here). Get-or-generate semantics, same as TeacherInsight's report model.
- */
 model Report {
   id          String              @id @default(cuid())
   scopeType   AnalyticsScopeType
@@ -4393,19 +2254,6 @@ model Report {
   @@index([scopeType, scopeId])
 }
 
-/**
- * |--------------------------------------------------------------------------
- * | Career Guidance Agent
- * |--------------------------------------------------------------------------
- * | Unlike Analytics/Teacher Insight, every model here is scoped to exactly
- * | one parent (StudentProfile, sometimes IndustryRole) — not a polymorphic
- * | scope spanning heterogeneous tables — so these get real cascading FKs.
- * |
- * | IndustryRole is this agent's own seeded skill taxonomy (there is no
- * | external taxonomy integrated anywhere in this codebase); SkillAssessment
- * | is a materialized snapshot of Assessment Agent's ConceptMastery,
- * | re-labeled into career context rather than a live cross-schema join.
- */
 enum CareerRecommendationType {
   CERTIFICATION
   COURSE
@@ -4481,15 +2329,12 @@ enum CareerGoalStatus {
   ABANDONED
 }
 
-/**
- * Seeded skill taxonomy + target-role catalog — see ai/jobMarketProvider.js for how industryDemandScore/avgSalary get refreshed.
- */
 model IndustryRole {
   id                  String   @id @default(cuid())
   name                String   @unique
   category            String
   description         String?  @db.Text
-  requiredSkills      Json // { skillName: importanceWeight(0-100) }
+  requiredSkills      Json
   minReadinessScore   Int      @default(60)
   avgSalaryMin        Int?
   avgSalaryMax        Int?
@@ -4509,9 +2354,6 @@ model IndustryRole {
   @@index([isActive])
 }
 
-/**
- * A student may hold several goals over time (history via status transitions), but only one ACTIVE at once — enforced in the service layer.
- */
 model CareerGoal {
   id           String           @id @default(cuid())
   studentId    String
@@ -4528,9 +2370,6 @@ model CareerGoal {
   @@index([studentId, status])
 }
 
-/**
- * Current-row aggregate, one per student, version-bumped in place — same pattern as CourseHealth/StudentLearningState.
- */
 model CareerProfile {
   id                   String                 @id @default(cuid())
   studentId            String                 @unique
@@ -4539,8 +2378,8 @@ model CareerProfile {
   industryReadiness    IndustryReadinessLevel
   skillMatchPercent    Int
   primaryTargetRoleId  String?
-  topMatchedRoles      Json // [{roleId, roleName, matchPercent}]
-  missingSkillsSummary Json // [skillName, ...] top gaps
+  topMatchedRoles      Json
+  missingSkillsSummary Json
   version              Int                    @default(1)
   lastCalculatedAt     DateTime               @default(now())
   createdAt            DateTime               @default(now())
@@ -4553,15 +2392,12 @@ model CareerProfile {
   @@index([industryReadiness])
 }
 
-/**
- * Career Guidance's own materialized skill snapshot, sourced from Assessment's ConceptMastery — this agent's historical skill record, not a live cross-schema join.
- */
 model SkillAssessment {
   id             String   @id @default(cuid())
   studentId      String
   skillName      String
   proficiency    Int
-  status         String // mirrors Assessment's MASTERY_STATUS values (UNASSESSED/WEAK/DEVELOPING/MASTERED), stored as a plain string snapshot, not FK'd
+  status         String
   source         String   @default("ASSESSMENT_AGENT")
   version        Int      @default(1)
   lastAssessedAt DateTime
@@ -4573,9 +2409,6 @@ model SkillAssessment {
   @@index([studentId])
 }
 
-/**
- * Current row per (student, target role, skill) — recomputed every cycle, closed rather than deleted when the gap resolves.
- */
 model SkillGap {
   id            String           @id @default(cuid())
   studentId     String
@@ -4598,9 +2431,6 @@ model SkillGap {
   @@index([studentId, status])
 }
 
-/**
- * Current row, version-bumped in place, upsert by dedupeKey — identical pattern to Recommendation Agent's Recommendation model.
- */
 model CareerRecommendation {
   id                   String                     @id @default(cuid())
   studentId            String
@@ -4626,9 +2456,6 @@ model CareerRecommendation {
   @@index([type])
 }
 
-/**
- * Immutable snapshot of a CareerRecommendation at the moment it's retired — same convention as RecommendationHistory/MotivationHistory/InsightHistory.
- */
 model CareerRecommendationHistory {
   id               String                   @id @default(cuid())
   studentId        String
@@ -4648,16 +2475,13 @@ model CareerRecommendationHistory {
   @@index([recommendationId])
 }
 
-/**
- * One current row per (student, horizon) — regenerated whole on every recompute, not incrementally patched.
- */
 model CareerRoadmap {
   id           String         @id @default(cuid())
   studentId    String
   targetRoleId String?
   horizon      RoadmapHorizon
   status       RoadmapStatus  @default(ACTIVE)
-  milestones   Json // [{title, type, dedupeKey, order, estimatedDays, description}]
+  milestones   Json
   version      Int            @default(1)
   generatedAt  DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
@@ -4669,9 +2493,6 @@ model CareerRoadmap {
   @@index([studentId])
 }
 
-/**
- * Append-only daily fact — the time-series backbone for "track career progress over time", same pattern as Analytics' AnalyticsHistory.
- */
 model CareerReadinessHistory {
   id                String   @id @default(cuid())
   studentId         String
@@ -4686,22 +2507,6 @@ model CareerReadinessHistory {
   @@index([studentId, date])
 }
 
-/**
- * |--------------------------------------------------------------------------
- * | Learning Path Agent
- * |--------------------------------------------------------------------------
- * | Every other agent in this series (Recommendation, Assessment,
- * | Motivation, Teacher Insight, Analytics, Career Guidance) already wired
- * | a defensive try/require against this module's existence — this is the
- * | first time it's real. Its public index.js exports exactly the shape
- * | those six already expect (subscribe, LEARNING_PATH_EVENT_NAMES,
- * | getFullState, getBatchStates), so none of them need to change.
- * |
- * | There is no explicit prerequisite-graph model anywhere in this LMS —
- * | Module.order/Lesson.order already function as the de facto prerequisite
- * | chain for this linear-course LMS, so "prerequisite" here means
- * | "the next incomplete lesson in sequence," not a separate DAG.
- */
 enum LearningPathDifficultyAdjustment {
   EASE_UP
   STANDARD
@@ -4762,17 +2567,14 @@ enum LearningGoalStatus {
   ABANDONED
 }
 
-/**
- * Current-row aggregate, one per student, version-bumped in place — same pattern as CourseHealth/StudentLearningState/CareerProfile.
- */
 model LearningPath {
   id                          String                           @id @default(cuid())
   studentId                   String                           @unique
   currentCourseId             String?
   nextLessonId                String?
   nextModuleId                String?
-  recommendedLearningOrder    Json // [{lessonId, moduleId, title, order, estimatedMinutes}]
-  priorityTopics              Json // [topic, ...] from Student State's weakTopics
+  recommendedLearningOrder    Json
+  priorityTopics              Json
   difficultyAdjustment        LearningPathDifficultyAdjustment @default(STANDARD)
   suggestedStudyMinutesPerDay Int                              @default(30)
   estimatedCompletionDate     DateTime?
@@ -4786,9 +2588,6 @@ model LearningPath {
   @@index([studentId])
 }
 
-/**
- * Current row, version-bumped in place, upsert by dedupeKey — a small fixed set of types (not a competing-candidates pool), so no ranking/cap needed unlike Recommendation/CareerRecommendation.
- */
 model LearningRecommendation {
   id          String                         @id @default(cuid())
   studentId   String
@@ -4812,16 +2611,13 @@ model LearningRecommendation {
   @@index([type])
 }
 
-/**
- * One row per (student, planType, period) — DAILY's periodStart is today, WEEKLY's is the Monday of the current week; the daily plan is literally day-zero of the same weekly computation, not a separately derived one.
- */
 model StudyPlan {
   id                    String        @id @default(cuid())
   studentId             String
   planType              StudyPlanType
   periodStart           DateTime      @db.Date
   periodEnd             DateTime      @db.Date
-  scheduledItems        Json // [{date, items: [{lessonId, moduleId, title, estimatedMinutes}], totalMinutes}]
+  scheduledItems        Json
   suggestedStudyMinutes Int           @default(0)
   version               Int           @default(1)
   generatedAt           DateTime      @default(now())
@@ -4832,9 +2628,6 @@ model StudyPlan {
   @@index([studentId, planType])
 }
 
-/**
- * Genuinely append-only historical progress — achieved milestones are never deleted, satisfying "Historical Progress" without a dedicated audit table. milestoneKey (e.g. "MODULE_COMPLETION:{moduleId}"/"COURSE_COMPLETION:{courseId}") keeps the unique constraint non-null-safe.
- */
 model LearningMilestone {
   id            String          @id @default(cuid())
   studentId     String
@@ -4857,9 +2650,6 @@ model LearningMilestone {
   @@index([studentId, status])
 }
 
-/**
- * Current row per (student, topic) — a topic no longer weak on recompute is inferred COMPLETED, not deleted, same "no longer generated -> superseded" logic every other recommendation-owning agent in this series uses.
- */
 model RevisionPlan {
   id            String             @id @default(cuid())
   studentId     String
@@ -4879,9 +2669,6 @@ model RevisionPlan {
   @@index([studentId, status])
 }
 
-/**
- * Read-ready per the schema requirement — this agent's required API surface (see routes/learningPath.routes.js) has no write endpoint for this model, so rows are only ever created by a future endpoint or direct seeding; context/studentContextBuilder.js reads it defensively (null-safe) either way.
- */
 model LearningGoal {
   id          String             @id @default(cuid())
   studentId   String
@@ -4899,25 +2686,6 @@ model LearningGoal {
   @@index([studentId, status])
 }
 
-/**
- * |--------------------------------------------------------------------------
- * | Placement Agent
- * |--------------------------------------------------------------------------
- * | Company/JobOpportunity/InternshipOpportunity/PlacementDrive are this
- * | agent's own seeded catalog — there is no external job-portal
- * | integration wired into this codebase (no API key, no network client),
- * | so these are real, owned reference data (see constants/companies.seed.js,
- * | constants/opportunities.seed.js) with an adapter seam
- * | (integrations/jobPortalProvider.js) for a real provider later, exactly
- * | the same pattern Career Guidance's IndustryRole taxonomy already
- * | established. `source` distinguishes seed/admin rows (INTERNAL) from
- * | rows a future real integration would write (EXTERNAL_API).
- * |
- * | There is no Resume/Portfolio/Project model anywhere in this LMS, so
- * | resumeQualityScore/portfolioQualityScore are honest proxies computed
- * | from real signals (credentials, skill breadth, profile completeness),
- * | not actual content analysis — see ai/resumePortfolioScorer.js.
- */
 enum OpportunityType {
   JOB
   INTERNSHIP
@@ -5000,9 +2768,6 @@ enum DriveStatus {
   CANCELLED
 }
 
-/**
- * This agent's own seeded employer catalog.
- */
 model Company {
   id          String   @id @default(cuid())
   name        String   @unique
@@ -5010,7 +2775,7 @@ model Company {
   website     String?
   logoUrl     String?
   description String?  @db.Text
-  isVerified  Boolean  @default(true) // seeded/admin-entered data is trusted by construction — no external verification pipeline exists
+  isVerified  Boolean  @default(true)
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -5028,7 +2793,7 @@ model JobOpportunity {
   companyId           String
   title               String
   description         String?           @db.Text
-  requiredSkills      Json // { skillName: importanceWeight(0-100) } — same shape/convention as Career Guidance's IndustryRole.requiredSkills
+  requiredSkills      Json
   minExperienceYears  Int               @default(0)
   employmentType      EmploymentType    @default(FULL_TIME)
   location            String?
@@ -5063,7 +2828,7 @@ model InternshipOpportunity {
   currency            String            @default("INR")
   location            String?
   isRemote            Boolean           @default(false)
-  isPPO               Boolean           @default(false) // pre-placement-offer potential
+  isPPO               Boolean           @default(false)
   applicationDeadline DateTime?
   status              OpportunityStatus @default(OPEN)
   source              OpportunitySource @default(INTERNAL)
@@ -5080,16 +2845,13 @@ model InternshipOpportunity {
   @@index([postedAt])
 }
 
-/**
- * Campus hiring event for one company, distinct from its individual job/internship postings.
- */
 model PlacementDrive {
   id                   String      @id @default(cuid())
   companyId            String
   title                String
   description          String?     @db.Text
   driveDate            DateTime?
-  eligibilityCriteria  Json? // e.g. { minReadinessScore, minCgpa, allowedBranches }
+  eligibilityCriteria  Json?
   registrationDeadline DateTime?
   status               DriveStatus @default(UPCOMING)
   createdAt            DateTime    @default(now())
@@ -5103,14 +2865,6 @@ model PlacementDrive {
   @@index([status])
 }
 
-/**
- * Current row per (student, opportunity), version-bumped in place — same
- * pattern as CareerRecommendation. opportunityId is a loose polymorphic
- * reference (spans JobOpportunity and InternshipOpportunity, disambiguated
- * by opportunityType) — the same convention Teacher Insight's InsightHistory
- * and Analytics' scopeId already established for one column referencing
- * more than one heterogeneous parent table.
- */
 model JobMatch {
   id              String           @id @default(cuid())
   studentId       String
@@ -5118,7 +2872,7 @@ model JobMatch {
   opportunityId   String
   dedupeKey       String
   matchPercent    Int
-  missingSkills   Json // [skillName, ...]
+  missingSkills   Json
   priority        JobMatchPriority
   status          JobMatchStatus   @default(ACTIVE)
   reason          String           @db.Text
@@ -5133,12 +2887,6 @@ model JobMatch {
   @@index([opportunityType, opportunityId])
 }
 
-/**
- * A student-initiated tracking record only — per the constraint that this
- * agent must NEVER auto-apply on a student's behalf, creating this row
- * never submits anything to a real ATS/company; it's this agent's own
- * record of "the student says they applied," nothing more.
- */
 model Application {
   id              String            @id @default(cuid())
   studentId       String
@@ -5161,9 +2909,6 @@ model Application {
   @@index([opportunityType, opportunityId])
 }
 
-/**
- * One row per interview round/stage for a tracked application.
- */
 model Interview {
   id            String           @id @default(cuid())
   applicationId String
@@ -5184,11 +2929,6 @@ model Interview {
   @@index([studentId, status])
 }
 
-/**
- * 1:1 with Application — the offer's status transitions (ACCEPTED/DECLINED)
- * represent the student's own decision, never made by this agent, per the
- * constraint that it must never accept/decline offers on their behalf.
- */
 model Offer {
   id              String          @id @default(cuid())
   applicationId   String          @unique
@@ -5211,15 +2951,12 @@ model Offer {
   @@index([studentId, status])
 }
 
-/**
- * Append-only daily snapshot of resume/portfolio quality — the historical record behind PlacementProfile's current scores, same pattern as CareerReadinessHistory.
- */
 model ResumeReview {
   id                    String   @id @default(cuid())
   studentId             String
   resumeQualityScore    Int
   portfolioQualityScore Int
-  suggestions           Json // [{type, reason}]
+  suggestions           Json
   date                  DateTime @db.Date
   createdAt             DateTime @default(now())
 
@@ -5229,9 +2966,6 @@ model ResumeReview {
   @@index([studentId, date])
 }
 
-/**
- * Current-row aggregate, one per student, version-bumped in place — same pattern as CareerProfile.
- */
 model PlacementProfile {
   id                      String           @id @default(cuid())
   studentId               String           @unique
@@ -5244,8 +2978,8 @@ model PlacementProfile {
   topCompanyId            String?
   topOpportunityType      OpportunityType?
   topOpportunityId        String?
-  missingSkillsSummary    Json // [skillName, ...]
-  preparationSuggestions  Json // [{type, reason}] — MOCK_INTERVIEW/CODING_ASSESSMENT/RESUME_IMPROVEMENT/PORTFOLIO_IMPROVEMENT/COMPANY_SPECIFIC_PREP
+  missingSkillsSummary    Json
+  preparationSuggestions  Json
   version                 Int              @default(1)
   lastCalculatedAt        DateTime         @default(now())
   createdAt               DateTime         @default(now())
@@ -5256,31 +2990,6 @@ model PlacementProfile {
   @@index([studentId])
 }
 
-/**
- * |--------------------------------------------------------------------------
- * | Admin Intelligence Agent
- * |--------------------------------------------------------------------------
- * | Institution-wide, one layer above Analytics ("aggregates the
- * | aggregators, one level up") — every model here uses the same polymorphic
- * | (scopeType, scopeId) pattern Analytics/Teacher Insight already
- * | established for one column that can't hard-FK several heterogeneous
- * | parent tables, since this agent spans PLATFORM/DEPARTMENT/FACULTY/
- * | COURSE/STUDENT scope all at once.
- * |
- * | No Department/Faculty/Semester/Revenue/Subscription/SystemLog/AuditLog
- * | model exists anywhere else in this schema (see index.js doc for the
- * | full domain-gap list). DEPARTMENT scope's scopeId is Course.category
- * | (the only real institutional grouping dimension this LMS has) and
- * | FACULTY scope's scopeId is a User.id with role=INSTRUCTOR — same
- * | "instructorId is a plain loose reference, never a hard FK to User"
- * | convention Teacher Insight already uses for TeachingRecommendation.
- * |
- * | Every model doubles as its own time-series table (date-bucketed, unique
- * | on scope+date or metricKey+date) — this is how "historical snapshots /
- * | time-series support" is satisfied without a fabricated 11th model, same
- * | restraint as Learning Path's LearningGoal / Placement's embedded
- * | preparationSuggestions.
- */
 enum AdminScopeType {
   PLATFORM
   DEPARTMENT
@@ -5367,11 +3076,6 @@ enum AdminAlertType {
   CAPACITY_WARNING
 }
 
-/**
- * Daily platform-wide health snapshot — the "current" row is simply the
- * latest date, so this one table is both InstitutionHealth's live state and
- * its own history/time-series, no paired history model needed.
- */
 model InstitutionHealth {
   id                      String   @id @default(cuid())
   date                    DateTime @db.Date
@@ -5395,9 +3099,6 @@ model InstitutionHealth {
   @@index([date])
 }
 
-/**
- * Per-department (Course.category proxy) daily snapshot/time-series.
- */
 model DepartmentAnalytics {
   id                       String   @id @default(cuid())
   departmentKey            String
@@ -5415,11 +3116,6 @@ model DepartmentAnalytics {
   @@index([departmentKey, date])
 }
 
-/**
- * Per-instructor ("faculty") daily snapshot/time-series. instructorId is a
- * plain loose reference (User.id, role=INSTRUCTOR) — never a hard FK, same
- * convention Teacher Insight already uses for instructor-scoped rows.
- */
 model FacultyAnalytics {
   id                           String   @id @default(cuid())
   instructorId                 String
@@ -5438,12 +3134,6 @@ model FacultyAnalytics {
   @@index([instructorId, date])
 }
 
-/**
- * Executive-facing generated insight — same current-row + retire-on-EXPIRED
- * shape as Recommendation/CareerRecommendation, scoped polymorphically since
- * an insight can be about the platform, a department, a faculty member, a
- * course, or a specific at-risk student.
- */
 model AdminInsight {
   id              String               @id @default(cuid())
   category        AdminInsightCategory
@@ -5465,14 +3155,6 @@ model AdminInsight {
   @@index([category])
 }
 
-/**
- * Actionable strategic recommendation for administrators — same
- * dedupeKey/urgency/impact/confidence competing-candidates shape as
- * Recommendation Agent's own pipeline. Read-only from this agent's HTTP
- * surface: no dismiss/act-on endpoint exists in this spec's API list, so
- * status only ever moves ACTIVE -> EXPIRED via regeneration, never by a
- * missing write route (same restraint as Learning Path's LearningGoal).
- */
 model StrategicRecommendation {
   id              String                        @id @default(cuid())
   type            StrategicRecommendationType
@@ -5495,12 +3177,6 @@ model StrategicRecommendation {
   @@index([type])
 }
 
-/**
- * Genuinely append-only audit-run ledger — each run of a governance check
- * produces a new row, never overwritten, the real "Audit AI decisions /
- * Track policy compliance" record this agent's own Governance framework
- * generates (there is no pre-existing platform AuditLog to consume).
- */
 model ComplianceAudit {
   id        String                 @id @default(cuid())
   checkType ComplianceCheckType
@@ -5516,11 +3192,6 @@ model ComplianceAudit {
   @@index([scopeType, scopeId])
 }
 
-/**
- * Predicted future resource demand — own linear-regression engine, same OLS
- * shape as Analytics' Forecast/forecastEngine.js but a separate copy (each
- * agent owns its own near-identical logic, per established precedent).
- */
 model CapacityForecast {
   id                String               @id @default(cuid())
   resourceType      CapacityResourceType
@@ -5535,13 +3206,6 @@ model CapacityForecast {
   @@index([resourceType])
 }
 
-/**
- * High-priority operational alert — reuses the existing shared
- * InsightPriority/InsightStatus enums (same lifecycle as StudentAlert:
- * ACTIVE until the underlying condition clears on the next generation
- * cycle, then auto-flips to RESOLVED — no acknowledge/dismiss endpoint
- * exists in this spec's API list).
- */
 model AdminAlert {
   id          String          @id @default(cuid())
   scopeType   AdminScopeType
@@ -5560,12 +3224,6 @@ model AdminAlert {
   @@index([scopeType, status, priority])
 }
 
-/**
- * Periodic institution-wide bundle for export — same shape as Analytics'
- * Report, extended with department/faculty/insight/recommendation/alert
- * sections since this is the platform-wide executive rollup, not a
- * metrics-only one.
- */
 model ExecutiveReport {
   id                String              @id @default(cuid())
   reportType        ExecutiveReportType
@@ -5586,10 +3244,6 @@ model ExecutiveReport {
   @@index([reportType])
 }
 
-/**
- * Governance/compliance/accreditation metric time series — daily
- * per-metricKey rows, same AnalyticsHistory-style shape.
- */
 model GovernanceMetric {
   id         String              @id @default(cuid())
   metricKey  GovernanceMetricKey
@@ -5603,30 +3257,6 @@ model GovernanceMetric {
   @@index([metricKey, date])
 }
 
-/**
- * |--------------------------------------------------------------------------
- * | AI Mentor Agent (Master Orchestrator)
- * |--------------------------------------------------------------------------
- * | The final agent — a conversational layer that orchestrates the other 11
- * | through their own public getters, never by reaching into their tables.
- * | Its own writes only ever touch the 8 models below.
- * |
- * | Naming: the spec asked for `Conversation`/`ConversationMessage`, but
- * | those names are already taken by a real, live, socket-driven
- * | human-to-human chat feature elsewhere in this schema (see `Conversation`/
- * | `Message`/`ConversationParticipant`/`MessageAttachment` above, used by
- * | modules/conversations + modules/messages + src/socket). Prisma forbids
- * | duplicate model names, so this agent's models are prefixed
- * | `Mentor*` — `MentorConversation`/`MentorMessage` — to avoid the
- * | collision; the other 6 model names (ConversationContext,
- * | AgentInvocation, MentorMemory, ConversationSummary, PromptTemplate,
- * | ResponseFeedback) don't collide with anything and are kept as spec'd.
- * |
- * | Access to this module is ownership-based, not role-gated (unlike every
- * | prior agent) — STUDENT/INSTRUCTOR/ADMIN can all use the mentor; role
- * | only selects which peer agents get queried and which system-prompt
- * | persona loads (see prompt-builder/).
- */
 enum MentorMessageRole {
   USER
   ASSISTANT
@@ -5663,12 +3293,6 @@ enum FeedbackRating {
   NOT_HELPFUL
 }
 
-/**
- * One conversation thread per user. userRole is a snapshot of User.role at
- * creation time (not a live join) — access control and agent selection
- * both need "what role was this conversation started as," which must stay
- * stable even if an admin later changes the user's role.
- */
 model MentorConversation {
   id            String                   @id @default(cuid())
   userId        String
@@ -5689,12 +3313,6 @@ model MentorConversation {
   @@index([userId, status, lastMessageAt])
 }
 
-/**
- * One row per turn (both the user's message and the assistant's reply are
- * separate rows, same USER/ASSISTANT/SYSTEM shape every LLM chat API uses).
- * intent is only ever set on USER rows (the classified intent that drove
- * this turn's orchestration).
- */
 model MentorMessage {
   id               String            @id @default(cuid())
   conversationId   String
@@ -5713,12 +3331,6 @@ model MentorMessage {
   @@index([conversationId, createdAt])
 }
 
-/**
- * Append-only per-turn snapshot of the merged context gathered for one
- * assistant reply — the real "what did the mentor know when it answered
- * this" audit record, distinct from MentorMemory (cross-conversation) and
- * ConversationSummary (compacted history).
- */
 model ConversationContext {
   id             String   @id @default(cuid())
   conversationId String
@@ -5733,12 +3345,6 @@ model ConversationContext {
   @@index([conversationId, gatheredAt])
 }
 
-/**
- * Genuinely append-only orchestration audit ledger — one row per real
- * downstream agent call (never updated), the real "which agents were
- * queried, in what order, how long did it take, did it succeed" record the
- * spec's Orchestration section asks the mentor to decide.
- */
 model AgentInvocation {
   id             String                @id @default(cuid())
   conversationId String
@@ -5759,14 +3365,6 @@ model AgentInvocation {
   @@index([agentName, status])
 }
 
-/**
- * Cross-conversation fact ledger — current-row per (userId, memoryKey),
- * upserted in place, same pattern as CourseHealth/StudentLearningState. A
- * small fixed vocabulary (see constants/memoryKeys.constants.js), not a
- * fabricated open-ended semantic memory — this stack has no vector-store
- * dependency, so "remember previous conversations" is real structured
- * facts, not embedding similarity retrieval.
- */
 model MentorMemory {
   id        String   @id @default(cuid())
   userId    String
@@ -5781,11 +3379,6 @@ model MentorMemory {
   @@index([userId])
 }
 
-/**
- * Current-row, regenerated in place as a conversation grows past the
- * compaction threshold — recent turns stay verbatim in MentorMessage, older
- * ones compact here so subsequent prompts don't re-send the entire history.
- */
 model ConversationSummary {
   id                    String   @id @default(cuid())
   conversationId        String   @unique
@@ -5799,11 +3392,6 @@ model ConversationSummary {
   conversation MentorConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 }
 
-/**
- * This agent's own seeded reference data (role-specific system prompts) —
- * same seeded-catalog precedent as Career Guidance's IndustryRole /
- * Placement's Company. Idempotently upserted at bootstrap.
- */
 model PromptTemplate {
   id          String   @id @default(cuid())
   key         String   @unique
@@ -5816,10 +3404,6 @@ model PromptTemplate {
   updatedAt   DateTime @updatedAt
 }
 
-/**
- * One feedback row per assistant message — real POST /mentor/feedback
- * write, this agent's own data only.
- */
 model ResponseFeedback {
   id        String         @id @default(cuid())
   messageId String         @unique
@@ -5834,16 +3418,6 @@ model ResponseFeedback {
   @@index([userId])
 }
 
-/**
- * |--------------------------------------------------------------------------
- * | AI Course Importer
- * |--------------------------------------------------------------------------
- * | One row per uploaded course package. canonicalJson holds the working
- * | preview state the instructor reviews/edits (Course->Module->Lesson->
- * | Content[] tree using the same blockType shapes as the Course Composer's
- * | Content.data) before anything is written to the real Course/Module/
- * | Lesson/Content/Quiz/Question tables at import time.
- */
 model CourseImportJob {
   id               String             @id @default(cuid())
   instructorId     String

@@ -77,7 +77,13 @@ const determineIntent = (content, params = {}, userRole = "STUDENT") => {
     if (lower.includes("user") || lower.includes("users count") || lower.includes("students vs instructors")) {
       return { intent: "ANALYTICS", toolName: "getPlatformUsersSummary", confidence: 90 };
     }
-    if (lower.includes("course summary") || lower.includes("all courses") || lower.includes("published vs draft")) {
+    if (
+      lower.includes("course summary") ||
+      lower.includes("all courses") ||
+      lower.includes("published vs draft") ||
+      lower.includes("course statistics") ||
+      lower.includes("course stats")
+    ) {
       return { intent: "ANALYTICS", toolName: "getPlatformCourseSummary", confidence: 90 };
     }
     if (lower.includes("platform") || lower.includes("overview") || lower.includes("system stats")) {
@@ -92,7 +98,18 @@ const determineIntent = (content, params = {}, userRole = "STUDENT") => {
     if (lower.includes("enrolled student") || lower.includes("student list") || lower.includes("roster") || lower.includes("who is enrolled")) {
       return { intent: "ANALYTICS", toolName: "getCourseStudents", confidence: 90 };
     }
-    if (courseId || lower.includes("instructor analytics") || lower.includes("course performance") || lower.includes("my teaching stats")) {
+    if (
+      courseId ||
+      lower.includes("instructor analytics") ||
+      lower.includes("course performance") ||
+      lower.includes("my teaching stats") ||
+      lower.includes("how many courses") ||
+      lower.includes("courses do i own") ||
+      lower.includes("courses i own") ||
+      lower.includes("list my courses") ||
+      lower.includes("list the courses") ||
+      lower.includes("my courses")
+    ) {
       return { intent: "ANALYTICS", toolName: "getMyInstructorAnalytics", confidence: 90 };
     }
   }
