@@ -2,12 +2,45 @@
 // Normalize Options
 // =====================================
 
+// A single option entry is either a plain string (legacy — never carries a
+// misconception tag) or a richer { optionText, isCorrect, misconceptionTag }
+// object. Coercing every entry via String(opt) — the old behavior — turns
+// an object option into the literal text "[object Object]", silently
+// destroying any authored tag. This preserves the object shape instead.
+const normalizeOption = (opt) => {
+    if (opt && typeof opt === "object" && !Array.isArray(opt)) {
+        const optionText = String(opt.optionText ?? opt.text ?? "").trim();
+        if (!optionText) return null;
+
+        const normalized = { optionText };
+        if (opt.isCorrect !== undefined) {
+            normalized.isCorrect = Boolean(opt.isCorrect);
+        }
+        if (opt.misconceptionTag !== undefined && opt.misconceptionTag !== null && String(opt.misconceptionTag).trim() !== "") {
+            normalized.misconceptionTag = String(opt.misconceptionTag).trim();
+        }
+        return normalized;
+    }
+
+    const text = String(opt).trim();
+    return text || null;
+};
+
+// Extracts display text from either an option shape, for the spots below
+// that need to treat every option as plain text (question-type inference,
+// true/false detection) regardless of whether it carries a tag.
+const optionDisplayText = (opt) => {
+    if (typeof opt === "string") return opt;
+    if (opt && typeof opt === "object") return String(opt.optionText || "");
+    return "";
+};
+
 const normalizeOptions = (row) => {
     if (!row) return [];
 
     // Case 1: options is already an array
     if (Array.isArray(row.options)) {
-        return row.options.map((opt) => String(opt).trim()).filter(Boolean);
+        return row.options.map((opt) => normalizeOption(opt)).filter((opt) => opt !== null);
     }
 
     // Case 2: options stored as JSON string or delimited string
@@ -77,7 +110,10 @@ const normalizeSingleAnswer = (ans, options) => {
     if (Object.prototype.hasOwnProperty.call(answerMap, answerStr)) {
         const idx = answerMap[answerStr];
         if (options && options[idx] !== undefined) {
-            return options[idx];
+            // options[idx] may now be an object ({optionText, ...}) rather
+            // than a plain string — resolve shorthand (e.g. "A") to its
+            // display text either way.
+            return optionDisplayText(options[idx]) || options[idx];
         }
     }
 
@@ -152,7 +188,7 @@ const normalizeQuestion = (row) => {
             questionType = "MULTIPLE_CORRECT";
         } else if (
             options.length === 2 &&
-            options.every((opt) => ["true", "false", "yes", "no"].includes(opt.toLowerCase()))
+            options.every((opt) => ["true", "false", "yes", "no"].includes(optionDisplayText(opt).toLowerCase()))
         ) {
             questionType = "TRUE_FALSE";
         } else if (options.length === 0) {
@@ -192,6 +228,12 @@ const normalizeQuestion = (row) => {
     }
     if (row.id) {
         normalized.id = String(row.id);
+    }
+    // Preserved as-is (not defaulted here): the learner-model KC mapping
+    // treats "no topic supplied" as a distinct, explicit state rather than
+    // silently coercing it to a shared bucket. See quiz.service.js.
+    if (row.topic !== undefined && row.topic !== null && String(row.topic).trim() !== "") {
+        normalized.topic = String(row.topic).trim();
     }
 
     return normalized;

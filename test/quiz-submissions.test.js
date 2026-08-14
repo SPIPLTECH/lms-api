@@ -102,3 +102,12 @@ test('calculateSubmissionResult handles empty submission and undefined answers',
   assert.equal(calculateSubmissionResult(quiz, []).score, 0);
   assert.equal(calculateSubmissionResult(quiz, undefined).score, 0);
 });
+
+test('calculateSubmissionResult handles unlinked quiz (quizQuestions empty or missing)', () => {
+  const quizWithoutQuestions = { passingScore: 50, quizQuestions: [] };
+  const answers = [{ questionId: 'unlinked_q1', answer: 'A' }];
+
+  const result = calculateSubmissionResult(quizWithoutQuestions, answers);
+  assert.equal(result.score, 0);
+  assert.equal(result.questionEvidence.length, 0);
+});

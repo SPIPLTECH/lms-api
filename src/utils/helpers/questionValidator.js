@@ -1,5 +1,16 @@
 const CHOICE_QUESTION_TYPES = ["MCQ", "MULTIPLE_CORRECT", "TRUE_FALSE"];
 
+// An option is either a plain string (legacy) or a richer
+// { optionText, isCorrect, misconceptionTag? } object (see
+// question.helper.js normalizeOptions). String(opt) on an object option
+// produces the literal text "[object Object]", which broke both the
+// duplicate-option check and the correct-answer-matches-an-option check
+// below for every tagged question. This extracts comparable text either way.
+const optionCompareText = (opt) => {
+    if (opt && typeof opt === "object") return String(opt.optionText ?? opt.text ?? "");
+    return String(opt);
+};
+
 const validateQuestion = (question) => {
     const errors = [];
 
@@ -30,7 +41,7 @@ const validateQuestion = (question) => {
             }
 
             const uniqueOptions = new Set(
-                question.options.map(option => String(option).trim())
+                question.options.map(option => optionCompareText(option).trim())
             );
 
             if (uniqueOptions.size !== question.options.length) {
@@ -58,7 +69,7 @@ const validateQuestion = (question) => {
         answers.forEach(answer => {
             const ansStr = String(answer).trim();
             const optionMatches = question.options.some(
-                opt => String(opt).trim().toLowerCase() === ansStr.toLowerCase()
+                opt => optionCompareText(opt).trim().toLowerCase() === ansStr.toLowerCase()
             );
 
             if (!optionMatches && isChoiceType) {

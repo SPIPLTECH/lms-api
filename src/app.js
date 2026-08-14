@@ -39,6 +39,7 @@ const notificationRoutes = require("./modules/notifications/notification.routes"
 const conversationRoutes = require("./modules/conversations/conversation.routes");
 const messageRoutes = require("./modules/messages/message.routes");
 const landingRoutes = require("./modules/landing/landing.routes");
+const paymentRoutes = require("./modules/payments/payment.routes");
 const app = express();
 const storeRoutes = require("./modules/store/store.routes");
 app.disable('etag');
@@ -51,7 +52,13 @@ app.use(
 );
 app.use(morgan("dev"));
 
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
@@ -73,6 +80,7 @@ app.get("/", (req, res) => {
 | Routes
 |--------------------------------------------------------------------------
 */
+app.use("/payments", paymentRoutes);
 app.use("/store", storeRoutes);
 app.use("/teachers", teacherRoutes);
 app.use("/auth", authRoutes);
@@ -125,6 +133,7 @@ app.use("/llm", require("./modules/llm/llm.routes"));
 app.use("/learner-model", require("./modules/learner-model/learnerModel.routes"));
 app.use("/adaptive-learning", require("./modules/adaptive-learning/adaptiveLearning.routes"));
 app.use("/learning-path", require("./modules/learning-path/learningPath.routes"));
+app.use("/mentor", require("./modules/mentor/mentor.routes"));
 app.use(errorHandler);
 
 module.exports = app;

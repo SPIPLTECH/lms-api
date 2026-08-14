@@ -40,6 +40,7 @@ model User {
   studentProfile          StudentProfile?
   teacherProfile          TeacherProfile?
   teachingGoals           TeachingGoal[]
+  paymentOrders           PaymentOrder[]
 }
 
 model StudentProfile {
@@ -200,6 +201,7 @@ model Course {
   teachingRecommendations      TeachingRecommendation[]
   videoAnalytics               VideoAnalytics[]
   batches                      Batch[]                  @relation("BatchToCourse")
+  paymentOrders                PaymentOrder[]
 }
 
 model Store {
@@ -1026,17 +1028,37 @@ model ConceptMastery {
 }
 
 model KnowledgeGap {
-  id         String         @id @default(cuid())
-  studentId  String
-  concept    String
-  severity   Float          @default(0)
-  status     GapStatus      @default(OPEN)
-  detectedAt DateTime       @default(now())
-  closedAt   DateTime?
-  student    StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  id          String         @id @default(cuid())
+  studentId   String
+  concept     String
+  /// Knowledge Component this gap belongs to. Nullable: legacy/direct-evidence
+  /// rows never set it; Tier 1/Tier 2-originated rows do, via a narrow
+  /// follow-up write — see quiz.service.js. Not consumed by
+  /// misconception.service.js or decision.service.js (both untouched).
+  kc          String?
+  /// Controlled misconception taxonomy slug (see misconceptionTaxonomy.config.js).
+  /// By convention, equal to `concept` for every Tier 1/Tier 2-originated row —
+  /// `concept` remains the actual identity key misconception.service.js
+  /// upserts by; `type` is the clean, taxonomy-validated field new code
+  /// should read going forward. Nullable for legacy rows.
+  type        String?
+  severity    Float          @default(0)
+  status      GapStatus      @default(OPEN)
+  detectedAt  DateTime       @default(now())
+  closedAt    DateTime?
+  /// Human-readable explanation, sourced from the taxonomy (Tier 1) or a
+  /// bounded classifier response (future Tier 2). Not authored freely.
+  description String?
+  /// Detection confidence in [0,1]. Fixed at 1.0 for authored (Tier 1) tags.
+  confidence  Float?
+  /// Deterministic, server-constructed factual snippet (e.g. the selected
+  /// answer vs. the correct one) — never free LLM text.
+  evidence    String?
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@index([studentId, status])
   @@index([concept])
+  @@index([studentId, kc, status])
 }
 
 model ReassessmentPlan {
@@ -3507,3 +3529,36 @@ enum CourseImportStatus {
   COMPLETED
   FAILED
 }
+
+enum PaymentOrderStatus {
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+model PaymentOrder {
+  id                String             @id @default(cuid())
+  userId            String
+  courseId          String
+  razorpayOrderId   String             @unique
+  razorpayPaymentId String?
+  razorpaySignature String?
+  amount            Int
+  currency          String             @default("INR")
+  status            PaymentOrderStatus @default(PENDING)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([courseId])
+  @@index([razorpayOrderId])
+  @@index([razorpayPaymentId])
+  @@index([userId, courseId, status])
+}
+

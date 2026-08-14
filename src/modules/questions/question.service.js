@@ -184,7 +184,8 @@ const bulkCreateQuestions = async (questionsPayload, quizId = null) => {
             difficulty: q.difficulty,
             isRequired: q.isRequired,
             isPublished: q.isPublished,
-            order: q.order
+            order: q.order,
+            topic: q.topic || null
         })),
         skipDuplicates: true,
         select: { id: true },
@@ -226,7 +227,8 @@ const importQuestions = async (file, quizId = null) => {
             difficulty: q.difficulty,
             isRequired: q.isRequired,
             isPublished: q.isPublished,
-            order: q.order
+            order: q.order,
+            topic: q.topic || null
         })),
         skipDuplicates: true,
         select: { id: true },
