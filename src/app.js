@@ -33,13 +33,25 @@ const achievementRoutes = require("./modules/achievements/achievement.routes");
 const assignmentRoutes = require("./modules/assignments/assignment.routes");
 const calendarRoutes = require("./modules/calendar/calendar.routes");
 const upcomingTasksRoutes = require("./modules/upcoming-tasks/upcoming-tasks.routes");
-const studentCourseStateRoutes = require("./modules/students/studentCourseState.routes");
+const storeRoutes = require("./modules/store/store.routes");
 
 const notificationRoutes = require("./modules/notifications/notification.routes");
 const conversationRoutes = require("./modules/conversations/conversation.routes");
 const messageRoutes = require("./modules/messages/message.routes");
 const landingRoutes = require("./modules/landing/landing.routes");
-const paymentRoutes = require("./modules/payments/payment.routes");
+const observation = require("./modules/observation");
+const studentState = require("./modules/student-state");
+const assessment = require("./modules/assessment");
+const recommendation = require("./modules/recommendation");
+const motivation = require("./modules/motivation");
+const teacherInsights = require("./modules/teacher-insights");
+const analytics = require("./modules/analytics");
+const career = require("./modules/career");
+const learningPath = require("./modules/learning-path");
+const placement = require("./modules/placement");
+const adminIntelligence = require("./modules/admin-intelligence");
+const mentor = require("./modules/mentor");
+const courseImportRoutes = require("./modules/course-import/routes");
 const app = express();
 const storeRoutes = require("./modules/store/store.routes");
 app.disable('etag');
@@ -52,14 +64,8 @@ app.use(
 );
 app.use(morgan("dev"));
 
-app.use(
-  express.json({
-    verify: (req, res, buf) => {
-      req.rawBody = buf;
-    },
-  })
-);
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "100mb" }));
+app.use(express.urlencoded({ extended: true, limit: "100mb" }));
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 /*
@@ -120,20 +126,20 @@ app.use("/achievements", achievementRoutes);
 app.use("/assignments", assignmentRoutes);
 app.use("/calendar", calendarRoutes);
 app.use("/upcoming-tasks", upcomingTasksRoutes);
-app.use("/student-state", studentCourseStateRoutes);
-app.use("/analytics", require("./modules/analytics/analytics.routes"));
-app.use("/announcements", require("./modules/announcements/announcement.routes"));
-app.use("/teaching-goals", require("./modules/teaching-goals/teachingGoal.routes"));
-app.use("/lesson-notes", require("./modules/lesson-notes/lessonNote.routes"));
-app.use("/lesson-queries", require("./modules/lesson-queries/lessonQuery.routes"));
-app.use("/discussions", require("./modules/discussions/discussion.routes"));
-app.use("/exams", require("./modules/exams/exam.routes"));
-app.use("/results", require("./modules/results/results.routes"));
-app.use("/llm", require("./modules/llm/llm.routes"));
-app.use("/learner-model", require("./modules/learner-model/learnerModel.routes"));
-app.use("/adaptive-learning", require("./modules/adaptive-learning/adaptiveLearning.routes"));
-app.use("/learning-path", require("./modules/learning-path/learningPath.routes"));
-app.use("/mentor", require("./modules/mentor/mentor.routes"));
+app.use("/store", storeRoutes);
+app.use("/events", observation.router);
+app.use("/student-state", studentState.router);
+app.use("/assessment", assessment.router);
+app.use("/recommendations", recommendation.router);
+app.use("/motivation", motivation.router);
+app.use("/teacher-insights", teacherInsights.router);
+app.use("/analytics", analytics.router);
+app.use("/career", career.router);
+app.use("/learning-path", learningPath.router);
+app.use("/placement", placement.router);
+app.use("/admin-intelligence", adminIntelligence.router);
+app.use("/mentor", mentor.router);
+app.use("/course-import", courseImportRoutes);
 app.use(errorHandler);
 
 module.exports = app;

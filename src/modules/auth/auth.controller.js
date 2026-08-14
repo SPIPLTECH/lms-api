@@ -1,4 +1,17 @@
 const authService = require("./auth.service");
+const { publishEvent, EVENT_TYPES } = require("../observation");
+
+/**
+ * Fire-and-forget observation call: login/logout must never fail because
+ * the Observation Agent is slow or down.
+ */
+const observeAuthEvent = (studentId, eventType, metadata) => {
+  if (!studentId) return;
+
+  publishEvent({ studentId, eventType, source: "auth.controller", metadata }).catch((error) => {
+    console.error(`[observation] failed to record ${eventType}:`, error.message);
+  });
+};
 
 /**
  * Register
@@ -63,6 +76,12 @@ const login = async (
         password
       );
 
+    if (result.user.role === "STUDENT") {
+      observeAuthEvent(result.user.studentProfile?.id, EVENT_TYPES.USER_LOGIN, {
+        userAgent: req.headers["user-agent"] || null,
+      });
+    }
+
     res.json({
       success: true,
       message:
@@ -83,6 +102,14 @@ const logout = async (req, res) => {
     const refreshToken = req.body?.refreshToken;
 
     await authService.logout(userId, refreshToken);
+
+    if (req.user?.role === "STUDENT") {
+      const prisma = require("../../config/database");
+      prisma.studentProfile
+        .findUnique({ where: { userId }, select: { id: true } })
+        .then((profile) => observeAuthEvent(profile?.id, EVENT_TYPES.USER_LOGOUT))
+        .catch((error) => console.error("[observation] failed to resolve studentId for logout:", error.message));
+    }
 
     return res.status(200).json({
       success: true,

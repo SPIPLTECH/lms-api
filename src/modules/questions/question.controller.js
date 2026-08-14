@@ -6,17 +6,11 @@ const questionRepositoryService = require("./services/questionRepository.service
 // =========================
 const getQuestions = async (req, res, next) => {
   try {
-    // If specifically querying by quizId legacy format
-    if (req.query.quizId) {
-      const questions = await questionService.getQuestions(req.query.quizId);
-      return res.json({
-        success: true,
-        data: questions,
-      });
-    }
-
-    const user = req.user || { role: "GUEST" };
-    const result = await questionRepositoryService.getQuestions(req.query, user);
+    const questions = await questionService.getQuestions({
+      quizId: req.query.quizId,
+      courseId: req.query.courseId,
+      moduleId: req.query.moduleId,
+    });
 
     res.json({
       success: true,

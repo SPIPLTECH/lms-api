@@ -11,23 +11,18 @@ const findLessonById = (id) =>
 
 const getCourseCreatorId = (lesson) => lesson.module?.course?.creatorId;
 
-/**
- * Verifies the caller owns the course behind req.params.lessonId.
- * ADMIN always passes.
- *
- * Fixes a prior bug where the check was written as
- * `req.user.role !== ("INSTRUCTOR" || "ADMIN")`, which JavaScript evaluates
- * to the constant `role !== "INSTRUCTOR"` — letting any instructor bypass
- * ownership and incorrectly blocking ADMIN unless they were the creator.
- */
-const verifyLessonOwnership = buildOwnershipCheck({
-  getResourceId: (req) => req.params.lessonId,
-  findResource: findLessonById,
-  getCourseCreatorId,
-  notFoundMessage: "Lesson not found",
-  missingIdMessage: "lessonId is required",
-  attachAs: "lesson",
-});
+      if (
+        req.user.role !==
+          "ADMIN" &&
+        lesson.module.course
+          .creatorId !==
+          req.user.id
+      ) {
+        return res.status(403).json({
+          message:
+            "Access denied"
+        });
+      }
 
 /**
  * Same ownership check, keyed on req.body.lessonId instead of a URL param.

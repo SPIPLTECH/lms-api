@@ -2,7 +2,7 @@ const prisma =
   require("../../config/database");
 const ApiError = require("../../utils/ApiError");
 const notificationService = require("../notifications/notification.service");
-const youtubeTranscript = require("../../utils/youtubeTranscript");
+const ApiError = require("../../utils/ApiError");
 
 const getLessons = async (moduleId, role, userId) => {
   const where = {};
@@ -57,11 +57,9 @@ const getLessonById = async (
 const createLesson = async (
   data
 ) => {
-  const lastLesson = await prisma.lesson.findFirst({
-    where: { moduleId: data.moduleId },
-    orderBy: { order: "desc" },
-    select: { order: true }
-  });
+  if (data.isPublished) {
+    throw new ApiError(400, "A new lesson can't be published yet — add at least one content item first.");
+  }
 
   const lesson = await prisma.lesson.create({
     data: { ...data, order: (lastLesson?.order ?? 0) + 1 }
@@ -99,6 +97,13 @@ const updateLesson = async (
   const oldLesson = await prisma.lesson.findUnique({
     where: { id: lessonId }
   });
+
+  if (data.isPublished) {
+    const contentCount = await prisma.content.count({ where: { lessonId } });
+    if (contentCount === 0) {
+      throw new ApiError(400, "Add at least one content item before publishing this lesson.");
+    }
+  }
 
   const lesson = await prisma.lesson.update({
     where: {
@@ -226,40 +231,33 @@ const reorderLessons = async (
   moduleId,
   lessons
 ) => {
-  // Mirrors reorderModules: the caller's ownership of `moduleId` is verified
-  // by middleware before this runs, but every id in the payload must also be
-  // confirmed to actually belong to that module before we touch it — a
-  // lesson id from a different module (owned by someone else) must not be
-  // reorderable just because it was included in this request's array.
-  const owned = await prisma.lesson.findMany({
-    where: {
-      id: { in: lessons.map((lesson) => lesson.id) },
-      moduleId
-    },
-    select: { id: true }
-  });
+  // Two-phase reorder: @@unique([moduleId, order]) rejects a naive
+  // parallel swap (A->2 while B still holds 2), so first move every
+  // row to a disjoint negative placeholder, then to its final order.
+  const offsetUpdates = lessons.map((lesson, index) =>
+    prisma.lesson.update({
+      where: {
+        id: lesson.lessonId
+      },
+      data: {
+        order: -1000 - index
+      }
+    })
+  );
 
-  const ownedIds = new Set(owned.map((lesson) => lesson.id));
-  const invalidId = lessons.find((lesson) => !ownedIds.has(lesson.id));
-
-  if (invalidId) {
-    throw new ApiError(
-      403,
-      "Forbidden: one or more lessons do not belong to this module"
-    );
-  }
+  const finalUpdates = lessons.map((lesson) =>
+    prisma.lesson.update({
+      where: {
+        id: lesson.lessonId
+      },
+      data: {
+        order: lesson.order
+      }
+    })
+  );
 
   return prisma.$transaction(
-    lessons.map((lesson) =>
-      prisma.lesson.update({
-        where: {
-          id: lesson.id
-        },
-        data: {
-          order: lesson.order
-        }
-      })
-    )
+    [...offsetUpdates, ...finalUpdates]
   );
 };
 

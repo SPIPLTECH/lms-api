@@ -95,10 +95,28 @@ const deleteContent = async (
   }
 };
 
+const reorderContents = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const result =
+      await contentService.reorderContents(
+        req.body.contents
+      );
+
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getContents,
   getContentById,
   createContent,
   updateContent,
-  deleteContent
+  deleteContent,
+  reorderContents
 };

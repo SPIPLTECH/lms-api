@@ -69,11 +69,9 @@ const getModuleById = async (moduleId, role) => {
 };
 
 const createModule = async (data) => {
-  const lastModule = await prisma.module.findFirst({
-    where: { courseId: data.courseId },
-    orderBy: { order: "desc" },
-    select: { order: true }
-  });
+  if (data.isPublished) {
+    throw new ApiError(400, "A new module can't be published yet — add at least one lesson first.");
+  }
 
   return await prisma.module.create({
     data: { ...data, order: (lastModule?.order ?? 0) + 1 }
@@ -84,6 +82,13 @@ const updateModule = async (
   moduleId,
   data
 ) => {
+  if (data.isPublished) {
+    const lessonCount = await prisma.lesson.count({ where: { moduleId } });
+    if (lessonCount === 0) {
+      throw new ApiError(400, "Add at least one lesson before publishing this module.");
+    }
+  }
+
   return await prisma.module.update({
     where: {
       id: moduleId
@@ -106,30 +111,22 @@ const reorderModules = async (
   courseId,
   modules
 ) => {
-  // The caller's ownership of `courseId` is verified by middleware before
-  // this runs, but that only proves they own the course — not that every id
-  // in the reorder payload actually belongs to it. Without this check, an
-  // instructor could smuggle a module id from a course they don't own into
-  // the array and silently reorder someone else's module.
-  const owned = await prisma.module.findMany({
-    where: {
-      id: { in: modules.map((module) => module.id) },
-      courseId
-    },
-    select: { id: true }
-  });
+  // Two-phase reorder: @@unique([courseId, order]) rejects a naive
+  // parallel swap (A->2 while B still holds 2), so first move every
+  // row to a disjoint negative placeholder, then to its final order.
+  const offsetUpdates = modules.map(
+    (module, index) =>
+      prisma.module.update({
+        where: {
+          id: module.id
+        },
+        data: {
+          order: -1000 - index
+        }
+      })
+  );
 
-  const ownedIds = new Set(owned.map((module) => module.id));
-  const invalidId = modules.find((module) => !ownedIds.has(module.id));
-
-  if (invalidId) {
-    throw new ApiError(
-      403,
-      "Forbidden: one or more modules do not belong to this course"
-    );
-  }
-
-  const updates = modules.map(
+  const finalUpdates = modules.map(
     (module) =>
       prisma.module.update({
         where: {
@@ -142,7 +139,7 @@ const reorderModules = async (
   );
 
   return await prisma.$transaction(
-    updates
+    [...offsetUpdates, ...finalUpdates]
   );
 };
 

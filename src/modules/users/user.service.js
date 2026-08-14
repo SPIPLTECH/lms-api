@@ -157,6 +157,39 @@ const updateMyProfile = async (userId, data) => {
     if (data.themeMode !== undefined) profileUpdate.themeMode = data.themeMode;
     if (data.plan !== undefined) profileUpdate.plan = data.plan;
 
+    // AI Student Entry Phase fields (see schema.prisma's StudentProfile
+    // extension) — same explicit whitelist as the fields above, never a
+    // raw spread of req.body.
+    if (data.gender !== undefined) profileUpdate.gender = data.gender;
+    if (data.country !== undefined) profileUpdate.country = data.country;
+    if (data.state !== undefined) profileUpdate.state = data.state;
+    if (data.city !== undefined) profileUpdate.city = data.city;
+    if (data.highestQualification !== undefined) profileUpdate.highestQualification = data.highestQualification;
+    if (data.currentQualification !== undefined) profileUpdate.currentQualification = data.currentQualification;
+    if (data.collegeName !== undefined) profileUpdate.collegeName = data.collegeName;
+    if (data.branchOrStream !== undefined) profileUpdate.branchOrStream = data.branchOrStream;
+    if (data.graduationYear !== undefined) {
+      profileUpdate.graduationYear = data.graduationYear === null || data.graduationYear === "" ? null : parseInt(data.graduationYear, 10);
+    }
+    if (data.semester !== undefined) profileUpdate.semester = data.semester;
+    if (data.cgpaOrPercentage !== undefined) {
+      profileUpdate.cgpaOrPercentage = data.cgpaOrPercentage === null || data.cgpaOrPercentage === "" ? null : parseFloat(data.cgpaOrPercentage);
+    }
+    if (data.employmentStatus !== undefined) profileUpdate.employmentStatus = data.employmentStatus;
+    if (data.yearsOfExperience !== undefined) {
+      profileUpdate.yearsOfExperience = data.yearsOfExperience === null || data.yearsOfExperience === "" ? 0 : parseFloat(data.yearsOfExperience);
+    }
+    if (data.currentJobRole !== undefined) profileUpdate.currentJobRole = data.currentJobRole;
+    if (data.careerGoalText !== undefined) profileUpdate.careerGoalText = data.careerGoalText;
+    if (data.preferredLearningStyle !== undefined) profileUpdate.preferredLearningStyle = data.preferredLearningStyle;
+    if (data.weeklyStudyHours !== undefined) {
+      profileUpdate.weeklyStudyHours = data.weeklyStudyHours === null || data.weeklyStudyHours === "" ? null : parseInt(data.weeklyStudyHours, 10);
+    }
+    if (data.preferredStudyTime !== undefined) profileUpdate.preferredStudyTime = data.preferredStudyTime;
+    if (data.technicalSkills !== undefined) {
+      profileUpdate.technicalSkills = Array.isArray(data.technicalSkills) ? data.technicalSkills.filter(Boolean) : [];
+    }
+
     if (Object.keys(profileUpdate).length > 0) {
       await prisma.studentProfile.update({
         where: { userId },

@@ -1,5 +1,6 @@
 const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
+const ApiError = require("../../utils/ApiError");
 // const verifyToken = require(
 //   "../../middleware/auth.middleware"
 // );
@@ -500,8 +501,17 @@ const updateCourse = async (courseId, data) => {
 };
 
 const updateStatus = async (courseId, status) => {
+<<<<<<< HEAD
   const isPublished = status === "PUBLISHED" || status === "Published" || status === true;
   const finalStatus = isPublished ? "PUBLISHED" : "DRAFT";
+=======
+  if (status === "PUBLISHED") {
+    const moduleCount = await prisma.module.count({ where: { courseId } });
+    if (moduleCount === 0) {
+      throw new ApiError(400, "Add at least one module before publishing this course.");
+    }
+  }
+>>>>>>> a812b962b9f87c1477e3a3fd5f5e5f560c10a68e
 
   const course = await prisma.course.update({
     where: {

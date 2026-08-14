@@ -71,10 +71,44 @@ const deleteContent = async (contentId) => {
   });
 };
 
+const reorderContents = async (
+  contents
+) => {
+  // Two-phase reorder: @@unique([lessonId, order]) rejects a naive
+  // parallel swap (A->2 while B still holds 2), so first move every
+  // row to a disjoint negative placeholder, then to its final order.
+  const offsetUpdates = contents.map((content, index) =>
+    prisma.content.update({
+      where: {
+        id: content.id
+      },
+      data: {
+        order: -1000 - index
+      }
+    })
+  );
+
+  const finalUpdates = contents.map((content) =>
+    prisma.content.update({
+      where: {
+        id: content.id
+      },
+      data: {
+        order: content.order
+      }
+    })
+  );
+
+  return prisma.$transaction(
+    [...offsetUpdates, ...finalUpdates]
+  );
+};
+
 module.exports = {
   getContents,
   getContentById,
   createContent,
   updateContent,
-  deleteContent
+  deleteContent,
+  reorderContents
 };
