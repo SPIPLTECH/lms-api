@@ -19,15 +19,11 @@ const verifyContentOwnership = require(
   "../../middleware/contentOwnership.middleware"
 );
 
-<<<<<<< HEAD
 const verifyLessonOwnership = require(
   "../../middleware/lessonOwnership.middleware"
 );
 
 const { upload, sanitizeSvgUpload } = require(
-=======
-const { upload } = require(
->>>>>>> a812b962b9f87c1477e3a3fd5f5e5f560c10a68e
   "../../middleware/upload.middleware"
 );
 const validate = require("../../middleware/joiValidation.middleware");
@@ -111,10 +107,7 @@ router.put(
     "INSTRUCTOR"
   ]),
   verifyContentOwnership,
-<<<<<<< HEAD
   validate(updateContentSchema),
-=======
->>>>>>> a812b962b9f87c1477e3a3fd5f5e5f560c10a68e
   controller.updateContent
 );
 

@@ -2,7 +2,6 @@ const prisma =
   require("../../config/database");
 const ApiError = require("../../utils/ApiError");
 const notificationService = require("../notifications/notification.service");
-const ApiError = require("../../utils/ApiError");
 
 const getLessons = async (moduleId, role, userId) => {
   const where = {};

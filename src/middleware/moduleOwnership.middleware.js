@@ -9,15 +9,14 @@ const findModuleById = (id) =>
 
 const getCourseCreatorId = (module) => module.course?.creatorId;
 
-    if (
-      req.user.role !== "ADMIN" &&
-      module.course.creatorId !==
-        req.user.id
-    ) {
-      return res.status(403).json({
-        message: "Access denied"
-      });
-    }
+const verifyModuleOwnership = buildOwnershipCheck({
+  getResourceId: (req) => req.params.moduleId,
+  findResource: findModuleById,
+  getCourseCreatorId,
+  notFoundMessage: "Module not found",
+  missingIdMessage: "moduleId is required",
+  attachAs: "module",
+});
 
 /**
  * Same ownership check, keyed on req.body.moduleId instead of a URL param.

@@ -11,18 +11,14 @@ const findLessonById = (id) =>
 
 const getCourseCreatorId = (lesson) => lesson.module?.course?.creatorId;
 
-      if (
-        req.user.role !==
-          "ADMIN" &&
-        lesson.module.course
-          .creatorId !==
-          req.user.id
-      ) {
-        return res.status(403).json({
-          message:
-            "Access denied"
-        });
-      }
+const verifyLessonOwnership = buildOwnershipCheck({
+  getResourceId: (req) => req.params.lessonId,
+  findResource: findLessonById,
+  getCourseCreatorId,
+  notFoundMessage: "Lesson not found",
+  missingIdMessage: "lessonId is required",
+  attachAs: "lesson",
+});
 
 /**
  * Same ownership check, keyed on req.body.lessonId instead of a URL param.

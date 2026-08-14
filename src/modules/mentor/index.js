@@ -1,4 +1,4 @@
-const router = require("./routes/mentor.routes");
+const router = require("./mentor.routes");
 const promptTemplateRepository = require("./repositories/promptTemplate.repository");
 const mentorService = require("./services/mentor.service");
 

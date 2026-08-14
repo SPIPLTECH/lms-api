@@ -4,6 +4,19 @@ const learnerModelService = require("../learner-model/learnerModel.service");
 const { MISCONCEPTION_TAXONOMY, isKnownMisconceptionType } = require("../learner-model/misconceptionTaxonomy.config");
 const misconceptionClassifier = require("../learner-model/misconceptionClassifier.service");
 
+// Tracks classifyAndApply() calls dispatched below fire-and-forget (never
+// awaited by the HTTP response, by design — see the dispatch site). Exists
+// solely so callers that need to know when that background write has
+// actually landed (namely: tests tearing down a student fixture) can wait
+// for it deterministically, instead of deleting the student's row while a
+// KnowledgeGap.create() for that same student may still be in flight —
+// which fails with a KnowledgeGap_studentId_fkey violation once the row is
+// gone. Does not change response timing for real requests.
+const pendingMisconceptionClassifications = new Set();
+
+const flushPendingMisconceptionClassifications = () =>
+  Promise.allSettled([...pendingMisconceptionClassifications]);
+
 const evaluateAnswer = (answer, correctAnswer, questionType) => {
   if (answer === undefined || answer === null || answer === "") {
     return 0;
@@ -451,7 +464,7 @@ const submitQuiz = async (studentId, quizId, answers = []) => {
         // KnowledgeGap, or any of the classifier's own discard/failure
         // paths) is applied strictly after this function has already
         // returned to the HTTP caller.
-        misconceptionClassifier
+        const classificationPromise = misconceptionClassifier
           .classifyAndApply({
             studentId,
             kc: evidence.kc,
@@ -467,7 +480,10 @@ const submitQuiz = async (studentId, quizId, answers = []) => {
               `Misconception classifier dispatch failed (student=${studentId}, quiz=${quizId}, question=${evidence.questionId}, kc=${evidence.kc}):`,
               error
             );
-          });
+          })
+          .finally(() => pendingMisconceptionClassifications.delete(classificationPromise));
+
+        pendingMisconceptionClassifications.add(classificationPromise);
       }
     } catch (error) {
       console.error(
@@ -613,5 +629,6 @@ module.exports = {
   deleteQuiz,
   submitQuiz,
   getQuizResult,
-  generateSelfAssessmentQuiz
+  generateSelfAssessmentQuiz,
+  flushPendingMisconceptionClassifications
 };

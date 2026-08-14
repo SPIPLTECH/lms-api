@@ -83,6 +83,11 @@ test("Phase 6 Bridge — Quiz Submission -> Learner Model Evidence", async (t) =
 
   const cleanupFixture = async (fx) => {
     if (!fx) return;
+    // Wait for any fire-and-forget Tier 2 misconception classification this
+    // fixture's submission may have dispatched (quiz.service.js) before
+    // deleting the student — otherwise its eventual KnowledgeGap.create()
+    // hits KnowledgeGap_studentId_fkey against a row that's already gone.
+    await quizService.flushPendingMisconceptionClassifications();
     await prisma.quizSubmission.deleteMany({ where: { studentId: fx.studentProfile.id } });
     await prisma.conceptMastery.deleteMany({ where: { studentId: fx.studentProfile.id } });
     await prisma.knowledgeGap.deleteMany({ where: { studentId: fx.studentProfile.id } });

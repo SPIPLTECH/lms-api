@@ -6,11 +6,7 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-<<<<<<< HEAD
-    "test": "node --test test/question-repository.test.js test/quiz-submissions.test.js test/xss-sanitizer.test.js test/ownership.middleware.test.js test/llm-gateway.test.js test/learner-model.test.js test/bkt.test.js test/misconception-detection.test.js test/pedagogical-decision.test.js test/adaptive-learning-integration.test.js test/phase6-system-evaluation.test.js test/quiz-learner-model-integration.test.js test/question-topic-kc.test.js test/quiz-submit-http.test.js test/adaptive-learning-educational-context.test.js test/misconception-tier1.test.js test/misconception-tier2.test.js test/payments.test.js",
-=======
     "test": "node --test",
->>>>>>> a812b962b9f87c1477e3a3fd5f5e5f560c10a68e
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio"
@@ -49,10 +45,7 @@
     "nodemailer": "^9.0.1",
     "pdf-parse": "^2.4.5",
     "prisma": "^6.19.0",
-<<<<<<< HEAD
     "razorpay": "^2.9.8",
-=======
->>>>>>> a812b962b9f87c1477e3a3fd5f5e5f560c10a68e
     "sanitize-html": "^2.17.6",
     "socket.io": "^4.8.3",
     "xlsx": "^0.18.5",

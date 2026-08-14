@@ -4,6 +4,7 @@ const request = require("supertest");
 
 const app = require("../src/app");
 const prisma = require("../src/config/database");
+const quizService = require("../src/modules/quizzes/quiz.service");
 const learnerModelService = require("../src/modules/learner-model/learnerModel.service");
 const misconceptionClassifier = require("../src/modules/learner-model/misconceptionClassifier.service");
 const llmService = require("../src/modules/llm/llm.service");
@@ -446,6 +447,61 @@ test("Phase 7B — Tier 2 LLM Misconception Classification", async (t) => {
         assert.equal(gap.confidence, 0.9);
       } finally {
         restore();
+        await cleanupQuizFixture(fx);
+      }
+    });
+
+    // Regression test for the KnowledgeGap_studentId_fkey crash: cleanup that
+    // deletes a student's StudentProfile without first waiting for this same
+    // fire-and-forget dispatch races the classifier's own eventual
+    // knowledgeGap.create() — that create() targets a real, still-correct
+    // studentId, but by the time it runs the row it points to has already
+    // been deleted by cleanup, so it fails its foreign key. Unlike the test
+    // above (which uses a bespoke waitFor() poll), this proves the fix meant
+    // for exactly this situation: quizService.flushPendingMisconceptionClassifications()
+    // deterministically waits for the in-flight dispatch, so cleanup is always
+    // safe immediately after awaiting it — no polling, no fixed timeout.
+    await tt.test("regression: flushPendingMisconceptionClassifications() prevents KnowledgeGap_studentId_fkey during fixture teardown", async () => {
+      const fx = await createQuizFixture("b1r", {
+        options: ["Queue", "Stack", "Tree", "Graph"],
+        correctAnswer: "Stack",
+        topic: "tier2_http_kc_b1r",
+      });
+      const originalConsoleError = console.error;
+      const loggedErrors = [];
+      console.error = (...args) => {
+        loggedErrors.push(args.map(String).join(" "));
+      };
+      const restore = mockLlm(async () => {
+        await new Promise((r) => setTimeout(r, 500));
+        return jsonResponse({ detected: true, type: "FIFO_LIFO_CONFUSION", description: "Queue/stack mix-up.", confidence: 0.9 });
+      });
+      try {
+        const res = await request(app)
+          .post(`/quizzes/${fx.quiz.id}/submit`)
+          .set("Authorization", `Bearer ${fx.token}`)
+          .send({ answers: [{ questionId: fx.question.id, answer: "Queue" }] });
+
+        assert.equal(res.status, 201, JSON.stringify(res.body));
+
+        // No waitFor() polling — this call must itself be the guarantee that
+        // the fire-and-forget classifier has fully settled before we assert
+        // the DB write or hand fx back to cleanupQuizFixture().
+        await quizService.flushPendingMisconceptionClassifications();
+
+        const fkErrors = loggedErrors.filter((line) => line.includes("KnowledgeGap_studentId_fkey"));
+        assert.equal(fkErrors.length, 0, `expected no foreign-key violations, got: ${fkErrors.join("\n")}`);
+
+        const gap = await prisma.knowledgeGap.findFirst({
+          where: { studentId: fx.studentProfile.id, concept: "FIFO_LIFO_CONFUSION" },
+        });
+        assert.ok(gap, "KnowledgeGap must be persisted once the flush resolves");
+        assert.equal(gap.studentId, fx.studentProfile.id, "must use the same existing student identifier BKT/ConceptMastery already wrote under");
+      } finally {
+        console.error = originalConsoleError;
+        restore();
+        // Now provably safe: the flush above already guaranteed the
+        // classifier's write landed, so this cannot race it.
         await cleanupQuizFixture(fx);
       }
     });

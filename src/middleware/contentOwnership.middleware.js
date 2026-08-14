@@ -16,18 +16,14 @@ const findContentById = (id) =>
 const getCourseCreatorId = (content) =>
   content.lesson?.module?.course?.creatorId;
 
-      if (
-        req.user.role !==
-          "ADMIN" &&
-        content.lesson.module.course
-          .creatorId !==
-          req.user.id
-      ) {
-        return res.status(403).json({
-          message:
-            "Access denied"
-        });
-      }
+const verifyContentOwnership = buildOwnershipCheck({
+  getResourceId: (req) => req.params.contentId,
+  findResource: findContentById,
+  getCourseCreatorId,
+  notFoundMessage: "Content not found",
+  missingIdMessage: "contentId is required",
+  attachAs: "content",
+});
 
 module.exports = verifyContentOwnership;
 module.exports.verifyContentOwnership = verifyContentOwnership;

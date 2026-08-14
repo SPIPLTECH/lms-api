@@ -34,6 +34,7 @@ const assignmentRoutes = require("./modules/assignments/assignment.routes");
 const calendarRoutes = require("./modules/calendar/calendar.routes");
 const upcomingTasksRoutes = require("./modules/upcoming-tasks/upcoming-tasks.routes");
 const storeRoutes = require("./modules/store/store.routes");
+const paymentRoutes = require("./modules/payments/payment.routes");
 
 const notificationRoutes = require("./modules/notifications/notification.routes");
 const conversationRoutes = require("./modules/conversations/conversation.routes");
@@ -53,7 +54,6 @@ const adminIntelligence = require("./modules/admin-intelligence");
 const mentor = require("./modules/mentor");
 const courseImportRoutes = require("./modules/course-import/routes");
 const app = express();
-const storeRoutes = require("./modules/store/store.routes");
 app.disable('etag');
 
 app.use(cors());
@@ -126,7 +126,6 @@ app.use("/achievements", achievementRoutes);
 app.use("/assignments", assignmentRoutes);
 app.use("/calendar", calendarRoutes);
 app.use("/upcoming-tasks", upcomingTasksRoutes);
-app.use("/store", storeRoutes);
 app.use("/events", observation.router);
 app.use("/student-state", studentState.router);
 app.use("/assessment", assessment.router);
@@ -140,6 +139,14 @@ app.use("/placement", placement.router);
 app.use("/admin-intelligence", adminIntelligence.router);
 app.use("/mentor", mentor.router);
 app.use("/course-import", courseImportRoutes);
+app.use(
+  "/learner-model",
+  require("./modules/learner-model/learnerModel.routes")
+);
+app.use(
+  "/adaptive-learning",
+  require("./modules/adaptive-learning/adaptiveLearning.routes")
+);
 app.use(errorHandler);
 
 module.exports = app;
