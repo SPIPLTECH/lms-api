@@ -457,7 +457,6 @@ const getCourseById = async (courseId, role) => {
               question: {
                 select: {
                   id: true,
-                  title: true,
                   question: true,
                   questionType: true,
                   options: true,

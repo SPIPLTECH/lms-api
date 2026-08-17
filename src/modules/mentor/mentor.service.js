@@ -199,11 +199,40 @@ const prepareExecution = async (user, conversationId, content, params = {}) => {
     content: m.content,
   }));
 
+  // Fetch student's enrolled courses for STUDENT role context verification
+  let studentEnrolledCourses = [];
+  if (user.role === "STUDENT") {
+    try {
+      const studentProfile = await prisma.studentProfile.findUnique({
+        where: { userId: user.id },
+        include: {
+          enrollments: {
+            include: {
+              course: { select: { id: true, title: true, category: true } }
+            }
+          }
+        }
+      });
+      if (studentProfile?.enrollments) {
+        studentEnrolledCourses = studentProfile.enrollments
+          .map((e) => e.course?.title)
+          .filter(Boolean);
+      }
+    } catch (err) {
+      console.warn("Failed to fetch student enrolled courses for mentor context:", err.message);
+    }
+  }
+
+  const mergedContext = {
+    ...(toolData || {}),
+    ...(user.role === "STUDENT" ? { studentEnrolledCourses } : {}),
+  };
+
   const systemPrompt = buildSystemPrompt(user.role);
   const userPrompt = buildUserPrompt({
     message: content,
     history: formattedHistory,
-    context: toolData,
+    context: mergedContext,
   });
 
   return {
