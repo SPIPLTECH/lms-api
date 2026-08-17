@@ -7,6 +7,7 @@ const { buildOwnershipCheck } = require("../src/middleware/ownership.middleware"
 const verifyCourseOwnership = require("../src/middleware/courseOwnership.middleware");
 const verifyModuleOwnership = require("../src/middleware/moduleOwnership.middleware");
 const verifyLessonOwnership = require("../src/middleware/lessonOwnership.middleware");
+const verifyTopicOwnership = require("../src/middleware/topicOwnership.middleware");
 const verifyContentOwnership = require("../src/middleware/contentOwnership.middleware");
 const verifyQuizOwnership = require("../src/middleware/quizOwnership.middleware");
 const verifyAssignmentOwnership = require("../src/middleware/assignmentOwnership.middleware");
@@ -294,11 +295,55 @@ test("verifyLessonOwnership walks Lesson -> Module -> Course", async (t) => {
   });
 });
 
-test("verifyContentOwnership walks Content -> Lesson -> Module -> Course", async (t) => {
+test("verifyTopicOwnership walks Topic -> Lesson -> Module -> Course", async (t) => {
+  await t.test("owner instructor passes", async (t) => {
+    mockMethod(t, prisma.topic, "findUnique", async () => ({
+      id: "tp1",
+      lesson: { module: { course: { creatorId: OWNER_ID } } }
+    }));
+    const req = buildReq({ user: { id: OWNER_ID, role: "INSTRUCTOR" }, params: { topicId: "tp1" } });
+    const { next, calls } = capturingNext();
+
+    await verifyTopicOwnership(req, {}, next);
+
+    assert.equal(calls[0], undefined);
+  });
+
+  await t.test("non-owner instructor is forbidden", async (t) => {
+    mockMethod(t, prisma.topic, "findUnique", async () => ({
+      id: "tp1",
+      lesson: { module: { course: { creatorId: OWNER_ID } } }
+    }));
+    const req = buildReq({
+      user: { id: OTHER_INSTRUCTOR_ID, role: "INSTRUCTOR" },
+      params: { topicId: "tp1" }
+    });
+    const { next, calls } = capturingNext();
+
+    await verifyTopicOwnership(req, {}, next);
+
+    assert.equal(calls[0].statusCode, 403);
+  });
+
+  await t.test(".fromBody reads req.body.topicId instead of params", async (t) => {
+    mockMethod(t, prisma.topic, "findUnique", async () => ({
+      id: "tp1",
+      lesson: { module: { course: { creatorId: OWNER_ID } } }
+    }));
+    const req = buildReq({ user: { id: OWNER_ID, role: "INSTRUCTOR" }, body: { topicId: "tp1" } });
+    const { next, calls } = capturingNext();
+
+    await verifyTopicOwnership.fromBody(req, {}, next);
+
+    assert.equal(calls[0], undefined);
+  });
+});
+
+test("verifyContentOwnership walks Content -> Topic -> Lesson -> Module -> Course", async (t) => {
   await t.test("owner instructor passes", async (t) => {
     mockMethod(t, prisma.content, "findUnique", async () => ({
       id: "ct1",
-      lesson: { module: { course: { creatorId: OWNER_ID } } }
+      topic: { lesson: { module: { course: { creatorId: OWNER_ID } } } }
     }));
     const req = buildReq({ user: { id: OWNER_ID, role: "INSTRUCTOR" }, params: { contentId: "ct1" } });
     const { next, calls } = capturingNext();
@@ -311,7 +356,7 @@ test("verifyContentOwnership walks Content -> Lesson -> Module -> Course", async
   await t.test("non-owner instructor is forbidden", async (t) => {
     mockMethod(t, prisma.content, "findUnique", async () => ({
       id: "ct1",
-      lesson: { module: { course: { creatorId: OWNER_ID } } }
+      topic: { lesson: { module: { course: { creatorId: OWNER_ID } } } }
     }));
     const req = buildReq({
       user: { id: OTHER_INSTRUCTOR_ID, role: "INSTRUCTOR" },

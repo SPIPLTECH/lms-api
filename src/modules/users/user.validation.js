@@ -3,13 +3,17 @@ const Joi = require("joi");
 const updateUserSchema = Joi.object({
   name: Joi.string().min(2).max(100).optional(),
   phoneNumber: Joi.string()
-    .pattern(/^\+?[0-9]{7,15}$/)
+    .pattern(/^\+?[0-9\s\-()]{7,20}$/)
     .optional()
     .allow(null, ""),
   address: Joi.string().max(255).optional().allow(null, ""),
+  avatar: Joi.string().optional().allow(null, ""),
 
   // Student profile fields (StudentProfile)
   education: Joi.string().max(255).optional().allow(null, ""),
+  institution: Joi.string().max(255).optional().allow(null, ""),
+  graduationYear: Joi.string().max(50).optional().allow(null, ""),
+  gender: Joi.string().max(50).optional().allow(null, ""),
   dateOfBirth: Joi.date().optional().allow(null, ""),
   guardianName: Joi.string().max(150).optional().allow(null, ""),
   phone: Joi.string().max(20).optional().allow(null, ""),

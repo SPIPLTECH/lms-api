@@ -184,6 +184,7 @@ model Course {
   assignments             Assignment[]
   exams                   Exam[]
   batches                 Batch[]                  @relation("BatchToCourse")
+
   batchesByCourseId       Batch[]                  @relation("Batch_courseIdToCourse")
   batchSessions           BatchSession[]
   studentStates           StudentState[]
@@ -241,7 +242,7 @@ model Lesson {
   moduleId        String
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
-  contents        Content[]
+  topics          Topic[]
   instructorNotes InstructorLessonNote[]
   module          Module                 @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   queries         LessonQuery[]
@@ -252,10 +253,25 @@ model Lesson {
   @@unique([moduleId, order])
 }
 
+model Topic {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  order       Int
+  isPublished Boolean  @default(false)
+  lessonId    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  contents    Content[]
+  lesson      Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([lessonId, order])
+}
+
 model Content {
   id          String      @id @default(cuid())
   order       Int
-  lessonId    String
+  topicId     String
   type        ContentType
   title       String?
   videoUrl    String?
@@ -266,9 +282,9 @@ model Content {
   data        Json?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
-  lesson      Lesson      @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  topic       Topic       @relation(fields: [topicId], references: [id], onDelete: Cascade)
 
-  @@unique([lessonId, order])
+  @@unique([topicId, order])
 }
 
 model LessonQuery {
@@ -949,6 +965,7 @@ enum ContentType {
   INTERACTIVE_LAB
   AUDIO
   EMBED
+  SLIDE
 }
 
 enum UserStatus {

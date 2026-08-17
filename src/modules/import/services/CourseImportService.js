@@ -127,6 +127,18 @@ class CourseImportService {
           if (lesData.file) {
             const fileEntry = entries.find((e) => e.entryName.endsWith(lesData.file));
             if (fileEntry) {
+              // Imported content has no notion of topics yet, so every lesson
+              // gets one default "General" topic to hold its content — same
+              // convention the Topic backfill migration used for pre-existing
+              // content.
+              const topicObj = await tx.topic.create({
+                data: {
+                  lessonId: lessonObj.id,
+                  title: "General",
+                  order: 1,
+                },
+              });
+
               const fileBuffer = fileEntry.getData();
               const ext = path.extname(lesData.file).toLowerCase();
 
@@ -137,7 +149,7 @@ class CourseImportService {
 
                 await tx.content.create({
                   data: {
-                    lessonId: lessonObj.id,
+                    topicId: topicObj.id,
                     title: lesData.title || "Lesson Material",
                     type: "TEXT",
                     htmlContent: sanitizeContent(body),
@@ -154,7 +166,7 @@ class CourseImportService {
 
                 await tx.content.create({
                   data: {
-                    lessonId: lessonObj.id,
+                    topicId: topicObj.id,
                     title: lesData.title || path.basename(lesData.file),
                     type: cType,
                     ...(cType === "VIDEO" ? { videoUrl: savedPath } : { fileUrl: savedPath }),

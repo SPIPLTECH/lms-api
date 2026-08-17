@@ -620,7 +620,7 @@ const getBatchDetailDashboard = async (batchId) => {
       : [],
     lessonIds.length > 0
       ? prisma.content.findMany({
-          where: { lessonId: { in: lessonIds } },
+          where: { topic: { lessonId: { in: lessonIds } } },
           select: {
             id: true,
             title: true,
@@ -629,7 +629,7 @@ const getBatchDetailDashboard = async (batchId) => {
             videoUrl: true,
             externalUrl: true,
             createdAt: true,
-            lessonId: true,
+            topic: { select: { lessonId: true } },
           },
           orderBy: { createdAt: "desc" },
         })
@@ -775,8 +775,8 @@ const getBatchDetailDashboard = async (batchId) => {
       title: c.title || "Untitled material",
       type: c.type,
       url: c.fileUrl || c.videoUrl || c.externalUrl || null,
-      moduleTitle: lessonById.get(c.lessonId)?.moduleTitle,
-      lessonTitle: lessonById.get(c.lessonId)?.title,
+      moduleTitle: lessonById.get(c.topic?.lessonId)?.moduleTitle,
+      lessonTitle: lessonById.get(c.topic?.lessonId)?.title,
       createdAt: c.createdAt,
     })),
   };

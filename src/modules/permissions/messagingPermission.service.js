@@ -13,7 +13,9 @@ const prisma = require("../../config/database");
 
 const canCreateConversation = async (senderId, receiverId) => {
     if (senderId === receiverId) {
-        throw new Error("You cannot communicate with yourself.");
+        const error = new Error("You cannot communicate with yourself.");
+        error.statusCode = 400;
+        throw error;
     }
 
     const [sender, receiver] = await Promise.all([
@@ -27,7 +29,9 @@ const canCreateConversation = async (senderId, receiverId) => {
     ]);
 
     if (!sender || !receiver) {
-        throw new Error("User not found.");
+        const error = new Error("User not found.");
+        error.statusCode = 404;
+        throw error;
     }
 
     /*
@@ -62,9 +66,11 @@ const canCreateConversation = async (senderId, receiverId) => {
         });
 
         if (!enrollment) {
-            throw new Error(
+            const error = new Error(
                 "You can communicate only with instructors of your enrolled courses."
             );
+            error.statusCode = 403;
+            throw error;
         }
 
         return true;
@@ -107,9 +113,11 @@ const canCreateConversation = async (senderId, receiverId) => {
         });
 
         if (!commonCourse) {
-            throw new Error(
+            const error = new Error(
                 "Students can communicate only with classmates enrolled in the same course."
             );
+            error.statusCode = 403;
+            throw error;
         }
 
         return true;
@@ -137,9 +145,11 @@ const canCreateConversation = async (senderId, receiverId) => {
         });
 
         if (!enrollment) {
-            throw new Error(
+            const error = new Error(
                 "You can communicate only with students enrolled in your courses."
             );
+            error.statusCode = 403;
+            throw error;
         }
 
         return true;
@@ -155,9 +165,11 @@ const canCreateConversation = async (senderId, receiverId) => {
         sender.role === "INSTRUCTOR" &&
         receiver.role === "INSTRUCTOR"
     ) {
-        throw new Error(
+        const error = new Error(
             "Instructors are not allowed to communicate with other instructors."
         );
+        error.statusCode = 403;
+        throw error;
     }
 
     /*
@@ -166,9 +178,11 @@ const canCreateConversation = async (senderId, receiverId) => {
     |--------------------------------------------------------------------------
     */
 
-    throw new Error(
+    const error = new Error(
         "You are not authorized to communicate with this user."
     );
+    error.statusCode = 403;
+    throw error;
 };
 
 module.exports = {

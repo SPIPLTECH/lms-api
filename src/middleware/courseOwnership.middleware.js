@@ -1,4 +1,5 @@
 const prisma = require("../config/database");
+const ApiError = require("../utils/ApiError");
 const { buildOwnershipCheck } = require("./ownership.middleware");
 
 const findCourse = (id) =>

@@ -19,8 +19,8 @@ const verifyContentOwnership = require(
   "../../middleware/contentOwnership.middleware"
 );
 
-const verifyLessonOwnership = require(
-  "../../middleware/lessonOwnership.middleware"
+const verifyTopicOwnership = require(
+  "../../middleware/topicOwnership.middleware"
 );
 
 const { upload, sanitizeSvgUpload } = require(
@@ -63,6 +63,16 @@ router.post(
   }
 );
 
+router.patch(
+  "/reorder",
+  verifyToken,
+  checkRole([
+    "ADMIN",
+    "INSTRUCTOR"
+  ]),
+  controller.reorderContents
+);
+
 router.get(
   "/",
   verifyToken,
@@ -85,7 +95,7 @@ router.post(
     "INSTRUCTOR"
   ]),
   validate(createContentSchema),
-  verifyLessonOwnership.fromBody,
+  verifyTopicOwnership.fromBody,
   controller.createContent
 );
 

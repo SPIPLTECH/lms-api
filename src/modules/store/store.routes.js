@@ -5,8 +5,7 @@ const controller = require("./store.controller");
 const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
 const verifyCourseOwnership = require("../../middleware/courseOwnership.middleware");
-const validate = require("../../middleware/joiValidation.middleware");
-const { setPriceSchema } = require("./store.validation");
+const { setPriceValidation } = require("./store.validation");
 
 router.get("/:courseId", controller.getStoreByCourseId);
 
@@ -15,7 +14,7 @@ router.post(
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
   verifyCourseOwnership,
-  validate(setPriceSchema),
+  setPriceValidation,
   controller.setCoursePrice
 );
 
@@ -24,7 +23,7 @@ router.put(
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
   verifyCourseOwnership,
-  validate(setPriceSchema),
+  setPriceValidation,
   controller.setCoursePrice
 );
 

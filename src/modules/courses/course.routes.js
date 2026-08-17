@@ -29,7 +29,6 @@ const {
   updateCourseStatusSchema,
   sendAnnouncementSchema
 } = require("./course.validation");
-
 // Public read — optionalToken allows unauthenticated (GUEST) access.
 // The service layer already filters: guests/students see only PUBLISHED courses;
 // admins/instructors see all. verifyToken is NOT used here because guests

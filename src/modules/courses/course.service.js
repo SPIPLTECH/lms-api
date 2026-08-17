@@ -1,5 +1,6 @@
 const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
+const ApiError = require("../../utils/ApiError");
 // const verifyToken = require(
 //   "../../middleware/auth.middleware"
 // );
@@ -58,7 +59,7 @@ const buildCourseStatsMap = async (courseIds) => {
       select: {
         courseId: true,
         createdAt: true,
-        lessons: { select: { id: true, _count: { select: { contents: true } } } }
+        lessons: { select: { id: true, topics: { select: { _count: { select: { contents: true } } } } } }
       }
     }),
     prisma.quizQuestion.findMany({
@@ -101,8 +102,8 @@ const buildCourseStatsMap = async (courseIds) => {
       }
     }),
     prisma.content.findMany({
-      where: { lesson: { module: { courseId: { in: courseIds } } } },
-      select: { type: true, lesson: { select: { module: { select: { courseId: true } } } } }
+      where: { topic: { lesson: { module: { courseId: { in: courseIds } } } } },
+      select: { type: true, topic: { select: { lesson: { select: { module: { select: { courseId: true } } } } } } }
     }),
     prisma.course.findMany({
       where: { id: { in: courseIds } },
@@ -116,12 +117,15 @@ const buildCourseStatsMap = async (courseIds) => {
     const stats = statsMap.get(module.courseId);
     if (!stats) continue;
     stats.lessonsCount += module.lessons.length;
-    stats.contentsCount += module.lessons.reduce((sum, l) => sum + l._count.contents, 0);
+    stats.contentsCount += module.lessons.reduce(
+      (sum, l) => sum + l.topics.reduce((tSum, t) => tSum + t._count.contents, 0),
+      0
+    );
   }
 
   // Type-specific content counts
   for (const content of contentsList) {
-    const courseId = content.lesson.module.courseId;
+    const courseId = content.topic.lesson.module.courseId;
     const stats = statsMap.get(courseId);
     if (!stats) continue;
     
@@ -429,7 +433,21 @@ const getCourseById = async (courseId, role) => {
               order: "asc"
             },
             include: {
-              contents: true
+              topics: {
+                orderBy: {
+                  order: "asc"
+                },
+                include: {
+                  contents: {
+                    orderBy: {
+                      order: "asc"
+                    }
+                  },
+                  _count: {
+                    select: { contents: true }
+                  }
+                }
+              }
             }
           }
         }
@@ -449,7 +467,6 @@ const getCourseById = async (courseId, role) => {
               question: {
                 select: {
                   id: true,
-                  title: true,
                   question: true,
                   questionType: true,
                   options: true,
@@ -498,8 +515,12 @@ const updateCourse = async (courseId, data) => {
 };
 
 const updateStatus = async (courseId, status) => {
-  const isPublished = status === "PUBLISHED" || status === "Published" || status === true;
-  const finalStatus = isPublished ? "PUBLISHED" : "DRAFT";
+  if (status === "PUBLISHED") {
+    const moduleCount = await prisma.module.count({ where: { courseId } });
+    if (moduleCount === 0) {
+      throw new ApiError(400, "Add at least one module before publishing this course.");
+    }
+  }
 
   const course = await prisma.course.update({
     where: {
@@ -548,7 +569,12 @@ const duplicateCourse = async (courseId, instructorId) => {
         include: {
           lessons: {
             orderBy: { order: "asc" },
-            include: { contents: { orderBy: { order: "asc" } } }
+            include: {
+              topics: {
+                orderBy: { order: "asc" },
+                include: { contents: { orderBy: { order: "asc" } } }
+              }
+            }
           }
         }
       }
@@ -603,20 +629,32 @@ const duplicateCourse = async (courseId, instructorId) => {
           }
         });
 
-        if (lesson.contents.length > 0) {
-          await tx.content.createMany({
-            data: lesson.contents.map((content) => ({
-              order: content.order,
-              lessonId: newLesson.id,
-              type: content.type,
-              title: content.title,
-              videoUrl: content.videoUrl,
-              fileUrl: content.fileUrl,
-              htmlContent: content.htmlContent,
-              externalUrl: content.externalUrl,
-              duration: content.duration
-            }))
+        for (const topic of lesson.topics) {
+          const newTopic = await tx.topic.create({
+            data: {
+              title: topic.title,
+              description: topic.description,
+              order: topic.order,
+              isPublished: false,
+              lessonId: newLesson.id
+            }
           });
+
+          if (topic.contents.length > 0) {
+            await tx.content.createMany({
+              data: topic.contents.map((content) => ({
+                order: content.order,
+                topicId: newTopic.id,
+                type: content.type,
+                title: content.title,
+                videoUrl: content.videoUrl,
+                fileUrl: content.fileUrl,
+                htmlContent: content.htmlContent,
+                externalUrl: content.externalUrl,
+                duration: content.duration
+              }))
+            });
+          }
         }
       }
     }

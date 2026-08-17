@@ -11,8 +11,13 @@ const getStudentState = async (userId) => {
     throw error;
   }
 
-  const state = await prisma.studentState.findUnique({
-    where: { studentId: studentProfile.id }
+  // StudentState is unique per (studentId, courseId) — a student has one row
+  // per course, not one globally — so this can't be a findUnique on studentId
+  // alone. The caller doesn't scope by course, so return whichever course's
+  // state was touched most recently.
+  const state = await prisma.studentState.findFirst({
+    where: { studentId: studentProfile.id },
+    orderBy: { updatedAt: "desc" }
   });
 
   return state;
@@ -38,7 +43,12 @@ const updateStudentState = async (userId, data) => {
   }
 
   const state = await prisma.studentState.upsert({
-    where: { studentId: studentProfile.id },
+    where: {
+      studentId_courseId: {
+        studentId: studentProfile.id,
+        courseId
+      }
+    },
     update: {
       courseId,
       moduleId: moduleId || null,

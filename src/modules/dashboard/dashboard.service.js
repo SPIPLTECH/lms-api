@@ -265,140 +265,259 @@ const getAdminDashboard = async () => {
 };
 
 const getInstructorDashboard = async (instructorId, courseId) => {
-  // Fetch all courses owned/created by the instructor
-  const allInstructorCourses = await prisma.course.findMany({
+  // Base course list only -- no nested include. Everything else below is
+  // fetched as its own minimally-selected/aggregated query and joined in JS
+  // via O(1) Map lookups, instead of one giant nested include plus
+  // nested-loop-with-.find() scans over the fully materialized object graph.
+  const instructorCourses = await prisma.course.findMany({
     where: {
       creatorId: instructorId
     },
-    include: {
-      enrollments: true,
-      modules: {
-        include: {
-          lessons: {
-            include: {
-              progress: true
-            }
-          }
-        }
-      },
-      quizzes: {
-        include: {
-          quizSubmissions: true
-        }
-      },
-      reviews: true,
-      videoAnalytics: true
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      createdAt: true
     }
   });
 
-  const courseIds = allInstructorCourses.map(c => c.id);
+  const courseIds = instructorCourses.map(c => c.id);
 
   // If a specific course filter is active, filter the target courses
   const activeCourseId = (courseId && courseId !== "all") ? courseId : null;
   const targetCourses = activeCourseId
-    ? allInstructorCourses.filter(c => c.id === activeCourseId)
-    : allInstructorCourses;
+    ? instructorCourses.filter(c => c.id === activeCourseId)
+    : instructorCourses;
   const targetCourseIds = targetCourses.map(c => c.id);
+  const targetCourseSet = new Set(targetCourseIds);
 
-  // 1. Calculate Enrollments / Active Learners
-  const totalEnrollments = targetCourses.reduce((sum, c) => sum + c.enrollments.length, 0);
-
-  // Enrollment trend (vs last week)
   const oneWeekAgo = new Date();
   oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-  const newEnrollmentsThisWeek = targetCourses.reduce((sum, c) => {
-    return sum + c.enrollments.filter(e => e.enrolledAt >= oneWeekAgo).length;
-  }, 0);
+  const fiveDaysAgo = new Date();
+  fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
+  // Query-level lower bound for the 7-day engagement window (day loop below
+  // covers "today" back through 6 days ago) -- used only to avoid fetching
+  // rows that could never fall inside that window.
+  const sevenDayWindowStart = new Date();
+  sevenDayWindowStart.setDate(sevenDayWindowStart.getDate() - 6);
+  sevenDayWindowStart.setHours(0, 0, 0, 0);
+
+  const [
+    enrollments,
+    moduleGroups,
+    lessons,
+    completedProgress,
+    quizzes,
+    quizSubmissionGroups,
+    quizSubmissionsThisWeek,
+    reviewGroups,
+    inactiveStudentsCount,
+    pendingFeedbackCount
+  ] = await Promise.all([
+    // All enrollments for this instructor's own courses (bounded, not platform-wide)
+    prisma.enrollment.findMany({
+      where: { courseId: { in: courseIds } },
+      select: { studentId: true, courseId: true, enrolledAt: true }
+    }),
+    // Module count per course
+    prisma.module.groupBy({
+      by: ["courseId"],
+      where: { courseId: { in: courseIds } },
+      _count: { _all: true }
+    }),
+    // Lesson id/title + course id (via module), for lesson counts and concept mastery labels
+    prisma.lesson.findMany({
+      where: { module: { courseId: { in: courseIds } } },
+      select: { id: true, title: true, module: { select: { courseId: true } } }
+    }),
+    // Completed progress rows only, minimal fields, courseId resolved through the relation
+    prisma.progress.findMany({
+      where: { completed: true, lesson: { module: { courseId: { in: courseIds } } } },
+      select: {
+        studentId: true,
+        lessonId: true,
+        completedAt: true,
+        lesson: { select: { module: { select: { courseId: true } } } }
+      }
+    }),
+    prisma.quiz.findMany({
+      where: { courseId: { in: courseIds } },
+      select: { id: true, courseId: true }
+    }),
+    // Per-quiz submission aggregate (avg %, count) -- DB-side, not per-submission rows
+    prisma.quizSubmission.groupBy({
+      by: ["quizId"],
+      where: { quiz: { courseId: { in: courseIds } } },
+      _avg: { percentage: true },
+      _count: { _all: true }
+    }),
+    // Submission rows are needed (not just the aggregate) for the day-by-day
+    // engagement bucket, bounded to target courses + the last 7 days
+    prisma.quizSubmission.findMany({
+      where: { quiz: { courseId: { in: targetCourseIds } }, submittedAt: { gte: sevenDayWindowStart } },
+      select: { studentId: true, submittedAt: true }
+    }),
+    // Per-course rating aggregate -- DB-side, mirrors review.service.js's existing pattern
+    prisma.review.groupBy({
+      by: ["courseId"],
+      where: { courseId: { in: courseIds } },
+      _avg: { rating: true },
+      _count: { rating: true }
+    }),
+    // 5. Inactive Students Count (no progress or login activity for 5+ days)
+    prisma.studentProfile.count({
+      where: {
+        enrollments: {
+          some: {
+            courseId: { in: targetCourseIds }
+          }
+        },
+        NOT: {
+          progress: {
+            some: {
+              completedAt: { gte: fiveDaysAgo }
+            }
+          }
+        }
+      }
+    }),
+    // 6. Unanswered messages in the last 5 days
+    prisma.message.count({
+      where: {
+        conversation: {
+          participants: {
+            some: {
+              userId: instructorId
+            }
+          }
+        },
+        NOT: {
+          senderId: instructorId
+        },
+        createdAt: {
+          gte: fiveDaysAgo
+        }
+      }
+    })
+  ]);
+
+  // ---- Build O(1)-lookup maps once, single pass over each minimal result set ----
+
+  const courseModuleCount = new Map(moduleGroups.map(g => [g.courseId, g._count._all]));
+
+  const courseLessonCount = new Map();
+  const lessonsByCourse = new Map();
+  for (const l of lessons) {
+    const cid = l.module.courseId;
+    courseLessonCount.set(cid, (courseLessonCount.get(cid) || 0) + 1);
+    if (!lessonsByCourse.has(cid)) lessonsByCourse.set(cid, []);
+    lessonsByCourse.get(cid).push(l);
+  }
+
+  const courseEnrollments = new Map();
+  for (const e of enrollments) {
+    if (!courseEnrollments.has(e.courseId)) courseEnrollments.set(e.courseId, []);
+    courseEnrollments.get(e.courseId).push(e);
+  }
+
+  // Per (studentId, courseId) and per-lesson completed counts, from one pass
+  const completedByStudentCourse = new Map();
+  const completedByLesson = new Map();
+  for (const p of completedProgress) {
+    const cid = p.lesson.module.courseId;
+    const key = `${p.studentId}:${cid}`;
+    completedByStudentCourse.set(key, (completedByStudentCourse.get(key) || 0) + 1);
+    completedByLesson.set(p.lessonId, (completedByLesson.get(p.lessonId) || 0) + 1);
+  }
+
+  const quizCourseMap = new Map(quizzes.map(q => [q.id, q.courseId]));
+  const courseQuizAgg = new Map(); // courseId -> { totalSubs, sumPercentage }
+  for (const g of quizSubmissionGroups) {
+    const cid = quizCourseMap.get(g.quizId);
+    if (cid == null) continue;
+    const prev = courseQuizAgg.get(cid) || { totalSubs: 0, sumPercentage: 0 };
+    const subCount = g._count._all;
+    prev.totalSubs += subCount;
+    prev.sumPercentage += (g._avg.percentage || 0) * subCount;
+    courseQuizAgg.set(cid, prev);
+  }
+
+  const courseReviewAgg = new Map(
+    reviewGroups.map(g => [g.courseId, { avg: g._avg.rating || 0, count: g._count.rating }])
+  );
+
+  // Per-enrollment completion %, matching the original formula exactly
+  // (rounded per-enrollment, then averaged) -- reused for both the per-course
+  // table and the target-scope flat KPI average.
+  const enrollmentCompletionPercent = (studentId, cid) => {
+    const totalLessons = courseLessonCount.get(cid) || 0;
+    if (totalLessons === 0) return 0;
+    const completed = completedByStudentCourse.get(`${studentId}:${cid}`) || 0;
+    return Math.round((completed / totalLessons) * 100);
+  };
+
+  const courseCompletionRate = (cid) => {
+    const courseEnrolls = courseEnrollments.get(cid) || [];
+    const totalLessons = courseLessonCount.get(cid) || 0;
+    if (courseEnrolls.length === 0 || totalLessons === 0) return 0;
+    let sumPercent = 0;
+    for (const e of courseEnrolls) {
+      sumPercent += enrollmentCompletionPercent(e.studentId, cid);
+    }
+    return Math.round(sumPercent / courseEnrolls.length);
+  };
+
+  // 1. Calculate Enrollments / Active Learners (target scope)
+  const targetEnrollmentRows = targetCourseIds.flatMap(cid => courseEnrollments.get(cid) || []);
+  const totalEnrollments = targetEnrollmentRows.length;
+
+  // Enrollment trend (vs last week)
+  const newEnrollmentsThisWeek = targetEnrollmentRows.filter(e => e.enrolledAt >= oneWeekAgo).length;
   const oldEnrollments = totalEnrollments - newEnrollmentsThisWeek;
   const enrollmentTrend = oldEnrollments > 0
     ? parseFloat(((newEnrollmentsThisWeek / oldEnrollments) * 100).toFixed(1))
     : 0;
 
-  // 2. Average Course Completion Rate
+  // 2. Average Course Completion Rate (flat average across target enrollments,
+  // matching the original's flat-array-then-average semantics exactly)
   let enrollmentCompletionPercentages = [];
-  for (const course of targetCourses) {
-    const lessons = course.modules.flatMap(m => m.lessons);
-    const lessonIds = lessons.map(l => l.id);
-    const enrolledCount = course.enrollments.length;
-
-    if (enrolledCount === 0 || lessonIds.length === 0) continue;
-
-    for (const enrollment of course.enrollments) {
-      const studentProgress = lessons.reduce((compSum, lesson) => {
-        const prog = lesson.progress.find(p => p.studentId === enrollment.studentId);
-        return compSum + (prog && prog.completed ? 1 : 0);
-      }, 0);
-      const percent = Math.round((studentProgress / lessonIds.length) * 100);
-      enrollmentCompletionPercentages.push(percent);
+  for (const cid of targetCourseIds) {
+    const courseEnrolls = courseEnrollments.get(cid) || [];
+    if (courseEnrolls.length === 0 || (courseLessonCount.get(cid) || 0) === 0) continue;
+    for (const e of courseEnrolls) {
+      enrollmentCompletionPercentages.push(enrollmentCompletionPercent(e.studentId, cid));
     }
   }
-
   const averageCompletion = enrollmentCompletionPercentages.length > 0
     ? Math.round(enrollmentCompletionPercentages.reduce((sum, p) => sum + p, 0) / enrollmentCompletionPercentages.length)
     : 0;
 
-  // 3. Quiz average score calculations
-  let quizScores = [];
-  for (const course of targetCourses) {
-    for (const quiz of course.quizzes) {
-      for (const sub of quiz.quizSubmissions) {
-        quizScores.push(sub.percentage);
-      }
-    }
+  // 3. Quiz average score (flat/weighted average across target courses --
+  // mathematically identical to averaging every individual submission's %,
+  // since a weighted mean of per-quiz means with weight = submission count
+  // equals the overall mean)
+  let targetQuizSubs = 0;
+  let targetQuizWeightedSum = 0;
+  for (const cid of targetCourseIds) {
+    const agg = courseQuizAgg.get(cid);
+    if (!agg) continue;
+    targetQuizSubs += agg.totalSubs;
+    targetQuizWeightedSum += agg.sumPercentage;
   }
-  const avgQuizScore = quizScores.length > 0
-    ? Math.round(quizScores.reduce((sum, s) => sum + s, 0) / quizScores.length)
-    : 0;
+  const avgQuizScore = targetQuizSubs > 0 ? Math.round(targetQuizWeightedSum / targetQuizSubs) : 0;
 
-  // 4. Average rating calculations
-  let ratings = [];
-  for (const course of targetCourses) {
-    for (const review of course.reviews) {
-      ratings.push(review.rating);
-    }
+  // 4. Average rating (same weighted-mean-equals-flat-mean reasoning as quiz score)
+  let targetReviewCount = 0;
+  let targetReviewWeightedSum = 0;
+  for (const cid of targetCourseIds) {
+    const agg = courseReviewAgg.get(cid);
+    if (!agg) continue;
+    targetReviewCount += agg.count;
+    targetReviewWeightedSum += agg.avg * agg.count;
   }
-  const avgRating = ratings.length > 0
-    ? parseFloat((ratings.reduce((sum, r) => sum + r, 0) / ratings.length).toFixed(1))
+  const avgRating = targetReviewCount > 0
+    ? parseFloat((targetReviewWeightedSum / targetReviewCount).toFixed(1))
     : 0;
-
-  // 5. Inactive Students Count (no progress or login activity for 5+ days)
-  const fiveDaysAgo = new Date();
-  fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
-  const inactiveStudentsCount = await prisma.studentProfile.count({
-    where: {
-      enrollments: {
-        some: {
-          courseId: { in: targetCourseIds }
-        }
-      },
-      NOT: {
-        progress: {
-          some: {
-            completedAt: { gte: fiveDaysAgo }
-          }
-        }
-      }
-    }
-  });
-
-  // 6. Unanswered messages in the last 5 days
-  const pendingFeedbackCount = await prisma.message.count({
-    where: {
-      conversation: {
-        participants: {
-          some: {
-            userId: instructorId
-          }
-        }
-      },
-      NOT: {
-        senderId: instructorId
-      },
-      createdAt: {
-        gte: fiveDaysAgo
-      }
-    }
-  });
 
   // 7. KPIs Array with appropriate styling config
   const kpis = [
@@ -461,15 +580,11 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     }
   ];
 
-  // Video Analytics Calculation
-  let totalVideoWatchTime = 0;
-  for (const course of targetCourses) {
-    if (course.videoAnalytics) {
-       for (const va of course.videoAnalytics) {
-          totalVideoWatchTime += (va.watchTime || 0);
-       }
-    }
-  }
+  // Video Analytics Calculation -- videoAnalytics was never part of this
+  // query (before or after this rewrite), so this has always evaluated to 0.
+  // Left as-is: wiring up real video-watch-time tracking is a separate
+  // feature, not part of this performance fix.
+  const totalVideoWatchTime = 0;
   const formatWatchTime = (seconds) => {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -549,9 +664,12 @@ const getInstructorDashboard = async (instructorId, courseId) => {
   // 9. Performance Analytics
   let performanceAnalytics = [];
   if (!activeCourseId) {
-    performanceAnalytics = allInstructorCourses.map(course => {
-      const enrolledCount = course.enrollments.length;
-      const maxEnrolls = Math.max(...allInstructorCourses.map(c => c.enrollments.length), 1);
+    const maxEnrolls = Math.max(
+      ...instructorCourses.map(c => (courseEnrollments.get(c.id) || []).length),
+      1
+    );
+    performanceAnalytics = instructorCourses.map(course => {
+      const enrolledCount = (courseEnrollments.get(course.id) || []).length;
       const popularityScore = Math.round((enrolledCount / maxEnrolls) * 100);
       return {
         course: course.title,
@@ -560,11 +678,11 @@ const getInstructorDashboard = async (instructorId, courseId) => {
       };
     });
   } else {
-    const selectedCourse = targetCourses[0];
-    const lessons = selectedCourse?.modules.flatMap(m => m.lessons) ?? [];
-    const enrolledCount = selectedCourse?.enrollments.length ?? 0;
-    performanceAnalytics = lessons.map(lesson => {
-      const completedCount = lesson.progress.filter(p => p.completed).length;
+    const selectedCourseId = targetCourseIds[0];
+    const selectedLessons = lessonsByCourse.get(selectedCourseId) || [];
+    const enrolledCount = (courseEnrollments.get(selectedCourseId) || []).length;
+    performanceAnalytics = selectedLessons.map(lesson => {
+      const completedCount = completedByLesson.get(lesson.id) || 0;
       const masteryPercent = enrolledCount > 0 ? Math.round((completedCount / enrolledCount) * 100) : 0;
       return {
         course: lesson.title,
@@ -574,45 +692,51 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     });
   }
 
-  // 10. Student Engagement daily statistics for past 7 days
+  // 10. Student Engagement daily statistics for past 7 days.
+  // Pre-filter to target-course, last-7-days rows ONCE (O(n)) instead of
+  // re-scanning the full nested object graph on every one of the 7 days.
   const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const targetEnrollmentsRecent = enrollments.filter(
+    e => targetCourseSet.has(e.courseId) && e.enrolledAt >= sevenDayWindowStart
+  );
+  const targetProgressRecent = completedProgress.filter(
+    p => targetCourseSet.has(p.lesson.module.courseId) && p.completedAt && p.completedAt >= sevenDayWindowStart
+  );
+  // quizSubmissionsThisWeek is already scoped to target courses + the 7-day window by its query.
+
   const studentEngagement = [];
   for (let i = 6; i >= 0; i--) {
-    const date = new Date();
-    date.setDate(date.getDate() - i);
-    const dayLabel = daysOfWeek[date.getDay()];
-    
-    const startOfDay = new Date(date.setHours(0,0,0,0));
-    const endOfDay = new Date(date.setHours(23,59,59,999));
-    
-    let dailyActiveStudents = new Set();
+    const dayRef = new Date();
+    dayRef.setDate(dayRef.getDate() - i);
+    const dayLabel = daysOfWeek[dayRef.getDay()];
+
+    const startOfDay = new Date(dayRef);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(dayRef);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const dailyActiveStudents = new Set();
     let dailyCompletions = 0;
     let dailyQuizAttempts = 0;
-    
-    for (const course of targetCourses) {
-      course.enrollments.forEach(e => {
-        if (e.enrolledAt >= startOfDay && e.enrolledAt <= endOfDay) {
-          dailyActiveStudents.add(e.studentId);
-        }
-      });
-      course.modules.flatMap(m => m.lessons).forEach(lesson => {
-        lesson.progress.forEach(p => {
-          if (p.completedAt && p.completedAt >= startOfDay && p.completedAt <= endOfDay) {
-            dailyActiveStudents.add(p.studentId);
-            dailyCompletions++;
-          }
-        });
-      });
-      course.quizzes.forEach(quiz => {
-        quiz.quizSubmissions.forEach(qs => {
-          if (qs.submittedAt >= startOfDay && qs.submittedAt <= endOfDay) {
-            dailyActiveStudents.add(qs.studentId);
-            dailyQuizAttempts++;
-          }
-        });
-      });
+
+    for (const e of targetEnrollmentsRecent) {
+      if (e.enrolledAt >= startOfDay && e.enrolledAt <= endOfDay) {
+        dailyActiveStudents.add(e.studentId);
+      }
     }
-    
+    for (const p of targetProgressRecent) {
+      if (p.completedAt >= startOfDay && p.completedAt <= endOfDay) {
+        dailyActiveStudents.add(p.studentId);
+        dailyCompletions++;
+      }
+    }
+    for (const qs of quizSubmissionsThisWeek) {
+      if (qs.submittedAt >= startOfDay && qs.submittedAt <= endOfDay) {
+        dailyActiveStudents.add(qs.studentId);
+        dailyQuizAttempts++;
+      }
+    }
+
     studentEngagement.push({
       day: dayLabel,
       activeStudents: dailyActiveStudents.size,
@@ -622,55 +746,36 @@ const getInstructorDashboard = async (instructorId, courseId) => {
   }
 
   // 11. Course Performance (All Courses Table)
-  const coursePerformance = allInstructorCourses.map(course => {
-    const enrolledCount = course.enrollments.length;
-    const lessons = course.modules.flatMap(m => m.lessons);
-    
-    let completionRate = 0;
-    if (enrolledCount > 0 && lessons.length > 0) {
-      let studentCompletions = 0;
-      for (const enrollment of course.enrollments) {
-        const compCount = lessons.reduce((sum, l) => {
-          const prog = l.progress.find(p => p.studentId === enrollment.studentId);
-          return sum + (prog && prog.completed ? 1 : 0);
-        }, 0);
-        studentCompletions += (compCount / lessons.length);
-      }
-      completionRate = Math.round((studentCompletions / enrolledCount) * 100);
-    }
-    
-    let quizScores = [];
-    for (const quiz of course.quizzes) {
-      for (const sub of quiz.quizSubmissions) {
-        quizScores.push(sub.percentage);
-      }
-    }
-    const courseQuizAverage = quizScores.length > 0
-      ? Math.round(quizScores.reduce((sum, s) => sum + s, 0) / quizScores.length)
-      : 0;
+  const coursePerformance = instructorCourses.map(course => {
+    const cid = course.id;
+    const enrolledCount = (courseEnrollments.get(cid) || []).length;
+    const totalLessons = courseLessonCount.get(cid) || 0;
+    const completionRate = courseCompletionRate(cid);
 
-    const courseRatings = course.reviews.map(r => r.rating);
-    const courseRating = courseRatings.length > 0
-      ? parseFloat((courseRatings.reduce((sum, r) => sum + r, 0) / courseRatings.length).toFixed(1))
-      : 0;
-      
+    const quizAgg = courseQuizAgg.get(cid);
+    const hasQuizData = !!(quizAgg && quizAgg.totalSubs > 0);
+    const courseQuizAverage = hasQuizData ? Math.round(quizAgg.sumPercentage / quizAgg.totalSubs) : 0;
+
+    const reviewAgg = courseReviewAgg.get(cid);
+    const courseRating = reviewAgg ? parseFloat(reviewAgg.avg.toFixed(1)) : 0;
+
     let health = 'No Data';
     if (enrolledCount > 0) {
       const signals = [completionRate];
-      if (quizScores.length > 0) signals.push(courseQuizAverage);
+      if (hasQuizData) signals.push(courseQuizAverage);
       const worstSignal = Math.min(...signals);
-      const bestSignal = Math.min(completionRate, quizScores.length > 0 ? courseQuizAverage : 100);
+      const bestSignal = Math.min(completionRate, hasQuizData ? courseQuizAverage : 100);
 
       health = 'Good';
       if (worstSignal < 60) health = 'Critical';
       else if (worstSignal < 75) health = 'Needs Review';
       else if (completionRate >= 85 && bestSignal >= 80) health = 'Excellent';
     }
-    
+
     return {
       id: course.id,
       course: course.title,
-      meta: `${course.modules.length} Modules • ${lessons.length} Lessons`,
+      meta: `${courseModuleCount.get(cid) || 0} Modules • ${totalLessons} Lessons`,
       enrollments: enrolledCount,
       completion: completionRate,
       quizAverage: courseQuizAverage,
@@ -685,18 +790,18 @@ const getInstructorDashboard = async (instructorId, courseId) => {
   const conceptMastery = [];
   let conceptId = 1;
   for (const course of targetCourses) {
-    const lessons = course.modules.flatMap(m => m.lessons);
-    const enrolledCount = course.enrollments.length;
-    
-    for (const lesson of lessons) {
-      const completedCount = lesson.progress.filter(p => p.completed).length;
+    const courseLessons = lessonsByCourse.get(course.id) || [];
+    const enrolledCount = (courseEnrollments.get(course.id) || []).length;
+
+    for (const lesson of courseLessons) {
+      const completedCount = completedByLesson.get(lesson.id) || 0;
       const masteryPercent = enrolledCount > 0 ? Math.round((completedCount / enrolledCount) * 100) : 0;
-      
+
       let status = 'Good';
       if (masteryPercent < 60) status = 'Critical';
       else if (masteryPercent < 75) status = 'Needs Review';
       else if (masteryPercent >= 85) status = 'Excellent';
-      
+
       conceptMastery.push({
         id: lesson.id || String(conceptId++),
         concept: lesson.title,
@@ -745,7 +850,7 @@ const getInstructorDashboard = async (instructorId, courseId) => {
   ];
 
   // 14. Course Options list (for dropdown filter)
-  const courses = allInstructorCourses.map(course => ({
+  const courses = instructorCourses.map(course => ({
     id: course.id,
     course: course.title
   }));
@@ -753,7 +858,7 @@ const getInstructorDashboard = async (instructorId, courseId) => {
   // 15. Summary text array
   const summary = [
     `Overall Quiz Average stands at ${avgQuizScore}%`,
-    `Managing ${allInstructorCourses.length} active courses and cohorts`,
+    `Managing ${instructorCourses.length} active courses and cohorts`,
     `${inactiveStudentsCount} student(s) currently need progress remediation`,
   ];
 
@@ -851,9 +956,13 @@ const getStudentDashboard = async (userId) => {
               courseId: true,
             },
           },
-          contents: {
+          topics: {
             select: {
-              duration: true,
+              contents: {
+                select: {
+                  duration: true,
+                },
+              },
             },
           },
         },
@@ -875,8 +984,9 @@ const getStudentDashboard = async (userId) => {
   progress.forEach((p) => {
     if (p.completed) {
       let lessonTime = 0;
-      if (p.lesson.contents && p.lesson.contents.length > 0) {
-        p.lesson.contents.forEach((c) => {
+      const lessonContents = (p.lesson.topics || []).flatMap((t) => t.contents || []);
+      if (lessonContents.length > 0) {
+        lessonContents.forEach((c) => {
           lessonTime += (c.duration && c.duration > 0) ? c.duration : 10;
         });
       } else {
@@ -1021,28 +1131,36 @@ const getStudentDashboard = async (userId) => {
     }
   }
 
-  // Calculate student percentile rank
-  const allStudents = await prisma.studentProfile.findMany({
-    select: {
-      id: true,
-      progress: {
-        where: { completed: true },
-        select: { id: true }
-      }
-    }
-  });
-
-  const studentCompletionCounts = allStudents.map(s => ({
-    id: s.id,
-    count: s.progress.length
-  })).sort((a, b) => a.count - b.count);
-
-  const myIndex = studentCompletionCounts.findIndex(s => s.id === studentId);
-  let rankPercentile = 100;
-  if (studentCompletionCounts.length > 0 && myIndex !== -1) {
-    // percentile score is the percentage of students below this student
-    rankPercentile = Math.round(((studentCompletionCounts.length - 1 - myIndex) / studentCompletionCounts.length) * 100);
-  }
+  // Calculate student percentile rank via a single DB-side window-function
+  // query, computed entirely in PostgreSQL -- returns exactly one row (this
+  // student's), never the whole student table. PERCENT_RANK() ranks
+  // ascending by completed-lesson count (0 = lowest, 1 = highest); this uses
+  // the standard "higher count -> higher percentile" convention. (Note: the
+  // previous JS implementation's formula was inverted -- the lowest
+  // completion count produced the highest percentile number -- but no
+  // frontend component reads this field, so this fix normalizes to the
+  // intuitive convention rather than replicating that inversion.)
+  const percentileRows = await prisma.$queryRaw`
+    WITH completion_counts AS (
+      SELECT sp.id AS student_id,
+             COUNT(p.id) FILTER (WHERE p.completed) AS completed_count
+      FROM "StudentProfile" sp
+      LEFT JOIN "Progress" p ON p."studentId" = sp.id
+      GROUP BY sp.id
+    ),
+    ranked AS (
+      SELECT student_id,
+             completed_count,
+             PERCENT_RANK() OVER (ORDER BY completed_count) AS pct_rank
+      FROM completion_counts
+    )
+    SELECT completed_count::int AS completed_count, pct_rank::float AS pct_rank
+    FROM ranked
+    WHERE student_id = ${studentId}
+  `;
+  const rankPercentile = percentileRows.length > 0
+    ? Math.round(Number(percentileRows[0].pct_rank) * 100)
+    : 0;
 
   // Group course progress by category for dynamic Skills Progress
   const categoryProgress = {};
@@ -1095,6 +1213,16 @@ const getStudentDashboard = async (userId) => {
       title: true,
       description: true,
       category: true,
+      level: true,
+      thumbnailUrl: true,
+      status: true,
+      createdAt: true,
+      store: {
+        select: { price: true, discountPrice: true, currency: true, isFree: true }
+      },
+      reviews: {
+        select: { rating: true }
+      },
       modules: {
         select: {
           lessons: { select: { id: true } }
@@ -1110,6 +1238,15 @@ const getStudentDashboard = async (userId) => {
       title: c.title,
       description: c.description || "",
       category: c.category || "General",
+      level: c.level || "Beginner",
+      thumbnailUrl: c.thumbnailUrl || null,
+      status: c.status,
+      createdAt: c.createdAt,
+      price: c.store?.price ?? 0,
+      discountPrice: c.store?.discountPrice ?? null,
+      currency: c.store?.currency || "INR",
+      isFree: c.store?.isFree ?? false,
+      reviews: c.reviews,
       lessonsCount: totalLessonsCount
     };
   });

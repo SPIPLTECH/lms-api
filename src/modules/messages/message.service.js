@@ -28,7 +28,9 @@ const getMessages = async (conversationId, userId) => {
     });
 
     if (!conversation) {
-        throw new Error("Conversation not found.");
+        const error = new Error("Conversation not found.");
+        error.statusCode = 404;
+        throw error;
     }
 
     const messages = await prisma.message.findMany({
@@ -102,7 +104,9 @@ const getMessageById = async (messageId, userId) => {
     });
 
     if (!message) {
-        throw new Error("Message not found.");
+        const error = new Error("Message not found.");
+        error.statusCode = 404;
+        throw error;
     }
 
     return formatMessage(message);
@@ -121,7 +125,9 @@ const sendMessage = async (conversationId, senderId, data) => {
     });
 
     if (!conversation) {
-        throw new Error("Conversation not found.");
+        const error = new Error("Conversation not found.");
+        error.statusCode = 404;
+        throw error;
     }
 
     return await prisma.$transaction(async (tx) => {
@@ -184,7 +190,9 @@ const markConversationAsRead = async (conversationId, userId) => {
     });
 
     if (!participant) {
-        throw new Error("Conversation not found.");
+        const error = new Error("Conversation not found.");
+        error.statusCode = 404;
+        throw error;
     }
 
     return await prisma.conversationParticipant.update({
@@ -206,11 +214,15 @@ const deleteMessage = async (messageId, userId) => {
     });
 
     if (!message) {
-        throw new Error("Message not found.");
+        const error = new Error("Message not found.");
+        error.statusCode = 404;
+        throw error;
     }
 
     if (message.senderId !== userId) {
-        throw new Error("You can delete only your own messages.");
+        const error = new Error("You can delete only your own messages.");
+        error.statusCode = 403;
+        throw error;
     }
 
     return await prisma.message.update({
@@ -232,15 +244,21 @@ const editMessage = async (messageId, userId, content) => {
     });
 
     if (!message) {
-        throw new Error("Message not found.");
+        const error = new Error("Message not found.");
+        error.statusCode = 404;
+        throw error;
     }
 
     if (message.isDeleted) {
-        throw new Error("Cannot edit a deleted message.");
+        const error = new Error("Cannot edit a deleted message.");
+        error.statusCode = 400;
+        throw error;
     }
 
     if (message.senderId !== userId) {
-        throw new Error("You can edit only your own messages.");
+        const error = new Error("You can edit only your own messages.");
+        error.statusCode = 403;
+        throw error;
     }
 
     const updatedMessage = await prisma.message.update({

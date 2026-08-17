@@ -17,11 +17,22 @@ const updateQuizSchema = Joi.object({
   isPublished: Joi.boolean().optional()
 });
 
+// evaluateAnswer() (quiz.service.js) expects a plain string for MCQ_SINGLE /
+// TRUE_FALSE / FILL_BLANK / SHORT_ANSWER / LONG_ANSWER, an array of strings
+// for MCQ_MULTI / ARRANGE_TOKENS, and a string-keyed object for MATCH_PAIRS.
+// A plain Joi.string() here rejected (or silently mis-scored, if the caller
+// stringified it) the latter two shapes before they ever reached the scorer.
+const answerValueSchema = Joi.alternatives().try(
+  Joi.string().allow(""),
+  Joi.array().items(Joi.string()),
+  Joi.object().pattern(Joi.string(), Joi.string())
+);
+
 const submitQuizSchema = Joi.object({
   answers: Joi.array().items(
     Joi.object({
       questionId: Joi.string().required(),
-      answer: Joi.string().required().allow("")
+      answer: answerValueSchema.required()
     })
   ).required()
 });

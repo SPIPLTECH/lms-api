@@ -27,19 +27,80 @@ const verifyQuizExists = async (quizId) => {
 };
 
 // =========================
-// Get All Questions
+// Helper: Verify Course Exists
 // =========================
-const getQuestions = async (quizId) => {
-    if (quizId) {
-        return getQuestionsByQuizId(quizId);
+const verifyCourseExists = async (courseId) => {
+    if (!courseId) {
+        const error = new Error("courseId is required");
+        error.statusCode = 400;
+        throw error;
     }
 
-    return prisma.question.findMany({
+    const course = await prisma.course.findUnique({
+        where: { id: courseId },
+    });
+
+    if (!course) {
+        const error = new Error(`Course with ID '${courseId}' not found`);
+        error.statusCode = 404;
+        throw error;
+    }
+
+    return course;
+};
+
+// =========================
+// Helper: Verify Module Exists (and belongs to the given course, if provided)
+// =========================
+const verifyModuleExists = async (moduleId, courseId) => {
+    if (!moduleId) return null;
+
+    const module = await prisma.module.findUnique({
+        where: { id: moduleId },
+    });
+
+    if (!module) {
+        const error = new Error(`Module with ID '${moduleId}' not found`);
+        error.statusCode = 404;
+        throw error;
+    }
+
+    if (courseId && module.courseId !== courseId) {
+        const error = new Error(`Module '${moduleId}' does not belong to course '${courseId}'`);
+        error.statusCode = 400;
+        throw error;
+    }
+
+    return module;
+};
+
+// =========================
+// Get All Questions
+// =========================
+const getQuestions = async (filters = {}) => {
+    const { quizId, courseId, moduleId } = filters;
+    const where = {};
+    if (quizId) where.quizId = quizId;
+    if (courseId) where.courseId = courseId;
+    if (moduleId) where.moduleId = moduleId;
+
+    const questions = await prisma.question.findMany({
+        where,
+        include: {
+            course: { select: { id: true, title: true } },
+            module: { select: { id: true, title: true } },
+            _count: { select: { quizQuestions: true } },
+        },
         orderBy: [
             { order: "asc" },
             { createdAt: "asc" }
         ],
     });
+
+    return questions.map(({ _count, ...q }) => ({
+        ...q,
+        usedInQuizzesCount: _count.quizQuestions,
+    }));
 };
 
 // =========================
@@ -74,6 +135,10 @@ const getQuestionById = async (questionId) => {
 
     const question = await prisma.question.findUnique({
         where: { id: questionId },
+        include: {
+            course: { select: { id: true, title: true } },
+            module: { select: { id: true, title: true } },
+        },
     });
 
     if (!question) {
@@ -91,6 +156,20 @@ const getQuestionById = async (questionId) => {
 const createQuestion = async (data) => {
     const normalized = normalizeQuestion(data);
 
+    // A question always relates to a course; the quiz link is optional (a
+    // repository question may not be attached to any quiz yet).
+    if (!normalized.courseId) {
+        const error = new Error("courseId is required");
+        error.statusCode = 400;
+        throw error;
+    }
+    await verifyCourseExists(normalized.courseId);
+    await verifyModuleExists(normalized.moduleId, normalized.courseId);
+
+    if (normalized.quizId) {
+        await verifyQuizExists(normalized.quizId);
+    }
+
     const validation = validateQuestion(normalized);
     if (!validation.isValid) {
         const error = new Error(`Validation failed: ${validation.errors.join(", ")}`);
@@ -100,6 +179,9 @@ const createQuestion = async (data) => {
 
     return prisma.question.create({
         data: {
+            quizId: normalized.quizId || null,
+            courseId: normalized.courseId,
+            moduleId: normalized.moduleId || null,
             question: normalized.question,
             questionType: normalized.questionType,
             options: normalized.options,
@@ -159,7 +241,17 @@ const bulkCreateQuestions = async (questionsPayload, quizId = null) => {
         await verifyQuizExists(quizId);
     }
 
-    const formattedQuestions = rawQuestions.map((q) => normalizeQuestion(q));
+    // Verify all unique quizIds exist, and use them to default courseId
+    // for any question that didn't explicitly specify one.
+    const quizIds = [...new Set(formattedQuestions.map((q) => q.quizId))];
+    const quizCourseMap = {};
+    for (const qId of quizIds) {
+        const quiz = await verifyQuizExists(qId);
+        quizCourseMap[qId] = quiz.courseId;
+    }
+    formattedQuestions.forEach((q) => {
+        if (!q.courseId) q.courseId = quizCourseMap[q.quizId];
+    });
 
     const { validQuestions, failedQuestions } = validateQuestions(formattedQuestions);
 
@@ -174,6 +266,9 @@ const bulkCreateQuestions = async (questionsPayload, quizId = null) => {
 
     const inserted = await prisma.question.createManyAndReturn({
         data: validQuestions.map((q) => ({
+            quizId: q.quizId,
+            courseId: q.courseId,
+            moduleId: q.moduleId || null,
             question: q.question,
             questionType: q.questionType,
             options: q.options,
@@ -184,7 +279,8 @@ const bulkCreateQuestions = async (questionsPayload, quizId = null) => {
             difficulty: q.difficulty,
             isRequired: q.isRequired,
             isPublished: q.isPublished,
-            order: q.order
+            order: q.order,
+            topic: q.topic || null
         })),
         skipDuplicates: true,
         select: { id: true },
@@ -208,7 +304,9 @@ const importQuestions = async (file, quizId = null) => {
         await verifyQuizExists(quizId);
     }
 
-    const { questions, report } = await importService.parseFile(file);
+    const quiz = await verifyQuizExists(quizId);
+
+    const { questions, report } = await importService.parseFile(file, quizId);
 
     if (questions.length === 0) {
         return report;
@@ -216,6 +314,9 @@ const importQuestions = async (file, quizId = null) => {
 
     const inserted = await prisma.question.createManyAndReturn({
         data: questions.map((q) => ({
+            quizId: q.quizId,
+            courseId: q.courseId || quiz.courseId,
+            moduleId: q.moduleId || null,
             question: q.question,
             questionType: q.questionType,
             options: q.options,
@@ -226,7 +327,8 @@ const importQuestions = async (file, quizId = null) => {
             difficulty: q.difficulty,
             isRequired: q.isRequired,
             isPublished: q.isPublished,
-            order: q.order
+            order: q.order,
+            topic: q.topic || null
         })),
         skipDuplicates: true,
         select: { id: true },
@@ -257,6 +359,19 @@ const updateQuestion = async (questionId, data) => {
     if (data.isRequired !== undefined) updateData.isRequired = Boolean(data.isRequired);
     if (data.isPublished !== undefined) updateData.isPublished = Boolean(data.isPublished);
     if (data.order !== undefined) updateData.order = data.order !== null && !isNaN(Number(data.order)) ? Number(data.order) : null;
+    if (data.quizId !== undefined) {
+        if (data.quizId) await verifyQuizExists(data.quizId);
+        updateData.quizId = data.quizId || null;
+    }
+    if (data.courseId !== undefined) {
+        await verifyCourseExists(data.courseId);
+        updateData.courseId = data.courseId;
+    }
+    if (data.moduleId !== undefined) {
+        const courseIdForCheck = data.courseId !== undefined ? data.courseId : (await getQuestionById(questionId)).courseId;
+        await verifyModuleExists(data.moduleId, courseIdForCheck);
+        updateData.moduleId = data.moduleId || null;
+    }
 
     return prisma.question.update({
         where: { id: questionId },
