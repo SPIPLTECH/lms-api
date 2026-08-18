@@ -40,10 +40,25 @@ const getEnrollments = async (
   });
 };
 
+const ApiError = require("../../utils/ApiError");
+
 const createEnrollment = async (
   studentId,
   courseId
 ) => {
+  const course = await prisma.course.findUnique({
+    where: { id: courseId },
+    select: { id: true, status: true }
+  });
+
+  if (!course) {
+    throw new ApiError(404, "Course not found");
+  }
+
+  if (course.status !== "PUBLISHED") {
+    throw new ApiError(400, "This course is not open for enrollment.");
+  }
+
   const existing =
     await prisma.enrollment.findFirst({
       where: {
@@ -53,9 +68,7 @@ const createEnrollment = async (
     });
 
   if (existing) {
-    throw new Error(
-      "Already enrolled in this course"
-    );
+    throw new ApiError(400, "Already enrolled in this course");
   }
 
   const enrollment = await prisma.enrollment.create({

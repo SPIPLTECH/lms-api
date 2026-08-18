@@ -8,20 +8,47 @@ const { buildServedUrl } = require("../assetResolver.service");
  * (already added for course-package extraction) + xml2js (already a
  * dependency for question-bank XML import).
  */
+
+/**
+ * Reads the text content of a single parsed <a:t> node. xml2js normally
+ * collapses a childless, attribute-less element to a bare string, but an
+ * <a:t xml:space="preserve"> (common wherever a run has leading/trailing
+ * spaces) parses instead as `{ _: "...", $: { "xml:space": "preserve" } }` —
+ * both shapes are handled so a whitespace-preserving run is never dropped.
+ */
+const readRunText = (node) => {
+  if (node == null) return "";
+  if (typeof node === "string") return node;
+  if (Array.isArray(node)) return node.map(readRunText).join("");
+  if (typeof node === "object") return typeof node._ === "string" ? node._ : "";
+  return "";
+};
+
+/**
+ * Walks the parsed slide tree collecting only genuine text runs (<a:t>
+ * content). xml2js represents every element's XML attributes under a `$`
+ * key on that element's own object — walking into `$` (as a naive "recurse
+ * into every key" implementation would) collects attribute *values*
+ * (namespace URIs, shape ids/names, coordinates, hex colors, font names,
+ * ...) as if they were text, which is exactly the noise this must avoid.
+ * `$` is never text content, so it's skipped entirely; every other key is
+ * still walked (structural elements only) so <a:t> nested arbitrarily deep
+ * inside shapes/paragraphs/runs is still found.
+ */
 const collectText = (node, acc) => {
   if (node == null) return;
-  if (typeof node === "string") {
-    acc.push(node);
-    return;
-  }
   if (Array.isArray(node)) {
     node.forEach((n) => collectText(n, acc));
     return;
   }
   if (typeof node === "object") {
-    if (node["a:t"]) collectText(node["a:t"], acc);
+    if (node["a:t"] !== undefined) {
+      const text = readRunText(node["a:t"]);
+      if (text) acc.push(text);
+    }
     Object.keys(node).forEach((key) => {
-      if (key !== "a:t") collectText(node[key], acc);
+      if (key === "a:t" || key === "$") return;
+      collectText(node[key], acc);
     });
   }
 };

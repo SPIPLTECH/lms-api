@@ -388,6 +388,8 @@ model Question {
 
   explanation String? @db.Text
 
+  subject       String?         @default("General")
+  topic         String?         @default("General")
   tags          String?         @default("")
   marks         Int             @default(1)
   negativeMarks Float           @default(0)

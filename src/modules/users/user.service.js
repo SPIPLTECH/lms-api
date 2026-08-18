@@ -14,7 +14,7 @@ const getUsers = async () => {
 };
 
 const getUserById = async (userId) => {
-  return await prisma.user.findUnique({
+  const user = await prisma.user.findUnique({
     where: {
       id: userId
     },
@@ -24,6 +24,15 @@ const getUserById = async (userId) => {
       adminProfile: true
     }
   });
+
+  // The "institution" field the student profile form reads/writes is stored
+  // under the studentProfile.collegeName column (see updateMyProfile) —
+  // aliased here so it round-trips back to the frontend under the name it sent.
+  if (user?.studentProfile) {
+    user.studentProfile.institution = user.studentProfile.collegeName;
+  }
+
+  return user;
 };
 
 const updateUser = async (userId, data) => {
@@ -135,7 +144,7 @@ const updateMyProfile = async (userId, data) => {
   if (user.role === "STUDENT" && user.studentProfile) {
     const profileUpdate = {};
     if (data.education !== undefined) profileUpdate.education = data.education;
-    if (data.institution !== undefined) profileUpdate.institution = data.institution;
+    if (data.institution !== undefined) profileUpdate.collegeName = data.institution;
     if (data.graduationYear !== undefined) profileUpdate.graduationYear = data.graduationYear;
     if (data.gender !== undefined) profileUpdate.gender = data.gender;
     if (data.dateOfBirth !== undefined) {
@@ -217,14 +226,7 @@ const updateMyProfile = async (userId, data) => {
   }
 
   // Return the fully updated user with profile
-  return prisma.user.findUnique({
-    where: { id: userId },
-    include: {
-      studentProfile: true,
-      teacherProfile: true,
-      adminProfile: true,
-    },
-  });
+  return getUserById(userId);
 };
 
 module.exports = {
