@@ -44,6 +44,34 @@ test("Phase 6 — Assessment & Evaluation System Suite", async (t) => {
     await prisma.user.delete({ where: { id: learner.user.id } });
   };
 
+  // SCENARIOs 1 and 8 call getPedagogicalDecision for a freshly isolated
+  // learner with zero prior evidence — getPedagogicalDecision only
+  // recognizes a KC once SOME student in the system has a ConceptMastery
+  // row for it. Guarantee that with a dedicated seed learner owned entirely
+  // by this file — a "check if it exists, skip if so" guard would race
+  // against other test files doing the same thing concurrently under
+  // `node --test`, since another file's cleanup could delete the row this
+  // file was relying on.
+  let kcSeedLearner;
+
+  t.before(async () => {
+    kcSeedLearner = await createIsolatedLearner("kc_seed");
+    await prisma.conceptMastery.create({
+      data: {
+        studentId: kcSeedLearner.profile.id,
+        concept: "pointers_memory",
+        masteryScore: 0.5,
+        confidenceLevel: 0.5,
+        status: "DEVELOPING",
+        attemptsCount: 1,
+      },
+    });
+  });
+
+  t.after(async () => {
+    await cleanupLearner(kcSeedLearner);
+  });
+
   await t.test("SCENARIO 1: Multi-Step Mastery Progression (WEAK -> DEVELOPING -> MASTERED)", async () => {
     const learner = await createIsolatedLearner("sc1");
     const testKc = `pointers_memory`; // Valid KC

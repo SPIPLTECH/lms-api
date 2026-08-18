@@ -249,6 +249,20 @@ test("Phase 4 Controlled Integration Test Suite — Adaptive Decision Engine", a
     const isoCallingUser = { id: isoUser.id, role: "STUDENT" };
 
     try {
+      // getPedagogicalDecision only recognizes a KC once some student in the
+      // system has a ConceptMastery row for it — establish that here instead
+      // of depending on leftover state from other tests/runs.
+      await prisma.conceptMastery.create({
+        data: {
+          studentId: isoProfile.id,
+          concept: "pointers_memory",
+          masteryScore: 0.5,
+          confidenceLevel: 0.5,
+          status: "DEVELOPING",
+          attemptsCount: 1,
+        },
+      });
+
       const res1 = await learnerModelService.getPedagogicalDecision({
         callingUser: isoCallingUser,
         data: {

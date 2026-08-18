@@ -125,6 +125,18 @@ const reorderModules = async (
   courseId,
   modules
 ) => {
+  // Verify every id actually belongs to this course before touching anything,
+  // so a caller who owns courseId can't smuggle in another course's module id.
+  const existing = await prisma.module.findMany({
+    where: { courseId },
+    select: { id: true }
+  });
+  const validIds = new Set(existing.map((module) => module.id));
+  const allBelongToCourse = modules.every((module) => validIds.has(module.id));
+  if (!allBelongToCourse) {
+    throw new ApiError(403, "One or more modules do not belong to this course.");
+  }
+
   // Two-phase reorder: @@unique([courseId, order]) rejects a naive
   // parallel swap (A->2 while B still holds 2), so first move every
   // row to a disjoint negative placeholder, then to its final order.
@@ -139,6 +151,7 @@ const reorderModules = async (
         }
       })
   );
+  await prisma.$transaction(offsetUpdates);
 
   const finalUpdates = modules.map(
     (module) =>
@@ -152,9 +165,7 @@ const reorderModules = async (
       })
   );
 
-  return await prisma.$transaction(
-    [...offsetUpdates, ...finalUpdates]
-  );
+  return await prisma.$transaction(finalUpdates);
 };
 
 module.exports = {

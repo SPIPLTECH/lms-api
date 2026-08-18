@@ -40,6 +40,7 @@ model User {
   teacherProfile          TeacherProfile?
   teachingGoals           TeachingGoal[]
   courseImportJobs        CourseImportJob[]
+  paymentOrders           PaymentOrder[]
 }
 
 model StudentProfile {
@@ -95,7 +96,7 @@ model StudentProfile {
   batches                     Batch[]                       @relation("BatchToStudentProfile")
   lessonQueries               LessonQuery[]
   videoAnalytics              VideoAnalytics[]
-  studentState                StudentState?
+  studentState                StudentState[]
   learningEvents              LearningEvent[]
   activityState               StudentActivityState?
   learningState               StudentLearningState?
@@ -203,6 +204,7 @@ model Course {
   studentCourseStates     StudentCourseState[]
   store                   Store?
   questions               Question[]
+  paymentOrders           PaymentOrder[]
 }
 
 model Store {
@@ -333,6 +335,27 @@ model Enrollment {
   @@unique([studentId, courseId])
 }
 
+model PaymentOrder {
+  id                String        @id @default(cuid())
+  userId            String
+  courseId          String
+  razorpayOrderId   String        @unique
+  razorpayPaymentId String?
+  razorpaySignature String?
+  amount            Int
+  currency          String        @default("INR")
+  status            PaymentStatus @default(PENDING)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([courseId])
+  @@index([status])
+}
+
 model Progress {
   id          String         @id @default(cuid())
   lessonId    String
@@ -380,6 +403,7 @@ model Question {
   course       Course?      @relation(fields: [courseId], references: [id], onDelete: Cascade)
   moduleId     String?
   module       Module?      @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+  title        String?
   question     String       @db.Text
   questionType QuestionType @default(MCQ_SINGLE)
 
@@ -400,7 +424,9 @@ model Question {
   isPublished   Boolean        @default(true)
   quizQuestions QuizQuestion[]
 
-  order Int?
+  order   Int?
+  topic   String?
+  subject String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
@@ -412,6 +438,8 @@ model Question {
   @@index([questionType])
   @@index([createdBy])
   @@index([status])
+  @@index([topic])
+  @@index([subject])
 }
 
 model QuizQuestion {
@@ -760,7 +788,7 @@ model Notification {
 model StudentState {
   id        String         @id @default(cuid())
 
-  studentId String         @unique
+  studentId String
   courseId  String
   moduleId  String?
   lessonId  String?
@@ -770,6 +798,7 @@ model StudentState {
   course    Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
   student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
+  @@unique([studentId, courseId])
   @@index([courseId])
 }
 
@@ -939,6 +968,12 @@ enum CourseStatus {
   DRAFT
   PUBLISHED
   ARCHIVED
+}
+
+enum PaymentStatus {
+  PENDING
+  CAPTURED
+  FAILED
 }
 
 enum CourseVisibility {

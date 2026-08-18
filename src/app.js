@@ -68,7 +68,15 @@ app.use(
 );
 app.use(morgan("dev"));
 
-app.use(express.json({ limit: "100mb" }));
+app.use(express.json({
+  limit: "100mb",
+  // Webhook signature verification (Razorpay) needs the exact raw bytes the
+  // sender signed — re-serializing req.body with JSON.stringify can produce
+  // a byte-for-byte different string and break HMAC verification.
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: "100mb" }));
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 

@@ -11,6 +11,8 @@ const ApiError = require("../src/utils/ApiError");
 test("Phase 5 — LLM + Constructive Learning Integration Test Suite", async (t) => {
   let studentProfile;
   let callingUser;
+  let kcSeedUser;
+  let kcSeedProfile;
 
   t.before(async () => {
     studentProfile = await prisma.studentProfile.findFirst({
@@ -18,6 +20,44 @@ test("Phase 5 — LLM + Constructive Learning Integration Test Suite", async (t)
     });
     if (studentProfile) {
       callingUser = { id: studentProfile.userId, role: "STUDENT" };
+    }
+
+    // TESTs K-P below assume "pointers_memory" is already a recognized KC in
+    // the system (getPedagogicalDecision treats any student having a
+    // ConceptMastery row for a concept as proof the KC exists). Rather than
+    // depending on leftover/racy state from other test files/runs (this file
+    // may run concurrently with others under `node --test`), seed it with a
+    // dedicated, isolated user owned entirely by this file.
+    kcSeedUser = await prisma.user.create({
+      data: {
+        name: "Phase5 KC Seed",
+        email: `phase5_kc_seed_${Date.now()}@test.com`,
+        password: "hashedpassword123",
+        role: "STUDENT",
+      },
+    });
+    kcSeedProfile = await prisma.studentProfile.create({
+      data: { userId: kcSeedUser.id },
+    });
+    await prisma.conceptMastery.create({
+      data: {
+        studentId: kcSeedProfile.id,
+        concept: "pointers_memory",
+        masteryScore: 0.5,
+        confidenceLevel: 0.5,
+        status: "DEVELOPING",
+        attemptsCount: 1,
+      },
+    });
+  });
+
+  t.after(async () => {
+    if (kcSeedProfile) {
+      await prisma.conceptMastery.deleteMany({ where: { studentId: kcSeedProfile.id } });
+      await prisma.studentProfile.delete({ where: { id: kcSeedProfile.id } });
+    }
+    if (kcSeedUser) {
+      await prisma.user.delete({ where: { id: kcSeedUser.id } });
     }
   });
 

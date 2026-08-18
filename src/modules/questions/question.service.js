@@ -241,6 +241,13 @@ const bulkCreateQuestions = async (questionsPayload, quizId = null) => {
         await verifyQuizExists(quizId);
     }
 
+    // Each question may specify its own quizId, falling back to the
+    // top-level bulk quizId when omitted.
+    const formattedQuestions = rawQuestions.map((q) => ({
+        ...q,
+        quizId: q.quizId || quizId,
+    }));
+
     // Verify all unique quizIds exist, and use them to default courseId
     // for any question that didn't explicitly specify one.
     const quizIds = [...new Set(formattedQuestions.map((q) => q.quizId))];

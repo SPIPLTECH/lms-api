@@ -188,6 +188,57 @@ class CourseImportService {
     return createdCourse;
   }
 
+  // Produces a downloadable example package demonstrating the course.json
+  // manifest format and folder layout that importCourse/ZipValidator expect.
+  static generateSampleZip() {
+    const zip = new AdmZip();
+
+    const manifest = {
+      title: "Python Basics",
+      description: "An introductory course covering Python fundamentals.",
+      category: "Programming",
+      level: "BEGINNER",
+      price: 0,
+      modules: [
+        { title: "Getting Started", folder: "module-1" },
+        { title: "Core Concepts", folder: "module-2" },
+      ],
+    };
+
+    zip.addFile("course.json", Buffer.from(JSON.stringify(manifest, null, 2), "utf-8"));
+
+    zip.addFile(
+      "module-1/lesson-1.md",
+      Buffer.from(
+        "# Introduction to Python\n\nPython is an accessible, high-level programming language.\n",
+        "utf-8"
+      )
+    );
+    zip.addFile(
+      "module-1/lesson-2.md",
+      Buffer.from(
+        "# Installing Python\n\nDownload Python from python.org and follow the installer prompts.\n",
+        "utf-8"
+      )
+    );
+    zip.addFile(
+      "module-2/lesson-1.md",
+      Buffer.from(
+        "# Variables and Data Types\n\nPython variables are dynamically typed.\n",
+        "utf-8"
+      )
+    );
+    zip.addFile(
+      "module-2/lesson-2.md",
+      Buffer.from(
+        "# Control Flow\n\nif/elif/else statements let you branch program execution.\n",
+        "utf-8"
+      )
+    );
+
+    return zip.toBuffer();
+  }
+
   static autoDetectModulesFromZip(entries) {
     // Auto-detect module directories if course.json modules list is empty
     const modulesMap = new Map();

@@ -322,7 +322,7 @@ test("llm.config loads settings from environment variables", async (t) => {
     const config = require("../src/modules/llm/llm.config");
 
     assert.equal(config.baseUrl, "http://localhost:11434");
-    assert.equal(config.model, "qwen3:8b");
+    assert.equal(config.model, "qwen3.5:4b");
     assert.equal(config.timeoutMs, 60000);
     assert.equal(config.thinkTimeoutMs, 180000);
     assert.equal(config.maxOutputTokens, 1024);
