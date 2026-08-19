@@ -234,6 +234,7 @@ model Module {
   lessons     Lesson[]
   course      Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
   questions   Question[]
+  quizzes     Quiz[]
 
   @@unique([courseId, order])
 }
@@ -384,10 +385,14 @@ model Quiz {
   isPublished      Boolean          @default(true)
   status           String?          @default("ACTIVE")
   courseId         String
+  batchId          String?
+  moduleId         String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   questions        Question[]
   course           Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  batch            Batch?           @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  module           Module?          @relation(fields: [moduleId], references: [id], onDelete: SetNull)
   quizSubmissions  QuizSubmission[]
   instructions     String?          @db.Text
   shuffleQuestions Boolean          @default(false)
@@ -395,6 +400,9 @@ model Quiz {
   negativeMarking  Float            @default(0)
   attempts         Int              @default(1)
   quizQuestions    QuizQuestion[]
+
+  @@index([batchId])
+  @@index([moduleId])
 }
 
 model Question {
@@ -416,6 +424,8 @@ model Question {
   explanation String? @db.Text
 
   tags          String?         @default("")
+  subject       String?         @default("General")
+  topic         String?         @default("General")
   marks         Int             @default(1)
   negativeMarks Float           @default(0)
   difficulty    DifficultyLevel @default(MEDIUM)
@@ -741,12 +751,19 @@ model Batch {
   isPublished                   Boolean          @default(true)
   createdAt                     DateTime         @default(now())
   updatedAt                     DateTime         @updatedAt
-  courseId                      String
+  // Legacy single-course pointer from before batches spanned multiple
+  // courses (see `courses` below, the actual many-to-many relation every
+  // batch.service.js function reads/writes today). Nothing in the codebase
+  // sets or reads this column any more — kept nullable, not required, so it
+  // no longer blocks every batch creation with a missing-required-field
+  // error the way the old non-null `courseId` did.
+  courseId                      String?
   announcements                 Announcement[]
-  Course_Batch_courseIdToCourse Course           @relation("Batch_courseIdToCourse", fields: [courseId], references: [id], onDelete: Cascade)
+  Course_Batch_courseIdToCourse Course?          @relation("Batch_courseIdToCourse", fields: [courseId], references: [id], onDelete: SetNull)
   sessions                      BatchSession[]
   courses                       Course[]         @relation("BatchToCourse")
   students                      StudentProfile[] @relation("BatchToStudentProfile")
+  quizzes                       Quiz[]
 
   @@index([courseId])
 }

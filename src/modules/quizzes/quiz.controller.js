@@ -18,7 +18,8 @@ const getQuizzes = async (req, res, next) => {
     const quizzes = await quizService.getQuizzes(
       req.query.courseId,
       req.user?.role,
-      req.user?.id
+      req.user?.id,
+      req.query.batchId
     );
 
     res.json({

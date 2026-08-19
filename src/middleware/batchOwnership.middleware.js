@@ -54,6 +54,52 @@ const verifyBatchOwnership = async (req, res, next) => {
 };
 
 /**
+ * Same check as verifyBatchOwnership, but reads the batch id from
+ * req.body.batchId instead of req.params.batchId — for "create a child of
+ * this batch" routes (e.g. quizzes) where the batch hasn't been reached via
+ * a resource id yet. Mirrors courseOwnership.middleware.js's `.fromBody`.
+ */
+const verifyBatchOwnershipFromBody = async (req, res, next) => {
+  try {
+    if (!req.user) {
+      return next(new ApiError(401, "Authentication required"));
+    }
+
+    const batchId = req.body.batchId;
+
+    if (!batchId) {
+      return next(new ApiError(400, "batchId is required"));
+    }
+
+    const batch = await findBatchWithCourseOwners(batchId);
+
+    if (!batch) {
+      return next(new ApiError(404, "Batch not found"));
+    }
+
+    req.batch = batch;
+
+    if (req.user.role === "ADMIN") {
+      return next();
+    }
+
+    if (req.user.role !== "INSTRUCTOR") {
+      return next(new ApiError(403, "Forbidden: insufficient role"));
+    }
+
+    const owns = batch.courses.some((course) => course.creatorId === req.user.id);
+
+    if (!owns) {
+      return next(new ApiError(403, "Forbidden: you do not own this batch"));
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * For batch creation, where there's no batch yet to fetch: every id in
  * req.body.courseIds must belong to the caller (ADMIN bypasses).
  */
@@ -98,4 +144,8 @@ const verifyBatchCourseIdsOwnership = async (req, res, next) => {
   }
 };
 
-module.exports = { verifyBatchOwnership, verifyBatchCourseIdsOwnership };
+module.exports = {
+  verifyBatchOwnership,
+  verifyBatchOwnershipFromBody,
+  verifyBatchCourseIdsOwnership,
+};

@@ -1,8 +1,8 @@
 const fs = require("fs");
 const cheerio = require("cheerio");
-const { elementToMarkdown } = require("../../utils/markdownFromHtml.util");
+const { elementToMarkdown, inline } = require("../../utils/markdownFromHtml.util");
 const { resolveLocalAsset, isLocalReference } = require("../assetResolver.service");
-const { getVideoProvider } = require("../urlDetector.service");
+const { getVideoProvider, splitOnUrls } = require("../urlDetector.service");
 
 const TEXTUAL_TAGS = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "ul", "ol", "table", "blockquote", "pre"];
 const DOCUMENT_LINK_PATTERN = /\.(pdf|docx?|pptx?|xlsx?|zip)(\?|#|$)/i;
@@ -107,41 +107,157 @@ const buildDocumentLinkNode = ($a, ctx) => {
   return { kind: "document", source: "external", url: href, title: text || undefined, attributes: {} };
 };
 
-function walkNode(node, $, results, ctx) {
-  if (!node || node.type !== "tag") return;
-  const tag = (node.tagName || node.name || "").toLowerCase();
+const mediaSegmentToNode = (segment) => ({
+  kind: segment.contentType,
+  source: "external",
+  url: segment.url,
+  caption: segment.linkText || "",
+  attributes: { detectedFrom: "text", ...(segment.contentType === "video" ? { provider: getVideoProvider(segment.url) } : {}) },
+});
 
-  if (tag === "img") return void results.push(buildImageNode($(node), ctx));
-  if (tag === "video") return void results.push(buildVideoNode($(node), ctx));
-  if (tag === "audio") return void results.push(buildAudioNode($(node), ctx));
-  if (tag === "iframe") return void results.push(buildIframeNode($(node), ctx));
+/**
+ * A table row's own columns (topic/channel/duration/...) are the caption a
+ * lone extracted URL would otherwise lose, so a video/audio reference table
+ * (e.g. a "Video Links" doc's list of YouTube URLs) is read row-by-row: a
+ * cell that's *only* a video/audio URL becomes its own real block, captioned
+ * from the row's other cells, while the table's own markdown is left
+ * completely untouched — splicing text out of a table cell the way a plain
+ * paragraph can be would corrupt the pipe-delimited row syntax around it.
+ */
+const extractMediaFromTable = ($table, $) => {
+  const blocks = [];
 
-  if (tag === "a") {
-    const href = $(node).attr("href") || "";
-    if (DOCUMENT_LINK_PATTERN.test(href)) {
-      results.push(buildDocumentLinkNode($(node), ctx));
+  $table.find("tr").each((i, tr) => {
+    const cellTexts = $(tr).find("th,td").map((j, cell) => inline($(cell), $)).get();
+
+    cellTexts.forEach((text, ci) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+
+      const segments = splitOnUrls(trimmed);
+      const urlSegment = segments.find((s) => s.type === "url" && (s.contentType === "video" || s.contentType === "audio"));
+      if (!urlSegment) return;
+
+      const isWholeCellJustTheUrl = trimmed === urlSegment.url || trimmed === `[${urlSegment.linkText}](${urlSegment.url})`;
+      if (!isWholeCellJustTheUrl) return;
+
+      const caption = cellTexts.filter((_, k) => k !== ci).join(" — ");
+      blocks.push(mediaSegmentToNode({ ...urlSegment, linkText: urlSegment.linkText || caption }));
+    });
+  });
+
+  return blocks;
+};
+
+const HEADING_SECTION_TAGS = new Set(["h1", "h2"]);
+
+/**
+ * Groups a source document's flow into one "text" block per page-like
+ * section (a run of content up to the next h1/h2, mirroring how a real
+ * document's pages/chapters break) instead of one block per paragraph —
+ * every <p>/<h3-6>/list/table/blockquote in between joins the same
+ * block's markdown, in source order, exactly like elementToMarkdown
+ * already renders them (headings, bold, lists all survive). An inline
+ * <img> folds into that markdown as a real ![]() embed at its exact
+ * position; <video>/<audio>/<iframe>/document-link elements still break
+ * out as their own top-level block (a deliberate embed, not a text
+ * pass-through), flushing whatever section text came before it first so
+ * ordering in the output array still matches the source.
+ */
+function walkAndGroup(nodes, $, ctx) {
+  const results = [];
+  let buffer = [];
+
+  const flush = () => {
+    if (!buffer.length) return;
+    const markdown = buffer.join("\n\n");
+    if (markdown.trim()) results.push({ kind: "text", markdown, attributes: { sourceElement: "section" } });
+    buffer = [];
+  };
+
+  const visit = (node) => {
+    if (!node || node.type !== "tag") return;
+    const tag = (node.tagName || node.name || "").toLowerCase();
+
+    if (tag === "img") {
+      const imageNode = buildImageNode($(node), ctx);
+      if (imageNode.kind === "image" && imageNode.url) {
+        buffer.push(`![${imageNode.alt || ""}](${imageNode.url})`);
+      } else {
+        flush();
+        results.push(imageNode);
+      }
       return;
     }
-  }
 
-  if (TEXTUAL_TAGS.includes(tag)) {
-    const markdown = elementToMarkdown($(node), $);
-    if (markdown && markdown.trim()) {
-      results.push({ kind: "text", markdown, attributes: { sourceElement: tag } });
+    if (tag === "video") { flush(); results.push(buildVideoNode($(node), ctx)); return; }
+    if (tag === "audio") { flush(); results.push(buildAudioNode($(node), ctx)); return; }
+    if (tag === "iframe") { flush(); results.push(buildIframeNode($(node), ctx)); return; }
+
+    if (tag === "a") {
+      const href = $(node).attr("href") || "";
+      if (DOCUMENT_LINK_PATTERN.test(href)) {
+        flush();
+        results.push(buildDocumentLinkNode($(node), ctx));
+        return;
+      }
     }
-    return;
-  }
 
-  $(node).contents().each((i, child) => walkNode(child, $, results, ctx));
+    if (HEADING_SECTION_TAGS.has(tag)) flush();
+
+    if (tag === "table") {
+      const markdown = elementToMarkdown($(node), $);
+      const mediaBlocks = extractMediaFromTable($(node), $);
+
+      if (mediaBlocks.length) {
+        flush();
+        if (markdown && markdown.trim()) results.push({ kind: "text", markdown, attributes: { sourceElement: "section" } });
+        results.push(...mediaBlocks);
+      } else if (markdown && markdown.trim()) {
+        buffer.push(markdown);
+      }
+      return;
+    }
+
+    if (TEXTUAL_TAGS.includes(tag)) {
+      const markdown = elementToMarkdown($(node), $);
+      if (!markdown || !markdown.trim()) return;
+
+      const segments = splitOnUrls(markdown);
+      const hasEmbeddableMedia = segments.some((s) => s.type === "url" && (s.contentType === "video" || s.contentType === "audio"));
+      if (!hasEmbeddableMedia) {
+        buffer.push(markdown);
+        return;
+      }
+
+      for (const segment of segments) {
+        if (segment.type === "text") {
+          if (segment.text.trim()) buffer.push(segment.text);
+        } else if (segment.contentType === "video" || segment.contentType === "audio") {
+          flush();
+          results.push(mediaSegmentToNode(segment));
+        } else {
+          // Non-media URL sitting in the same paragraph as an embeddable one
+          // — leave it exactly as it was written instead of also splitting it out.
+          buffer.push(segment.linkText !== undefined ? `[${segment.linkText}](${segment.url})` : segment.url);
+        }
+      }
+      return;
+    }
+
+    $(node).contents().each((i, child) => visit(child));
+  };
+
+  nodes.each((i, node) => visit(node));
+  flush();
+  return results;
 }
 
 /** Converts a raw HTML string into an array of raw {kind, ...} extraction nodes. */
 const extractBlocksFromHtml = (html, ctx) => {
   const $ = cheerio.load(html);
   const root = $("body").length ? $("body") : $.root();
-  const results = [];
-  root.contents().each((i, child) => walkNode(child, $, results, ctx));
-  return results;
+  return walkAndGroup(root.contents(), $, ctx);
 };
 
 const extractFromFile = async (file, ctx) => {

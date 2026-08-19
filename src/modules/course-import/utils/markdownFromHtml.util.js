@@ -30,6 +30,10 @@ const inlineToMarkdown = (node, $) => {
     case "a": {
       const href = $node.attr("href") || "";
       const text = inner().trim();
+      // Word/mammoth inject an empty <a id="..."> bookmark anchor at the
+      // start of most headings for internal navigation — no href, no
+      // visible text, nothing worth rendering as a link.
+      if (!href && !text) return "";
       return `[${text || href}](${href})`;
     }
     default:
