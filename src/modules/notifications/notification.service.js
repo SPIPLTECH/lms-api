@@ -23,10 +23,13 @@ const createNotification = async (userId, data) => {
   return notification;
 };
 
+const NOTIFICATION_HISTORY_LIMIT = 50;
+
 const getNotifications = async (userId) => {
   return prisma.notification.findMany({
     where: { userId },
     orderBy: { createdAt: "desc" },
+    take: NOTIFICATION_HISTORY_LIMIT,
   });
 };
 

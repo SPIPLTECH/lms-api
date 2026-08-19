@@ -204,7 +204,6 @@ const createConversation = async (data, userId) => {
         data: {
             type: data.type,
             name: data.type === "GROUP" ? data.name : null,
-            description: data.type === "GROUP" ? data.description : null,
             image: data.type === "GROUP" ? data.image : null,
             createdById: userId,
 
@@ -230,7 +229,6 @@ const updateConversation = async (conversationId, data) => {
         },
         data: {
             name: data.name,
-            description: data.description,
             image: data.image,
         },
     });
