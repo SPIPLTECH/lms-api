@@ -252,7 +252,6 @@ class QuestionUploadParser {
       report.successCount++;
 
       report.validQuestions.push({
-        title,
         question: questionText,
         questionType: type,
         options: optionsList,

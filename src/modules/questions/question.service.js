@@ -399,4 +399,5 @@ module.exports = {
     importQuestions,
     updateQuestion,
     deleteQuestion,
+    attachQuestionsToQuiz,
 };

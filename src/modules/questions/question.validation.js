@@ -17,15 +17,46 @@ const optionSchema = Joi.alternatives().try(
   })
 );
 
+// Mirrors prisma/schema.prisma's `QuestionType` enum exactly (MCQ_SINGLE..
+// SHORT_ANSWER are the current Question Repository form's types; the rest
+// are legacy values still allowed on read/update paths).
+const QUESTION_TYPES = [
+  "MCQ_SINGLE",
+  "MCQ_MULTI",
+  "ARRANGE_TOKENS",
+  "MATCH_PAIRS",
+  "SELF_ASSESSMENT",
+  "MCQ",
+  "MULTIPLE_CORRECT",
+  "TRUE_FALSE",
+  "FILL_BLANK",
+  "SHORT_ANSWER",
+];
+
+// `options`/`correctAnswer` are stored as Prisma `Json` — shape varies by
+// questionType (MCQ_SINGLE/SELF_ASSESSMENT: string, MCQ_MULTI/ARRANGE_TOKENS:
+// array, MATCH_PAIRS: object of left->right pairs), so validation only pins
+// down the per-item option shape and otherwise accepts any of those shapes
+// rather than a single one.
+const optionsSchema = Joi.alternatives().try(Joi.array().items(optionSchema), Joi.object());
+const correctAnswerSchema = Joi.alternatives().try(Joi.string().allow(""), Joi.array(), Joi.object());
+
 const createQuestionSchema = Joi.object({
-  title: Joi.string().required(),
+  title: Joi.string().optional().allow(null, ""),
   question: Joi.string().required(),
-  options: Joi.array().items(optionSchema).optional(),
-  correctAnswer: Joi.string().required(),
+  options: optionsSchema.optional(),
+  correctAnswer: correctAnswerSchema.required(),
   explanation: Joi.string().optional().allow(null, ""),
-  type: Joi.string().valid("MULTIPLE_CHOICE", "TRUE_FALSE", "SHORT_ANSWER").optional(),
-  difficulty: Joi.string().valid("EASY", "MEDIUM", "HARD").optional(),
+  // Renamed from the stale `type` (never read by questionRepositoryService,
+  // which only reads `questionType` — every submission was silently saved
+  // as the default MCQ_SINGLE regardless of what was actually picked).
+  questionType: Joi.string().valid(...QUESTION_TYPES).optional(),
+  // .uppercase() coerces "Medium" -> "MEDIUM" before the enum check, since
+  // the Prisma DifficultyLevel enum is uppercase-only but the form's select
+  // options are title-case for display.
+  difficulty: Joi.string().uppercase().valid("EASY", "MEDIUM", "HARD").optional(),
   marks: Joi.number().integer().min(1).optional(),
+  negativeMarks: Joi.number().min(0).optional(),
   tags: Joi.array().items(Joi.string()).optional(),
   quizId: Joi.string().optional().allow(null, ""),
   // Learner-model KC identifier (see quiz.service.js). Was previously
@@ -36,14 +67,15 @@ const createQuestionSchema = Joi.object({
 });
 
 const updateQuestionSchema = Joi.object({
-  title: Joi.string().optional(),
+  title: Joi.string().optional().allow(null, ""),
   question: Joi.string().optional(),
-  options: Joi.array().items(optionSchema).optional(),
-  correctAnswer: Joi.string().optional(),
+  options: optionsSchema.optional(),
+  correctAnswer: correctAnswerSchema.optional(),
   explanation: Joi.string().optional().allow(null, ""),
-  type: Joi.string().valid("MULTIPLE_CHOICE", "TRUE_FALSE", "SHORT_ANSWER").optional(),
-  difficulty: Joi.string().valid("EASY", "MEDIUM", "HARD").optional(),
+  questionType: Joi.string().valid(...QUESTION_TYPES).optional(),
+  difficulty: Joi.string().uppercase().valid("EASY", "MEDIUM", "HARD").optional(),
   marks: Joi.number().integer().min(1).optional(),
+  negativeMarks: Joi.number().min(0).optional(),
   tags: Joi.array().items(Joi.string()).optional(),
   subject: Joi.string().trim().max(200).optional().allow(null, ""),
   topic: Joi.string().trim().max(200).optional().allow(null, "")

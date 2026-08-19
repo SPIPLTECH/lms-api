@@ -60,7 +60,6 @@ class QuestionRepositoryService {
       where.AND = where.AND || [];
       where.AND.push({
         OR: [
-          { title: { contains: search, mode: "insensitive" } },
           { question: { contains: search, mode: "insensitive" } },
           { tags: { contains: search, mode: "insensitive" } },
         ],
@@ -177,7 +176,6 @@ class QuestionRepositoryService {
 
     return await prisma.question.create({
       data: {
-        title: data.title || data.question.slice(0, 50),
         question: data.question.trim(),
         questionType: data.questionType || "MCQ_SINGLE",
         options: data.options || [],
@@ -212,7 +210,6 @@ class QuestionRepositoryService {
     }
 
     const updateData = {};
-    if (data.title !== undefined) updateData.title = data.title;
     if (data.question !== undefined) updateData.question = data.question.trim();
     if (data.questionType !== undefined) updateData.questionType = data.questionType;
     if (data.options !== undefined) updateData.options = data.options;
@@ -294,7 +291,6 @@ class QuestionRepositoryService {
 
     return await prisma.question.create({
       data: {
-        title: `${existing.title || "Question"} (Copy)`,
         question: existing.question,
         questionType: existing.questionType,
         options: existing.options,
