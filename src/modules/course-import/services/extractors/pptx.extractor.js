@@ -21,7 +21,13 @@ const collectText = (node, acc) => {
   if (typeof node === "object") {
     if (node["a:t"]) collectText(node["a:t"], acc);
     Object.keys(node).forEach((key) => {
-      if (key !== "a:t") collectText(node[key], acc);
+      // "$" is xml2js's container for the element's own XML attributes
+      // (position/size offsets, hex colors, font names, shape ids, bold
+      // flags, etc.) — walking into it pulls all of that in as if it were
+      // slide text. Only descend into real child elements, which is where
+      // nested <a:t> runs actually live.
+      if (key === "a:t" || key === "$") return;
+      collectText(node[key], acc);
     });
   }
 };

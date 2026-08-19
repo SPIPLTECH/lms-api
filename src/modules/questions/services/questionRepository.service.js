@@ -60,7 +60,6 @@ class QuestionRepositoryService {
       where.AND = where.AND || [];
       where.AND.push({
         OR: [
-          { title: { contains: search, mode: "insensitive" } },
           { question: { contains: search, mode: "insensitive" } },
           { tags: { contains: search, mode: "insensitive" } },
         ],
@@ -175,24 +174,53 @@ class QuestionRepositoryService {
       throw new Error("Marks must be greater than zero.");
     }
 
-    return await prisma.question.create({
+    // QuestionForm.jsx sends the selected type under `type`; other callers
+    // (bulk import, course importer) send `questionType` — accept either.
+    const questionType = data.questionType || data.type || "MCQ_SINGLE";
+    // "Category / Concept tag" in QuestionForm.jsx has no dedicated column;
+    // it's folded into `tags` alongside any tags explicitly supplied.
+    const tagList = [
+      ...(Array.isArray(data.tags) ? data.tags : data.tags ? [data.tags] : []),
+      ...(data.concept ? [data.concept] : []),
+    ];
+
+    const question = await prisma.question.create({
       data: {
-        title: data.title || data.question.slice(0, 50),
         question: data.question.trim(),
-        questionType: data.questionType || "MCQ_SINGLE",
-        options: data.options || [],
-        correctAnswer: data.correctAnswer || null,
+        questionType,
+        options: data.options ?? [],
+        // correctAnswer is a required Json column — an empty string is a
+        // valid JSON value, unlike a bare `null` on a non-nullable field.
+        correctAnswer: data.correctAnswer ?? "",
         explanation: data.explanation || "",
         subject: data.subject || "General",
         topic: data.topic || "General",
-        difficulty: data.difficulty || "MEDIUM",
+        difficulty: String(data.difficulty || "MEDIUM").toUpperCase(),
         marks: parseInt(data.marks, 10) || 1,
         negativeMarks: parseFloat(data.negativeMarks) || 0,
-        tags: Array.isArray(data.tags) ? data.tags.join(", ") : (data.tags || ""),
+        tags: tagList.join(", "),
         status: "ACTIVE",
         createdBy: userId,
       },
     });
+
+    if (data.quizId) {
+      const existingMax = await prisma.quizQuestion.aggregate({
+        where: { quizId: data.quizId },
+        _max: { order: true },
+      });
+
+      await prisma.quizQuestion.create({
+        data: {
+          quizId: data.quizId,
+          questionId: question.id,
+          order: (existingMax._max.order || 0) + 1,
+          marks: question.marks,
+        },
+      });
+    }
+
+    return question;
   }
 
   /**
@@ -212,19 +240,23 @@ class QuestionRepositoryService {
     }
 
     const updateData = {};
-    if (data.title !== undefined) updateData.title = data.title;
     if (data.question !== undefined) updateData.question = data.question.trim();
-    if (data.questionType !== undefined) updateData.questionType = data.questionType;
+    const questionType = data.questionType !== undefined ? data.questionType : data.type;
+    if (questionType !== undefined) updateData.questionType = questionType;
     if (data.options !== undefined) updateData.options = data.options;
     if (data.correctAnswer !== undefined) updateData.correctAnswer = data.correctAnswer;
     if (data.explanation !== undefined) updateData.explanation = data.explanation;
     if (data.subject !== undefined) updateData.subject = data.subject;
     if (data.topic !== undefined) updateData.topic = data.topic;
-    if (data.difficulty !== undefined) updateData.difficulty = data.difficulty;
+    if (data.difficulty !== undefined) updateData.difficulty = String(data.difficulty).toUpperCase();
     if (data.marks !== undefined) updateData.marks = parseInt(data.marks, 10);
     if (data.negativeMarks !== undefined) updateData.negativeMarks = parseFloat(data.negativeMarks);
-    if (data.tags !== undefined) {
-      updateData.tags = Array.isArray(data.tags) ? data.tags.join(", ") : data.tags;
+    if (data.tags !== undefined || data.concept !== undefined) {
+      const tagList = [
+        ...(Array.isArray(data.tags) ? data.tags : data.tags ? [data.tags] : []),
+        ...(data.concept ? [data.concept] : []),
+      ];
+      updateData.tags = tagList.join(", ");
     }
     if (data.status !== undefined) updateData.status = data.status;
 
@@ -294,7 +326,6 @@ class QuestionRepositoryService {
 
     return await prisma.question.create({
       data: {
-        title: `${existing.title || "Question"} (Copy)`,
         question: existing.question,
         questionType: existing.questionType,
         options: existing.options,

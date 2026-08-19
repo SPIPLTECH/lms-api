@@ -9,7 +9,7 @@ const MISCONCEPTION_TYPES = Object.keys(MISCONCEPTION_TAXONOMY);
 // a clear 400 at authoring time rather than silently accepted and only
 // caught later at scoring time.
 const optionSchema = Joi.alternatives().try(
-  Joi.string(),
+  Joi.string().allow(""),
   Joi.object({
     optionText: Joi.string().required(),
     isCorrect: Joi.boolean().optional(),
@@ -17,17 +17,58 @@ const optionSchema = Joi.alternatives().try(
   })
 );
 
+// MCQ_SINGLE/MCQ_MULTI/ARRANGE_TOKENS/SELF_ASSESSMENT send a plain array of
+// options (or none, for SELF_ASSESSMENT); MATCH_PAIRS sends a
+// { left: [...], right: [...] } shape instead — QuestionForm.jsx builds
+// that object directly, so it must be accepted here too, not just arrays.
+const optionsValueSchema = Joi.alternatives().try(
+  Joi.array().items(optionSchema),
+  Joi.object({
+    left: Joi.array().items(Joi.string().allow("")),
+    right: Joi.array().items(Joi.string().allow("")),
+  })
+);
+
+// Mirrors quiz.validation.js's answerValueSchema: MCQ_SINGLE/SELF_ASSESSMENT
+// send a plain string, MCQ_MULTI/ARRANGE_TOKENS send an array of strings,
+// and MATCH_PAIRS sends a string-keyed object (left -> right).
+const answerValueSchema = Joi.alternatives().try(
+  Joi.string().allow(""),
+  Joi.array().items(Joi.string()),
+  Joi.object().pattern(Joi.string(), Joi.string())
+);
+
+// The real QuestionType values the app writes (Prisma's QuestionType enum) —
+// what QuestionForm.jsx actually sends (MCQ_SINGLE, MCQ_MULTI,
+// ARRANGE_TOKENS, MATCH_PAIRS, SELF_ASSESSMENT) plus the legacy values other
+// importers/callers use.
+const QUESTION_TYPES = [
+  "MCQ_SINGLE", "MCQ_MULTI", "ARRANGE_TOKENS", "MATCH_PAIRS", "SELF_ASSESSMENT",
+  "MCQ", "MULTIPLE_CORRECT", "TRUE_FALSE", "FILL_BLANK", "SHORT_ANSWER", "LONG_ANSWER"
+];
+
 const createQuestionSchema = Joi.object({
-  title: Joi.string().required(),
+  // Question has no `title` column — questionRepositoryService derives one
+  // from the question text when none is supplied, so it's optional here.
+  title: Joi.string().optional().allow(null, ""),
   question: Joi.string().required(),
-  options: Joi.array().items(optionSchema).optional(),
-  correctAnswer: Joi.string().required(),
+  options: optionsValueSchema.optional(),
+  correctAnswer: answerValueSchema.required(),
   explanation: Joi.string().optional().allow(null, ""),
-  type: Joi.string().valid("MULTIPLE_CHOICE", "TRUE_FALSE", "SHORT_ANSWER").optional(),
-  difficulty: Joi.string().valid("EASY", "MEDIUM", "HARD").optional(),
+  // Accepted under both names: QuestionForm.jsx sends `type`, other callers
+  // (bulk import, course importer) send `questionType`.
+  type: Joi.string().valid(...QUESTION_TYPES).optional(),
+  questionType: Joi.string().valid(...QUESTION_TYPES).optional(),
+  difficulty: Joi.string().valid("EASY", "MEDIUM", "HARD").insensitive().optional(),
   marks: Joi.number().integer().min(1).optional(),
-  tags: Joi.array().items(Joi.string()).optional(),
+  negativeMarks: Joi.number().min(0).optional(),
+  tags: Joi.alternatives().try(Joi.array().items(Joi.string()), Joi.string().allow("")).optional(),
+  // "Category / Concept tag" field in QuestionForm.jsx — stored in `tags`
+  // (Question has no dedicated concept column).
+  concept: Joi.string().trim().max(200).optional().allow(null, ""),
   quizId: Joi.string().optional().allow(null, ""),
+  courseId: Joi.string().optional().allow(null, ""),
+  moduleId: Joi.string().optional().allow(null, ""),
   // Learner-model KC identifier (see quiz.service.js). Was previously
   // undeclared here, so joiValidation.middleware's stripUnknown:true was
   // silently discarding it before questionRepositoryService ever saw it.
@@ -36,15 +77,18 @@ const createQuestionSchema = Joi.object({
 });
 
 const updateQuestionSchema = Joi.object({
-  title: Joi.string().optional(),
+  title: Joi.string().optional().allow(null, ""),
   question: Joi.string().optional(),
-  options: Joi.array().items(optionSchema).optional(),
-  correctAnswer: Joi.string().optional(),
+  options: optionsValueSchema.optional(),
+  correctAnswer: answerValueSchema.optional(),
   explanation: Joi.string().optional().allow(null, ""),
-  type: Joi.string().valid("MULTIPLE_CHOICE", "TRUE_FALSE", "SHORT_ANSWER").optional(),
-  difficulty: Joi.string().valid("EASY", "MEDIUM", "HARD").optional(),
+  type: Joi.string().valid(...QUESTION_TYPES).optional(),
+  questionType: Joi.string().valid(...QUESTION_TYPES).optional(),
+  difficulty: Joi.string().valid("EASY", "MEDIUM", "HARD").insensitive().optional(),
   marks: Joi.number().integer().min(1).optional(),
-  tags: Joi.array().items(Joi.string()).optional(),
+  negativeMarks: Joi.number().min(0).optional(),
+  tags: Joi.alternatives().try(Joi.array().items(Joi.string()), Joi.string().allow("")).optional(),
+  concept: Joi.string().trim().max(200).optional().allow(null, ""),
   subject: Joi.string().trim().max(200).optional().allow(null, ""),
   topic: Joi.string().trim().max(200).optional().allow(null, "")
 });

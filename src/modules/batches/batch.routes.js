@@ -131,6 +131,14 @@ router.get(
 );
 
 router.get(
+  "/:batchId/quizzes",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyBatchOwnership,
+  controller.getBatchQuizzes
+);
+
+router.get(
   "/:batchId/announcements",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),

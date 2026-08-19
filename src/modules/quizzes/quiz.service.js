@@ -257,7 +257,8 @@ const calculateSubmissionResult = (quiz, answers = []) => {
 const getQuizzes = async (
   courseId,
   role,
-  userId
+  userId,
+  batchId
 ) => {
   const where = {};
 
@@ -266,6 +267,10 @@ const getQuizzes = async (
   } else if (role === "INSTRUCTOR") {
     // No specific course requested: scope to this instructor's own courses only.
     where.course = { creatorId: userId };
+  }
+
+  if (batchId) {
+    where.batchId = batchId;
   }
 
   return prisma.quiz.findMany({
@@ -321,11 +326,54 @@ const getQuizById = async (
   };
 };
 
+/**
+ * Quizzes are created batch-first: the instructor picks a batch, then one of
+ * that batch's linked courses, then optionally a module inside that course.
+ * Enforced here (not just in the UI) so a mismatched batchId/courseId/
+ * moduleId combination can never be written via a direct API call either.
+ */
+const validateQuizScope = async ({ batchId, courseId, moduleId }) => {
+  const batch = await prisma.batch.findUnique({
+    where: { id: batchId },
+    select: { courses: { select: { id: true } } }
+  });
+
+  if (!batch) {
+    const error = new Error("Batch not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (!batch.courses.some((c) => c.id === courseId)) {
+    const error = new Error("This course is not linked to the selected batch");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (moduleId) {
+    const module = await prisma.module.findUnique({
+      where: { id: moduleId },
+      select: { courseId: true }
+    });
+
+    if (!module || module.courseId !== courseId) {
+      const error = new Error("This module does not belong to the selected course");
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+};
+
 const createQuiz = async (
   data
 ) => {
+  await validateQuizScope(data);
+
   const quiz = await prisma.quiz.create({
-    data
+    data: {
+      ...data,
+      moduleId: data.moduleId || null
+    }
   });
 
   try {
@@ -566,6 +614,82 @@ const getQuizResult = async (studentId, quizId) => {
   };
 };
 
+/**
+ * Instructor view of "which quizzes did this batch get, and who attempted
+ * them" — the whole point of scoping quizzes by batch instead of just by
+ * course. Pools submissions across the batch's current student roster only,
+ * same join pattern as batch.service.js's getBatchDetailDashboard.
+ */
+const getBatchQuizzes = async (batchId) => {
+  const batch = await prisma.batch.findUnique({
+    where: { id: batchId },
+    select: {
+      students: {
+        select: { id: true, user: { select: { id: true, name: true, email: true } } }
+      }
+    }
+  });
+
+  if (!batch) {
+    const error = new Error("Batch not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const students = batch.students;
+  const studentIds = students.map((s) => s.id);
+
+  const quizzes = await prisma.quiz.findMany({
+    where: { batchId },
+    include: { _count: { select: { quizQuestions: true } } },
+    orderBy: { createdAt: "desc" }
+  });
+
+  const quizIds = quizzes.map((q) => q.id);
+
+  const submissions =
+    studentIds.length > 0 && quizIds.length > 0
+      ? await prisma.quizSubmission.findMany({
+          where: { quizId: { in: quizIds }, studentId: { in: studentIds } },
+          select: {
+            quizId: true,
+            studentId: true,
+            score: true,
+            percentage: true,
+            passed: true,
+            submittedAt: true
+          }
+        })
+      : [];
+
+  const submissionByQuizAndStudent = new Map(
+    submissions.map((s) => [`${s.quizId}:${s.studentId}`, s])
+  );
+
+  return quizzes.map((quiz) => {
+    const studentResults = students.map((s) => {
+      const submission = submissionByQuizAndStudent.get(`${quiz.id}:${s.id}`);
+      return {
+        studentId: s.id,
+        name: s.user.name,
+        email: s.user.email,
+        attempted: Boolean(submission),
+        score: submission?.score ?? null,
+        percentage: submission?.percentage ?? null,
+        passed: submission?.passed ?? null,
+        submittedAt: submission?.submittedAt ?? null
+      };
+    });
+
+    return {
+      ...quiz,
+      totalStudents: students.length,
+      attemptedCount: studentResults.filter((s) => s.attempted).length,
+      students: studentResults
+    };
+  });
+};
+
 const SELF_ASSESSMENT_QUIZ_TITLE = "Self-Generated Practice Quiz";
 
 /**
@@ -629,6 +753,7 @@ module.exports = {
   deleteQuiz,
   submitQuiz,
   getQuizResult,
+  getBatchQuizzes,
   generateSelfAssessmentQuiz,
   flushPendingMisconceptionClassifications
 };
