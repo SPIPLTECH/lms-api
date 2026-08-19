@@ -34,8 +34,18 @@ const getNotifications = async (userId) => {
 };
 
 const markAsRead = async (notificationId, userId) => {
-  return prisma.notification.update({
+  const existing = await prisma.notification.findFirst({
     where: { id: notificationId, userId },
+  });
+
+  if (!existing) {
+    const error = new Error("Notification not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  return prisma.notification.update({
+    where: { id: notificationId },
     data: { isRead: true },
   });
 };

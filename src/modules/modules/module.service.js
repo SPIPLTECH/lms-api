@@ -96,6 +96,11 @@ const updateModule = async (
   moduleId,
   data
 ) => {
+  const existing = await prisma.module.findUnique({ where: { id: moduleId } });
+  if (!existing) {
+    throw new ApiError(404, "Module not found");
+  }
+
   if (data.isPublished) {
     const lessonCount = await prisma.lesson.count({ where: { moduleId } });
     if (lessonCount === 0) {
@@ -114,6 +119,11 @@ const updateModule = async (
 const deleteModule = async (
   moduleId
 ) => {
+  const existing = await prisma.module.findUnique({ where: { id: moduleId } });
+  if (!existing) {
+    throw new ApiError(404, "Module not found");
+  }
+
   return await prisma.module.delete({
     where: {
       id: moduleId

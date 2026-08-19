@@ -165,6 +165,13 @@ const createAssignment = async (data) => {
 };
 
 const updateAssignment = async (assignmentId, data) => {
+    const existing = await prisma.assignment.findUnique({ where: { id: assignmentId } });
+    if (!existing) {
+        const error = new Error("Assignment not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
     return await prisma.assignment.update({
         where: { id: assignmentId },
         data: {
@@ -183,6 +190,13 @@ const updateAssignment = async (assignmentId, data) => {
 };
 
 const deleteAssignment = async (assignmentId) => {
+    const existing = await prisma.assignment.findUnique({ where: { id: assignmentId } });
+    if (!existing) {
+        const error = new Error("Assignment not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
     return await prisma.assignment.delete({
         where: { id: assignmentId }
     });

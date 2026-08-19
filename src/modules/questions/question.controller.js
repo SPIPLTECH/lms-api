@@ -14,8 +14,7 @@ const getQuestions = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: result.data,
-      pagination: result.pagination,
+      data: questions,
     });
   } catch (error) {
     next(error);

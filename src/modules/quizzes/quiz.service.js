@@ -353,6 +353,13 @@ const updateQuiz = async (
   quizId,
   data
 ) => {
+  const existing = await prisma.quiz.findUnique({ where: { id: quizId } });
+  if (!existing) {
+    const error = new Error("Quiz not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return prisma.quiz.update({
     where: {
       id: quizId
@@ -364,6 +371,13 @@ const updateQuiz = async (
 const deleteQuiz = async (
   quizId
 ) => {
+  const existing = await prisma.quiz.findUnique({ where: { id: quizId } });
+  if (!existing) {
+    const error = new Error("Quiz not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return prisma.quiz.delete({
     where: {
       id: quizId

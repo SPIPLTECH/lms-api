@@ -148,7 +148,9 @@ class QuestionRepositoryService {
 
     // Check permission
     if (user.role !== "ADMIN" && question.createdBy && question.createdBy !== user.id) {
-      throw new Error("Access denied: You can only view your own questions.");
+      const error = new Error("Access denied: You can only view your own questions.");
+      error.statusCode = 403;
+      throw error;
     }
 
     return {
@@ -169,10 +171,14 @@ class QuestionRepositoryService {
    */
   async createQuestion(data, userId) {
     if (!data.question || !data.question.trim()) {
-      throw new Error("Question text is required.");
+      const error = new Error("Question text is required.");
+      error.statusCode = 400;
+      throw error;
     }
     if (!data.marks || data.marks <= 0) {
-      throw new Error("Marks must be greater than zero.");
+      const error = new Error("Marks must be greater than zero.");
+      error.statusCode = 400;
+      throw error;
     }
 
     return await prisma.question.create({
@@ -204,11 +210,15 @@ class QuestionRepositoryService {
   async updateQuestion(id, data, user) {
     const existing = await prisma.question.findUnique({ where: { id } });
     if (!existing) {
-      throw new Error("Question not found.");
+      const error = new Error("Question not found.");
+      error.statusCode = 404;
+      throw error;
     }
 
     if (user.role !== "ADMIN" && existing.createdBy && existing.createdBy !== user.id) {
-      throw new Error("Access denied: You can only edit your own questions.");
+      const error = new Error("Access denied: You can only edit your own questions.");
+      error.statusCode = 403;
+      throw error;
     }
 
     const updateData = {};
@@ -246,11 +256,15 @@ class QuestionRepositoryService {
     });
 
     if (!existing) {
-      throw new Error("Question not found.");
+      const error = new Error("Question not found.");
+      error.statusCode = 404;
+      throw error;
     }
 
     if (user.role !== "ADMIN" && existing.createdBy && existing.createdBy !== user.id) {
-      throw new Error("Access denied: You can only delete your own questions.");
+      const error = new Error("Access denied: You can only delete your own questions.");
+      error.statusCode = 403;
+      throw error;
     }
 
     // If question is used in quizzes, archive it instead of hard deleting to preserve quiz integrity
@@ -271,10 +285,16 @@ class QuestionRepositoryService {
    */
   async archiveQuestion(id, user) {
     const existing = await prisma.question.findUnique({ where: { id } });
-    if (!existing) throw new Error("Question not found.");
+    if (!existing) {
+      const error = new Error("Question not found.");
+      error.statusCode = 404;
+      throw error;
+    }
 
     if (user.role !== "ADMIN" && existing.createdBy && existing.createdBy !== user.id) {
-      throw new Error("Access denied.");
+      const error = new Error("Access denied.");
+      error.statusCode = 403;
+      throw error;
     }
 
     return await prisma.question.update({
@@ -290,7 +310,11 @@ class QuestionRepositoryService {
    */
   async duplicateQuestion(id, user) {
     const existing = await prisma.question.findUnique({ where: { id } });
-    if (!existing) throw new Error("Question not found.");
+    if (!existing) {
+      const error = new Error("Question not found.");
+      error.statusCode = 404;
+      throw error;
+    }
 
     return await prisma.question.create({
       data: {

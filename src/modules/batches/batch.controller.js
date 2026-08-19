@@ -237,7 +237,8 @@ const startBatchConversation = async (req, res, next) => {
     const conversationService = require("../conversations/conversation.service");
     const conversation = await conversationService.startBatchConversation(
       req.params.batchId,
-      req.user.id
+      req.user.id,
+      req.user.role
     );
 
     res.status(201).json({

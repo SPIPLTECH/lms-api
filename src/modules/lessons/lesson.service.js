@@ -2,6 +2,7 @@ const prisma =
   require("../../config/database");
 const ApiError = require("../../utils/ApiError");
 const notificationService = require("../notifications/notification.service");
+const youtubeTranscript = require("../../utils/youtubeTranscript");
 
 const getLessons = async (moduleId, role, userId) => {
   const where = {};
@@ -110,6 +111,12 @@ const updateLesson = async (
     where: { id: lessonId }
   });
 
+  if (!oldLesson) {
+    const error = new Error("Lesson not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   if (data.isPublished) {
     const contentCount = await prisma.content.count({ where: { topic: { lessonId } } });
     if (contentCount === 0) {
@@ -152,6 +159,13 @@ const updateLesson = async (
 const deleteLesson = async (
   lessonId
 ) => {
+  const existing = await prisma.lesson.findUnique({ where: { id: lessonId } });
+  if (!existing) {
+    const error = new Error("Lesson not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return prisma.lesson.delete({
     where: {
       id: lessonId

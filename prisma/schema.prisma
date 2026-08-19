@@ -510,6 +510,7 @@ model Conversation {
   type         ConversationType
   name         String?
   image        String?
+  batchId      String?
   createdById  String
   createdAt    DateTime                  @default(now())
   updatedAt    DateTime                  @updatedAt
@@ -519,6 +520,7 @@ model Conversation {
 
   @@index([createdById])
   @@index([updatedAt])
+  @@index([batchId])
 }
 
 model ConversationParticipant {

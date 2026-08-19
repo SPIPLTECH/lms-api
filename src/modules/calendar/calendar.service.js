@@ -78,6 +78,14 @@ const createEvent = async (data) => {
 };
 
 const deleteEvent = async (id) => {
+    const existing = await prisma.calendarEvent.findUnique({ where: { id } });
+
+    if (!existing) {
+        const error = new Error("Calendar event not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
     return await prisma.calendarEvent.delete({
         where: { id }
     });

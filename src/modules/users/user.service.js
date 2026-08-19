@@ -27,6 +27,14 @@ const getUserById = async (userId) => {
 };
 
 const updateUser = async (userId, data) => {
+  const existing = await prisma.user.findUnique({ where: { id: userId } });
+
+  if (!existing) {
+    const error = new Error("User not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return await prisma.user.update({
     where: {
       id: userId
@@ -100,6 +108,14 @@ const updateUserRole = async (userId, role) => {
 };
 
 const deleteUser = async (userId) => {
+  const existing = await prisma.user.findUnique({ where: { id: userId } });
+
+  if (!existing) {
+    const error = new Error("User not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return await prisma.user.delete({
     where: {
       id: userId

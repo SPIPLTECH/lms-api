@@ -81,6 +81,13 @@ const getCertificateById = async (
 const deleteCertificate = async (
   certificateId
 ) => {
+  const existing = await prisma.certificate.findUnique({ where: { id: certificateId } });
+  if (!existing) {
+    const error = new Error("Certificate not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return prisma.certificate.delete({
     where: {
       id: certificateId
@@ -95,6 +102,13 @@ const createCertificate = async (data) => {
 };
 
 const updateCertificate = async (certificateId, data) => {
+  const existing = await prisma.certificate.findUnique({ where: { id: certificateId } });
+  if (!existing) {
+    const error = new Error("Certificate not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return prisma.certificate.update({
     where: { id: certificateId },
     data

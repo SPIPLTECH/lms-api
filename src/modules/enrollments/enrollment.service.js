@@ -99,6 +99,13 @@ const createEnrollment = async (
 const deleteEnrollment = async (
   enrollmentId
 ) => {
+  const existing = await prisma.enrollment.findUnique({ where: { id: enrollmentId } });
+  if (!existing) {
+    const error = new Error("Enrollment not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return await prisma.enrollment.delete({
     where: {
       id: enrollmentId
