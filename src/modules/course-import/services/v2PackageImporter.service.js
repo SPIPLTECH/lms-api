@@ -28,6 +28,27 @@ function isSafePackagePath(pkgPath) {
   return true;
 }
 
+const VALID_CONTENT_TYPES = new Set([
+  "VIDEO",
+  "DOCUMENT",
+  "TEXT",
+  "LINK",
+  "PRESENTATION",
+  "IMAGE",
+  "PDF",
+  "FILE",
+  "EXTERNAL_LINK",
+  "HTML",
+  "CODE",
+  "ASSIGNMENT",
+  "CODING_EXERCISE",
+  "SCORM",
+  "INTERACTIVE_LAB",
+  "AUDIO",
+  "EMBED",
+  "SLIDE"
+]);
+
 /**
  * Validates Canonical Course JSON v2 schema structure.
  * 
@@ -38,48 +59,74 @@ function validateV2Manifest(courseJson) {
   const errors = [];
 
   if (!courseJson || typeof courseJson !== "object") {
-    return { isValid: false, errors: ["Manifest course.json must be a JSON object."] };
+    return { isValid: false, errors: ["Course JSON must be a valid object."] };
   }
 
-  if (courseJson.version !== "2.0" && (!courseJson.$schema || !courseJson.$schema.includes("course-v2.json"))) {
-    errors.push("Invalid manifest version: expected version '2.0' or v2 $schema.");
-  }
-
-  if (!courseJson.metadata || typeof courseJson.metadata !== "object" || !courseJson.metadata.title) {
-    errors.push("Missing or invalid metadata.title in course.json.");
+  if (!courseJson.metadata || typeof courseJson.metadata !== "object") {
+    errors.push("metadata: Missing or invalid metadata object.");
+  } else if (!courseJson.metadata.title || typeof courseJson.metadata.title !== "string" || !courseJson.metadata.title.trim()) {
+    errors.push("metadata.title: Course title is required and cannot be empty.");
   }
 
   if (!courseJson.settings || typeof courseJson.settings !== "object") {
-    errors.push("Missing or invalid settings object in course.json.");
+    errors.push("settings: Missing or invalid settings object.");
   }
 
   if (!Array.isArray(courseJson.modules)) {
-    errors.push("Missing or invalid modules array in course.json.");
+    errors.push("modules: Missing or invalid modules array.");
+  } else if (courseJson.modules.length === 0) {
+    errors.push("modules: At least one module is required in the course.");
   } else {
     courseJson.modules.forEach((mod, mi) => {
-      if (!mod || typeof mod !== "object" || !mod.title) {
-        errors.push(`Module at index ${mi} is missing a title.`);
+      if (!mod || typeof mod !== "object") {
+        errors.push(`modules[${mi}]: Module item must be an object.`);
+        return;
       }
+      if (!mod.title || typeof mod.title !== "string" || !mod.title.trim()) {
+        errors.push(`modules[${mi}].title is required.`);
+      }
+
       if (!Array.isArray(mod.lessons)) {
-        errors.push(`Module '${mod?.title || mi}' lessons must be an array.`);
+        errors.push(`modules[${mi}].lessons: Lessons must be an array.`);
       } else {
         mod.lessons.forEach((les, li) => {
-          if (!les || typeof les !== "object" || !les.title) {
-            errors.push(`Lesson at index ${li} in Module '${mod.title}' is missing a title.`);
+          if (!les || typeof les !== "object") {
+            errors.push(`modules[${mi}].lessons[${li}]: Lesson item must be an object.`);
+            return;
           }
+          if (!les.title || typeof les.title !== "string" || !les.title.trim()) {
+            errors.push(`modules[${mi}].lessons[${li}].title is required.`);
+          }
+
           if (!Array.isArray(les.topics)) {
-            errors.push(`Lesson '${les?.title || li}' topics must be an array.`);
+            errors.push(`modules[${mi}].lessons[${li}].topics: Topics must be an array.`);
           } else {
             les.topics.forEach((top, ti) => {
-              if (!top || typeof top !== "object" || !top.title) {
-                errors.push(`Topic at index ${ti} in Lesson '${les.title}' is missing a title.`);
+              if (!top || typeof top !== "object") {
+                errors.push(`modules[${mi}].lessons[${li}].topics[${ti}]: Topic item must be an object.`);
+                return;
               }
+              if (!top.title || typeof top.title !== "string" || !top.title.trim()) {
+                errors.push(`modules[${mi}].lessons[${li}].topics[${ti}].title is required.`);
+              }
+
               if (!Array.isArray(top.contents)) {
-                errors.push(`Topic '${top?.title || ti}' contents must be an array.`);
+                errors.push(`modules[${mi}].lessons[${li}].topics[${ti}].contents: Contents must be an array.`);
               } else {
                 top.contents.forEach((cnt, ci) => {
-                  if (!cnt || typeof cnt !== "object" || !cnt.type) {
-                    errors.push(`Content at index ${ci} in Topic '${top.title}' is missing a type.`);
+                  if (!cnt || typeof cnt !== "object") {
+                    errors.push(`modules[${mi}].lessons[${li}].topics[${ti}].contents[${ci}]: Content item must be an object.`);
+                    return;
+                  }
+                  if (!cnt.type || typeof cnt.type !== "string") {
+                    errors.push(`modules[${mi}].lessons[${li}].topics[${ti}].contents[${ci}].type is required.`);
+                  } else {
+                    const upperType = cnt.type.toUpperCase();
+                    if (!VALID_CONTENT_TYPES.has(upperType)) {
+                      errors.push(
+                        `modules[${mi}].lessons[${li}].topics[${ti}].contents[${ci}].type "${cnt.type}" is not a supported content type.`
+                      );
+                    }
                   }
                 });
               }
@@ -237,11 +284,13 @@ async function processV2Package(jobDir, jobId, rawCourseJson) {
  */
 async function importV2Job(job, instructorId) {
   const canonical = job.canonicalJson;
-  if (!canonical || canonical.version !== "2.0") {
-    throw new ApiError(400, "Job canonicalJson is missing or not a valid V2 package.");
+  if (!canonical) {
+    throw new ApiError(400, "Job canonicalJson is missing.");
   }
 
-  const { metadata, settings, modules } = canonical;
+  const metadata = canonical.metadata || {};
+  const settings = canonical.settings || {};
+  const modules = Array.isArray(canonical.modules) ? canonical.modules : [];
   const assetMap = canonical.assetMap || {};
 
   // Resolve thumbnail server URL
@@ -336,7 +385,7 @@ async function importV2Job(job, instructorId) {
               }
 
               contentRows.push({
-                type: contentDef.type,
+                type: contentDef.type || contentDef.contentType || "TEXT",
                 title: contentDef.title ?? null,
                 order: contentDef.order ?? 0,
                 duration: contentDef.duration ?? null,

@@ -43,6 +43,37 @@ const createJob = async ({ instructorId, sourceFileName, zipFilePath }) => {
   });
 };
 
+const createJsonJob = async ({ instructorId, canonicalJson, sourceFileName }) => {
+  const { validateV2Manifest } = require("./v2PackageImporter.service");
+  const validation = validateV2Manifest(canonicalJson);
+
+  const title = canonicalJson?.metadata?.title || "Course JSON Package";
+  const name = sourceFileName || `${title.toLowerCase().replace(/[^a-z0-9]/g, "_")}.json`;
+
+  const validationReport = {
+    isValid: validation.isValid,
+    errors: validation.errors,
+    warnings: [],
+    info: validation.isValid
+      ? ["Course JSON schema validation passed successfully."]
+      : ["Course JSON validation failed."]
+  };
+
+  const job = await prisma.courseImportJob.create({
+    data: {
+      instructorId,
+      sourceFileName: name,
+      sourcePath: "json-import",
+      status: validation.isValid ? "READY" : "FAILED",
+      canonicalJson,
+      validationReport,
+      errorMessage: validation.isValid ? null : validation.errors.join("; ")
+    }
+  });
+
+  return job;
+};
+
 const getJob = async (jobId) => prisma.courseImportJob.findUnique({ where: { id: jobId } });
 
 const listJobs = async (instructorId) => prisma.courseImportJob.findMany({ where: { instructorId }, orderBy: { createdAt: "desc" } });
@@ -109,13 +140,11 @@ const processJob = async (jobId, baseUrl) => {
 const updateCanonicalJson = async (jobId, canonicalJson) => {
   const job = await getJob(jobId);
   if (!job) throw new ApiError(404, "Import job not found.");
-  if (!canonicalJson?.course && !canonicalJson?.version) throw new ApiError(400, "canonicalJson is required.");
-
-  const validationReport = validateCourse(canonicalJson.course || canonicalJson);
+  if (!canonicalJson) throw new ApiError(400, "canonicalJson is required.");
 
   return prisma.courseImportJob.update({
     where: { id: jobId },
-    data: { canonicalJson, validationReport, status: "READY" },
+    data: { canonicalJson, status: "READY" },
   });
 };
 
@@ -150,8 +179,8 @@ const importJob = async (jobId, instructorId) => {
     return job;
   }
 
-  // Check for V2 Package canonicalJson
-  if (job.canonicalJson?.version === "2.0") {
+  // Check for V2 Package canonicalJson (has metadata, modules, or version)
+  if (job.canonicalJson?.metadata || job.canonicalJson?.modules || job.canonicalJson?.version === "2.0") {
     await prisma.courseImportJob.update({ where: { id: jobId }, data: { status: "IMPORTING" } });
     return await v2PackageImporter.importV2Job(job, instructorId);
   }
@@ -278,4 +307,4 @@ const deleteJob = async (jobId) => {
   return prisma.courseImportJob.delete({ where: { id: jobId } });
 };
 
-module.exports = { createJob, getJob, listJobs, processJob, updateCanonicalJson, importJob, deleteJob };
+module.exports = { createJob, createJsonJob, getJob, listJobs, processJob, updateCanonicalJson, importJob, deleteJob };

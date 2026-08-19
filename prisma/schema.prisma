@@ -95,7 +95,7 @@ model StudentProfile {
   batches                     Batch[]                       @relation("BatchToStudentProfile")
   lessonQueries               LessonQuery[]
   videoAnalytics              VideoAnalytics[]
-  studentState                StudentState?
+  studentStates                StudentState[]
   learningEvents              LearningEvent[]
   activityState               StudentActivityState?
   learningState               StudentLearningState?
@@ -762,7 +762,7 @@ model Notification {
 model StudentState {
   id        String         @id @default(cuid())
 
-  studentId String         @unique
+  studentId String
   courseId  String
   moduleId  String?
   lessonId  String?
@@ -772,6 +772,7 @@ model StudentState {
   course    Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
   student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
+  @@unique([studentId, courseId])
   @@index([courseId])
 }
 

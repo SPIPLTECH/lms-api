@@ -2,6 +2,7 @@ const prisma =
   require("../../config/database");
 const ApiError = require("../../utils/ApiError");
 const notificationService = require("../notifications/notification.service");
+const youtubeTranscript = require("../../utils/youtubeTranscript");
 
 const getLessons = async (moduleId, role, userId) => {
   const where = {};
