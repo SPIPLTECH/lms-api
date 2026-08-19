@@ -1,10 +1,16 @@
 const prisma = require("../../config/database");
 
+// Safety cap only — not a pagination page size. Prevents an unbounded scan/
+// payload as calendar history grows; doesn't change which events show up
+// within that cap (still ordered by date, most relevant events first).
+const CALENDAR_EVENTS_LIMIT = 500;
+
 const getEvents = async (user) => {
     try {
         if (!user) {
             return await prisma.calendarEvent.findMany({
-                orderBy: { date: "asc" }
+                orderBy: { date: "asc" },
+                take: CALENDAR_EVENTS_LIMIT,
             });
         }
 
@@ -24,7 +30,8 @@ const getEvents = async (user) => {
                         { courseId: { in: enrolledCourseIds } }
                     ]
                 },
-                orderBy: { date: "asc" }
+                orderBy: { date: "asc" },
+                take: CALENDAR_EVENTS_LIMIT,
             });
         }
     } catch (error) {
@@ -40,12 +47,14 @@ const getEvents = async (user) => {
                     { instructorId: "inst-current" }
                 ]
             },
-            orderBy: { date: "asc" }
+            orderBy: { date: "asc" },
+            take: CALENDAR_EVENTS_LIMIT,
         });
     }
 
     return await prisma.calendarEvent.findMany({
-        orderBy: { date: "asc" }
+        orderBy: { date: "asc" },
+        take: CALENDAR_EVENTS_LIMIT,
     });
 };
 
@@ -69,6 +78,14 @@ const createEvent = async (data) => {
 };
 
 const deleteEvent = async (id) => {
+    const existing = await prisma.calendarEvent.findUnique({ where: { id } });
+
+    if (!existing) {
+        const error = new Error("Calendar event not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
     return await prisma.calendarEvent.delete({
         where: { id }
     });

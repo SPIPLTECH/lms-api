@@ -96,6 +96,11 @@ const updateModule = async (
   moduleId,
   data
 ) => {
+  const existing = await prisma.module.findUnique({ where: { id: moduleId } });
+  if (!existing) {
+    throw new ApiError(404, "Module not found");
+  }
+
   if (data.isPublished) {
     const lessonCount = await prisma.lesson.count({ where: { moduleId } });
     if (lessonCount === 0) {
@@ -114,6 +119,11 @@ const updateModule = async (
 const deleteModule = async (
   moduleId
 ) => {
+  const existing = await prisma.module.findUnique({ where: { id: moduleId } });
+  if (!existing) {
+    throw new ApiError(404, "Module not found");
+  }
+
   return await prisma.module.delete({
     where: {
       id: moduleId
@@ -125,6 +135,18 @@ const reorderModules = async (
   courseId,
   modules
 ) => {
+  // Verify every id actually belongs to this course before touching anything,
+  // so a caller who owns courseId can't smuggle in another course's module id.
+  const existing = await prisma.module.findMany({
+    where: { courseId },
+    select: { id: true }
+  });
+  const validIds = new Set(existing.map((module) => module.id));
+  const allBelongToCourse = modules.every((module) => validIds.has(module.id));
+  if (!allBelongToCourse) {
+    throw new ApiError(403, "One or more modules do not belong to this course.");
+  }
+
   // Two-phase reorder: @@unique([courseId, order]) rejects a naive
   // parallel swap (A->2 while B still holds 2), so first move every
   // row to a disjoint negative placeholder, then to its final order.
@@ -139,6 +161,7 @@ const reorderModules = async (
         }
       })
   );
+  await prisma.$transaction(offsetUpdates);
 
   const finalUpdates = modules.map(
     (module) =>
@@ -152,9 +175,7 @@ const reorderModules = async (
       })
   );
 
-  return await prisma.$transaction(
-    [...offsetUpdates, ...finalUpdates]
-  );
+  return await prisma.$transaction(finalUpdates);
 };
 
 module.exports = {

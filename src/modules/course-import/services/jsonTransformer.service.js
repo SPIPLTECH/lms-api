@@ -1,8 +1,74 @@
 const registry = require("./extractors/registry");
 const { classifyBlocks } = require("./contentClassifier.service");
-const { detectUrls } = require("./urlDetector.service");
+const { splitOnUrls, getVideoProvider } = require("./urlDetector.service");
 const { analyzeStructure } = require("./structureAnalyzer.service");
 const scormExtractor = require("./extractors/scorm.extractor");
+
+/**
+ * Rewrites a block's markdown in place so an image URL it contains renders
+ * as a real inline ![]() embed at its exact position — safe to run on any
+ * block's full markdown, table cells included, since substituting one
+ * inline-text form for another never introduces the pipe/newline
+ * characters that would corrupt a markdown table's row structure.
+ */
+const inlineImageUrls = (markdown) => {
+  const segments = splitOnUrls(markdown);
+  if (!segments.some((s) => s.type === "url" && s.contentType === "image")) return markdown;
+
+  return segments
+    .map((s) => {
+      if (s.type === "text") return s.text;
+      if (s.contentType === "image") return `![${s.linkText || ""}](${s.url})`;
+      return s.linkText !== undefined ? `[${s.linkText}](${s.url})` : s.url;
+    })
+    .join("");
+};
+
+/**
+ * Splits a block's markdown at any video/audio URL it contains, replacing
+ * it in place with a real playable block. html.extractor.js already does
+ * this at the point of extraction for docx/html sources (carefully, so a
+ * table's own row/cell structure never gets spliced apart) — this covers
+ * the sources that don't go through that extractor at all: a PDF page's
+ * plain text and a PPTX's combined multi-slide markdown, neither of which
+ * has table syntax to protect. Recognized by `sourceElement !== "section"`
+ * (html.extractor tags its own grouped blocks "section").
+ */
+const splitOutMediaUrls = (blocks) => {
+  const expanded = [];
+
+  for (const block of blocks) {
+    if (!block.markdown || block.attributes?.sourceElement === "section") {
+      expanded.push(block);
+      continue;
+    }
+
+    const segments = splitOnUrls(block.markdown);
+    const hasEmbeddableMedia = segments.some((s) => s.type === "url" && (s.contentType === "video" || s.contentType === "audio"));
+    if (!hasEmbeddableMedia) {
+      expanded.push(block);
+      continue;
+    }
+
+    for (const segment of segments) {
+      if (segment.type === "text") {
+        if (segment.text.trim()) expanded.push({ ...block, markdown: segment.text });
+      } else if (segment.contentType === "video" || segment.contentType === "audio") {
+        expanded.push({
+          blockType: segment.contentType,
+          source: "external",
+          url: segment.url,
+          caption: segment.linkText || "",
+          attributes: { detectedFrom: "text", ...(segment.contentType === "video" ? { provider: getVideoProvider(segment.url) } : {}) },
+        });
+      } else {
+        expanded.push({ ...block, markdown: segment.linkText !== undefined ? `[${segment.linkText}](${segment.url})` : segment.url });
+      }
+    }
+  }
+
+  return expanded;
+};
 
 const extractFileBlocks = async (file, jobId, baseUrl) => {
   const extractor = registry.getExtractorFor(file);
@@ -28,34 +94,17 @@ const extractFileBlocks = async (file, jobId, baseUrl) => {
   }
 };
 
-/** Surfaces bare URLs found inside extracted text (not already a markdown link) as their own blocks — nothing referenced in the source is dropped just because it wasn't wrapped in a tag. */
-const appendUrlBlocksFromText = (blocks) => {
-  const extra = [];
-
-  for (const block of blocks) {
-    if (block.blockType !== "text" || !block.markdown) continue;
-
-    for (const { url, contentType } of detectUrls(block.markdown)) {
-      if (block.markdown.includes(`](${url})`)) continue;
-
-      if (contentType === "video") extra.push({ blockType: "video", source: "external", url, attributes: { detectedFrom: "text" } });
-      else if (contentType === "image") extra.push({ blockType: "image", source: "external", url, alt: "", caption: "", attributes: { detectedFrom: "text" } });
-      else if (contentType === "document") extra.push({ blockType: "document", source: "external", url, title: url, attributes: { detectedFrom: "text" } });
-      else extra.push({ blockType: "link", url, title: url, attributes: { detectedFrom: "text" } });
-    }
-  }
-
-  return extra;
-};
-
 const buildLesson = async (lessonDef, jobId, baseUrl) => {
   const content = [];
   for (const file of lessonDef.files) {
     content.push(...(await extractFileBlocks(file, jobId, baseUrl)));
   }
-  content.push(...appendUrlBlocksFromText(content));
 
-  return { title: lessonDef.title, order: lessonDef.order, sourcePath: lessonDef.files[0]?.relativePath || null, content };
+  const withInlineImages = content.map((block) =>
+    block.markdown ? { ...block, markdown: inlineImageUrls(block.markdown) } : block
+  );
+  const withMediaBlocks = splitOutMediaUrls(withInlineImages);
+  return { title: lessonDef.title, order: lessonDef.order, sourcePath: lessonDef.files[0]?.relativePath || null, content: withMediaBlocks };
 };
 
 /** Drops a local-asset block if the same original file already appears in an earlier lesson within the same module (e.g. a video embedded inline by an HTML lesson AND also picked up as its own folder-lesson) — keeps the first occurrence, avoids showing the same file twice without ever losing an unreferenced one. */
@@ -162,4 +211,4 @@ const buildCanonicalCourse = async ({ files, jobId, baseUrl, sourceFileName }) =
   };
 };
 
-module.exports = { buildCanonicalCourse };
+module.exports = { buildCanonicalCourse, inlineImageUrls, splitOutMediaUrls };

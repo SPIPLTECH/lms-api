@@ -241,16 +241,29 @@ const bulkCreateQuestions = async (questionsPayload, quizId = null) => {
         await verifyQuizExists(quizId);
     }
 
+    // Each row is normalized the same way createQuestion() normalizes a
+    // single question; a row without its own quizId falls back to the
+    // top-level quizId (attach-all-to-this-quiz call shape).
+    const formattedQuestions = rawQuestions.map((row) => {
+        const normalized = normalizeQuestion(row);
+        if (!normalized.quizId && quizId) {
+            normalized.quizId = quizId;
+        }
+        return normalized;
+    });
+
     // Verify all unique quizIds exist, and use them to default courseId
-    // for any question that didn't explicitly specify one.
-    const quizIds = [...new Set(formattedQuestions.map((q) => q.quizId))];
+    // for any question that didn't explicitly specify one. quizId is
+    // optional per-question (repository-only questions may carry none), so
+    // only look up the ones actually present.
+    const quizIds = [...new Set(formattedQuestions.map((q) => q.quizId).filter(Boolean))];
     const quizCourseMap = {};
     for (const qId of quizIds) {
         const quiz = await verifyQuizExists(qId);
         quizCourseMap[qId] = quiz.courseId;
     }
     formattedQuestions.forEach((q) => {
-        if (!q.courseId) q.courseId = quizCourseMap[q.quizId];
+        if (!q.courseId && q.quizId) q.courseId = quizCourseMap[q.quizId];
     });
 
     const { validQuestions, failedQuestions } = validateQuestions(formattedQuestions);

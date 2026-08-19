@@ -204,7 +204,6 @@ const createConversation = async (data, userId) => {
         data: {
             type: data.type,
             name: data.type === "GROUP" ? data.name : null,
-            description: data.type === "GROUP" ? data.description : null,
             image: data.type === "GROUP" ? data.image : null,
             createdById: userId,
 
@@ -230,7 +229,6 @@ const updateConversation = async (conversationId, data) => {
         },
         data: {
             name: data.name,
-            description: data.description,
             image: data.image,
         },
     });
@@ -254,7 +252,7 @@ const deleteConversation = async (conversationId) => {
  * roster. This does its own explicit ownership check and lets errors
  * propagate normally.
  */
-const startBatchConversation = async (batchId, instructorId) => {
+const startBatchConversation = async (batchId, instructorId, role = null) => {
     const batch = await prisma.batch.findUnique({
         where: { id: batchId },
         select: {
@@ -271,7 +269,8 @@ const startBatchConversation = async (batchId, instructorId) => {
         throw error;
     }
 
-    if (!batch.courses.some((course) => course.creatorId === instructorId)) {
+    const owns = batch.courses.some((course) => course.creatorId === instructorId);
+    if (role !== "ADMIN" && !owns) {
         const error = new Error("Forbidden: you do not own this batch");
         error.statusCode = 403;
         throw error;

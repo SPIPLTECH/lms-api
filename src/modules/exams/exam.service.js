@@ -11,8 +11,7 @@ const getInstructorExams = async (instructorId, courseId) => {
   return prisma.exam.findMany({
     where,
     include: {
-      course: { select: { id: true, title: true } },
-      batch: { select: { id: true, name: true } }
+      course: { select: { id: true, title: true } }
     },
     orderBy: { createdAt: "desc" }
   });
@@ -22,8 +21,7 @@ const getExamById = async (examId) => {
   const exam = await prisma.exam.findUnique({
     where: { id: examId },
     include: {
-      course: { select: { id: true, title: true } },
-      batch: { select: { id: true, name: true } }
+      course: { select: { id: true, title: true } }
     }
   });
 
@@ -46,7 +44,6 @@ const createExam = async (data) => {
       dueDate: data.dueDate ? new Date(data.dueDate) : null,
       duration: data.duration ? parseInt(data.duration) : null,
       courseId: data.courseId,
-      batchId: data.batchId || null,
       isPublished: data.isPublished !== undefined ? data.isPublished : true,
       status: data.status || "SCHEDULED"
     }
@@ -54,6 +51,13 @@ const createExam = async (data) => {
 };
 
 const updateExam = async (examId, data) => {
+  const existing = await prisma.exam.findUnique({ where: { id: examId } });
+  if (!existing) {
+    const error = new Error("Test not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return prisma.exam.update({
     where: { id: examId },
     data: {
@@ -63,7 +67,6 @@ const updateExam = async (examId, data) => {
       startDate: data.startDate ? new Date(data.startDate) : undefined,
       dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
       duration: data.duration !== undefined ? parseInt(data.duration) : undefined,
-      batchId: data.batchId !== undefined ? (data.batchId || null) : undefined,
       isPublished: data.isPublished !== undefined ? data.isPublished : undefined,
       status: data.status || undefined
     }
@@ -71,6 +74,13 @@ const updateExam = async (examId, data) => {
 };
 
 const deleteExam = async (examId) => {
+  const existing = await prisma.exam.findUnique({ where: { id: examId } });
+  if (!existing) {
+    const error = new Error("Test not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return prisma.exam.delete({ where: { id: examId } });
 };
 

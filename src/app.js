@@ -39,6 +39,10 @@ const paymentRoutes = require("./modules/payments/payment.routes");
 const announcementRoutes = require("./modules/announcements/announcement.routes");
 const resultsRoutes = require("./modules/results/results.routes");
 const lessonQueryRoutes = require("./modules/lesson-queries/lessonQuery.routes");
+const discussionRoutes = require("./modules/discussions/discussion.routes");
+const examRoutes = require("./modules/exams/exam.routes");
+const lessonNoteRoutes = require("./modules/lesson-notes/lessonNote.routes");
+const teachingGoalRoutes = require("./modules/teaching-goals/teachingGoal.routes");
 
 const notificationRoutes = require("./modules/notifications/notification.routes");
 const conversationRoutes = require("./modules/conversations/conversation.routes");
@@ -68,7 +72,15 @@ app.use(
 );
 app.use(morgan("dev"));
 
-app.use(express.json({ limit: "100mb" }));
+app.use(express.json({
+  limit: "100mb",
+  // Webhook signature verification (Razorpay) needs the exact raw bytes the
+  // sender signed — re-serializing req.body with JSON.stringify can produce
+  // a byte-for-byte different string and break HMAC verification.
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: "100mb" }));
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
@@ -132,6 +144,10 @@ app.use("/assignments", assignmentRoutes);
 app.use("/announcements", announcementRoutes);
 app.use("/results", resultsRoutes);
 app.use("/lesson-queries", lessonQueryRoutes);
+app.use("/discussions", discussionRoutes);
+app.use("/exams", examRoutes);
+app.use("/lesson-notes", lessonNoteRoutes);
+app.use("/teaching-goals", teachingGoalRoutes);
 app.use("/calendar", calendarRoutes);
 app.use("/upcoming-tasks", upcomingTasksRoutes);
 app.use("/events", observation.router);

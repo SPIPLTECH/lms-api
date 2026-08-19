@@ -111,6 +111,12 @@ const updateLesson = async (
     where: { id: lessonId }
   });
 
+  if (!oldLesson) {
+    const error = new Error("Lesson not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   if (data.isPublished) {
     const contentCount = await prisma.content.count({ where: { topic: { lessonId } } });
     if (contentCount === 0) {
@@ -153,6 +159,13 @@ const updateLesson = async (
 const deleteLesson = async (
   lessonId
 ) => {
+  const existing = await prisma.lesson.findUnique({ where: { id: lessonId } });
+  if (!existing) {
+    const error = new Error("Lesson not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return prisma.lesson.delete({
     where: {
       id: lessonId
@@ -248,24 +261,37 @@ const reorderLessons = async (
   moduleId,
   lessons
 ) => {
+  // Verify every id actually belongs to this module before touching anything,
+  // so a caller who owns moduleId can't smuggle in another module's lesson id.
+  const existing = await prisma.lesson.findMany({
+    where: { moduleId },
+    select: { id: true }
+  });
+  const validIds = new Set(existing.map((lesson) => lesson.id));
+  const allBelongToModule = lessons.every((lesson) => validIds.has(lesson.id));
+  if (!allBelongToModule) {
+    throw new ApiError(403, "One or more lessons do not belong to this module.");
+  }
+
   // Two-phase reorder: @@unique([moduleId, order]) rejects a naive
   // parallel swap (A->2 while B still holds 2), so first move every
   // row to a disjoint negative placeholder, then to its final order.
   const offsetUpdates = lessons.map((lesson, index) =>
     prisma.lesson.update({
       where: {
-        id: lesson.lessonId
+        id: lesson.id
       },
       data: {
         order: -1000 - index
       }
     })
   );
+  await prisma.$transaction(offsetUpdates);
 
   const finalUpdates = lessons.map((lesson) =>
     prisma.lesson.update({
       where: {
-        id: lesson.lessonId
+        id: lesson.id
       },
       data: {
         order: lesson.order
@@ -273,9 +299,7 @@ const reorderLessons = async (
     })
   );
 
-  return prisma.$transaction(
-    [...offsetUpdates, ...finalUpdates]
-  );
+  return prisma.$transaction(finalUpdates);
 };
 
 module.exports = {

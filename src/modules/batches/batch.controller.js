@@ -191,6 +191,20 @@ const getBatchDetailDashboard = async (req, res, next) => {
   }
 };
 
+const getBatchQuizzes = async (req, res, next) => {
+  try {
+    const quizService = require("../quizzes/quiz.service");
+    const quizzes = await quizService.getBatchQuizzes(req.params.batchId);
+
+    res.json({
+      success: true,
+      data: quizzes,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getBatchAnnouncements = async (req, res, next) => {
   try {
     const announcementService = require("../announcements/announcement.service");
@@ -237,7 +251,8 @@ const startBatchConversation = async (req, res, next) => {
     const conversationService = require("../conversations/conversation.service");
     const conversation = await conversationService.startBatchConversation(
       req.params.batchId,
-      req.user.id
+      req.user.id,
+      req.user.role
     );
 
     res.status(201).json({
@@ -264,6 +279,7 @@ module.exports = {
   addStudentToBatch,
   removeStudentFromBatch,
   getBatchDetailDashboard,
+  getBatchQuizzes,
   getBatchAnnouncements,
   createBatchAnnouncement,
   startBatchConversation,

@@ -882,30 +882,6 @@ const getStudentDashboard = async (userId) => {
       batches: {
         select: { name: true },
       },
-      enrollments: {
-        include: {
-          course: {
-            include: {
-              creator: {
-                select: {
-                  name: true,
-                  email: true,
-                },
-              },
-              modules: {
-                include: {
-                  lessons: true,
-                },
-              },
-              quizzes: {
-                select: {
-                  id: true,
-                },
-              },
-            },
-          },
-        },
-      },
       quizSubmissions: {
         select: {
           id: true,
@@ -944,31 +920,72 @@ const getStudentDashboard = async (userId) => {
 
   const studentId = student.id;
 
-  const progress = await prisma.progress.findMany({
-    where: { studentId },
-    include: {
-      lesson: {
-        select: {
-          id: true,
-          title: true,
-          module: {
-            select: {
-              courseId: true,
+  // Enrollments no longer eager-load every lesson row (or every quiz row)
+  // per course just to count them -- `_count` gets the same numbers as
+  // `.length` on the old full include, without fetching the rows themselves.
+  // Progress is restricted to completed:true: every consumer below already
+  // filters on `p.completed` (learning-time totals, streak, per-course
+  // counts), and the wholesale `progressList` passthrough field has no
+  // frontend reader (grepped the frontend -- zero matches), so incomplete
+  // rows were fetched and discarded on every request for no reason.
+  const [enrollments, progress] = await Promise.all([
+    prisma.enrollment.findMany({
+      where: { studentId },
+      select: {
+        id: true,
+        courseId: true,
+        enrolledAt: true,
+        studentId: true,
+        course: {
+          select: {
+            id: true,
+            title: true,
+            description: true,
+            category: true,
+            level: true,
+            thumbnailUrl: true,
+            creator: {
+              select: {
+                name: true,
+                email: true,
+              },
             },
+            modules: {
+              select: {
+                _count: { select: { lessons: true } },
+              },
+            },
+            _count: { select: { quizzes: true } },
           },
-          topics: {
-            select: {
-              contents: {
-                select: {
-                  duration: true,
+        },
+      },
+    }),
+    prisma.progress.findMany({
+      where: { studentId, completed: true },
+      select: {
+        completed: true,
+        completedAt: true,
+        lesson: {
+          select: {
+            module: {
+              select: {
+                courseId: true,
+              },
+            },
+            topics: {
+              select: {
+                contents: {
+                  select: {
+                    duration: true,
+                  },
                 },
               },
             },
           },
         },
       },
-    },
-  });
+    }),
+  ]);
 
   // Calculate study time metrics
   const now = new Date();
@@ -1004,12 +1021,12 @@ const getStudentDashboard = async (userId) => {
   });
 
   // Total lessons from all enrolled courses
-  const totalLessons = student.enrollments.reduce(
+  const totalLessons = enrollments.reduce(
     (courseTotal, enrollment) =>
       courseTotal +
       enrollment.course.modules.reduce(
         (moduleTotal, module) =>
-          moduleTotal + module.lessons.length,
+          moduleTotal + module._count.lessons,
         0
       ),
     0
@@ -1027,9 +1044,8 @@ const getStudentDashboard = async (userId) => {
         );
 
   // Quizzes stats
-  const totalQuizzes = student.enrollments.reduce(
-    (courseTotal, enrollment) =>
-      courseTotal + (enrollment.course.quizzes ? enrollment.course.quizzes.length : 0),
+  const totalQuizzes = enrollments.reduce(
+    (courseTotal, enrollment) => courseTotal + (enrollment.course._count?.quizzes || 0),
     0
   );
 
@@ -1046,12 +1062,12 @@ const getStudentDashboard = async (userId) => {
   }
 
   // Format enrolled courses for frontend
-  const enrolledCoursesList = student.enrollments.map(
+  const enrolledCoursesList = enrollments.map(
     (enrollment) => {
       const totalCourseLessons =
         enrollment.course.modules.reduce(
           (sum, module) =>
-            sum + module.lessons.length,
+            sum + module._count.lessons,
           0
         );
 
@@ -1201,7 +1217,7 @@ const getStudentDashboard = async (userId) => {
   }
 
   // Recommend published courses not currently enrolled in
-  const enrolledCourseIds = student.enrollments.map(e => e.courseId);
+  const enrolledCourseIds = enrollments.map(e => e.courseId);
   const recommendedCourses = await prisma.course.findMany({
     where: {
       status: "PUBLISHED",
@@ -1253,7 +1269,7 @@ const getStudentDashboard = async (userId) => {
 
   return {
     stats: {
-      enrolledCourses: student.enrollments.length,
+      enrolledCourses: enrollments.length,
       completedLessons,
       certificates: student.certificates.length,
       reviews: student.reviews.length,

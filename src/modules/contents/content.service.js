@@ -49,6 +49,13 @@ const createContent = async (data) => {
 };
 
 const updateContent = async (contentId, data) => {
+  const existing = await prisma.content.findUnique({ where: { id: contentId } });
+  if (!existing) {
+    const error = new Error("Content not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   if (data.htmlContent) {
     data.htmlContent = sanitizeContent(data.htmlContent);
   }
@@ -64,6 +71,13 @@ const updateContent = async (contentId, data) => {
 };
 
 const deleteContent = async (contentId) => {
+  const existing = await prisma.content.findUnique({ where: { id: contentId } });
+  if (!existing) {
+    const error = new Error("Content not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return prisma.content.delete({
     where: {
       id: contentId

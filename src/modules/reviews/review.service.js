@@ -163,6 +163,13 @@ const updateReview = async (
   reviewId,
   data
 ) => {
+  const existing = await prisma.review.findUnique({ where: { id: reviewId } });
+  if (!existing) {
+    const error = new Error("Review not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return prisma.review.update({
     where: {
       id: reviewId
@@ -195,6 +202,13 @@ const updateReview = async (
 const deleteReview = async (
   reviewId
 ) => {
+  const existing = await prisma.review.findUnique({ where: { id: reviewId } });
+  if (!existing) {
+    const error = new Error("Review not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return prisma.review.delete({
     where: {
       id: reviewId

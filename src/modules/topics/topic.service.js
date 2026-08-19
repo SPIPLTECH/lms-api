@@ -54,6 +54,13 @@ const createTopic = async (data) => {
 };
 
 const updateTopic = async (topicId, data) => {
+  const existing = await prisma.topic.findUnique({ where: { id: topicId } });
+  if (!existing) {
+    const error = new Error("Topic not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   if (data.order !== undefined && data.order !== null) {
     data.order = Number(data.order);
   }
@@ -67,6 +74,13 @@ const updateTopic = async (topicId, data) => {
 };
 
 const deleteTopic = async (topicId) => {
+  const existing = await prisma.topic.findUnique({ where: { id: topicId } });
+  if (!existing) {
+    const error = new Error("Topic not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return prisma.topic.delete({
     where: {
       id: topicId,

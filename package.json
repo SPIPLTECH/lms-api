@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "test": "node --test",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio"
@@ -31,7 +30,7 @@
     "csv-parser": "^3.2.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "express-rate-limit": "^8.6.1",
+    "express-rate-limit": "^8.6.2",
     "express-validator": "^7.3.2",
     "helmet": "^8.2.0",
     "image-size": "^2.0.2",
@@ -54,7 +53,6 @@
   },
   "devDependencies": {
     "madge": "^8.0.0",
-    "nodemon": "^3.1.14",
-    "supertest": "^7.2.2"
+    "nodemon": "^3.1.14"
   }
 }

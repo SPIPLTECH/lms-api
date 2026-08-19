@@ -535,11 +535,11 @@ const getBatchDetailDashboard = async (batchId) => {
           },
           quizzes: { select: { id: true, title: true, dueDate: true } },
           assignments: { select: { id: true, title: true, dueDate: true } },
+          exams: { select: { id: true, title: true, startDate: true } },
         },
       },
       students: { select: { id: true, user: { select: { id: true, name: true, email: true } } } },
       sessions: true,
-      exams: true,
     },
   });
 
@@ -557,6 +557,7 @@ const getBatchDetailDashboard = async (batchId) => {
   const lessonById = new Map(lessons.map((l) => [l.id, l]));
   const quizzes = batch.courses.flatMap((c) => c.quizzes);
   const assignments = batch.courses.flatMap((c) => c.assignments);
+  const exams = batch.courses.flatMap((c) => c.exams);
   const quizIds = quizzes.map((q) => q.id);
   const assignmentIds = assignments.map((a) => a.id);
 
@@ -728,7 +729,7 @@ const getBatchDetailDashboard = async (batchId) => {
     ...batch.sessions
       .filter((s) => s.startDate && new Date(s.startDate) >= now)
       .map((s) => ({ id: s.id, type: "SESSION", title: s.title, date: s.startDate })),
-    ...batch.exams
+    ...exams
       .filter((e) => e.startDate && new Date(e.startDate) >= now)
       .map((e) => ({ id: e.id, type: "EXAM", title: e.title, date: e.startDate })),
     ...assignments

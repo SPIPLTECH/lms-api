@@ -100,6 +100,13 @@ const updateStickyNote = async (
   stickyNoteId,
   data
 ) => {
+  const existing = await prisma.stickyNote.findUnique({ where: { id: stickyNoteId } });
+  if (!existing) {
+    const error = new Error("Sticky note not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return prisma.stickyNote.update({
     where: {
       id: stickyNoteId
@@ -124,6 +131,13 @@ const updateStickyNote = async (
 const deleteStickyNote = async (
   stickyNoteId
 ) => {
+  const existing = await prisma.stickyNote.findUnique({ where: { id: stickyNoteId } });
+  if (!existing) {
+    const error = new Error("Sticky note not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
   return prisma.stickyNote.delete({
     where: {
       id: stickyNoteId
