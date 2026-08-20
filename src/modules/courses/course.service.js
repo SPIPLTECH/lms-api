@@ -1,6 +1,7 @@
 const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
 const ApiError = require("../../utils/ApiError");
+const { buildLessonLockMap } = require("../../utils/dripAccess");
 // const verifyToken = require(
 //   "../../middleware/auth.middleware"
 // );
@@ -392,8 +393,30 @@ const getCourseStatusCounts = async (instructorId) => {
   return { total, published, draft, archived };
 };
 
-const getCourseById = async (courseId, role) => {
+const getCourseById = async (courseId, role, userId) => {
   const isStudentOrGuest = role === "STUDENT" || role === "GUEST";
+
+  // If role is STUDENT, check if student holds an active enrollment
+  let isEnrolledStudent = false;
+  let studentProfileId = null;
+  if (role === "STUDENT" && userId) {
+    const studentProfile = await prisma.studentProfile.findUnique({
+      where: { userId },
+      select: { id: true }
+    });
+    if (studentProfile) {
+      studentProfileId = studentProfile.id;
+      const enrollment = await prisma.enrollment.findUnique({
+        where: {
+          studentId_courseId: {
+            studentId: studentProfile.id,
+            courseId
+          }
+        }
+      });
+      if (enrollment) isEnrolledStudent = true;
+    }
+  }
 
   const course = await prisma.course.findUnique({
     where: {
@@ -471,9 +494,6 @@ const getCourseById = async (courseId, role) => {
                   questionType: true,
                   options: true,
                   difficulty: true,
-                  // Sensitive fields are conditionally spread only for ADMIN/INSTRUCTOR.
-                  // Omitting a field from select entirely is the only guaranteed way
-                  // Prisma will not fetch it — setting a field to false is undefined behavior.
                   ...(isStudentOrGuest
                     ? {}
                     : { correctAnswer: true, explanation: true }),
@@ -489,8 +509,21 @@ const getCourseById = async (courseId, role) => {
 
   if (!course) return null;
 
-  if (isStudentOrGuest && course.status !== "PUBLISHED") {
+  if (isStudentOrGuest && course.status !== "PUBLISHED" && !isEnrolledStudent) {
     return null;
+  }
+
+  if (role === "STUDENT") {
+    const lockMap = await buildLessonLockMap(courseId, studentProfileId);
+    course.modules.forEach((moduleItem) => {
+      moduleItem.lessons.forEach((lesson) => {
+        const locked = lockMap.get(lesson.id) ?? false;
+        lesson.locked = locked;
+        if (locked) {
+          lesson.topics = [];
+        }
+      });
+    });
   }
 
   return attachCourseStats(course);
@@ -514,44 +547,343 @@ const updateCourse = async (courseId, data) => {
   });
 };
 
-const updateStatus = async (courseId, status) => {
-  if (status === "PUBLISHED") {
-    const moduleCount = await prisma.module.count({ where: { courseId } });
-    if (moduleCount === 0) {
-      throw new ApiError(400, "Add at least one module before publishing this course.");
+/**
+ * Validates whether a course is ready to be published.
+ * Returns structured validation details: { canPublish: boolean, errors: Array<{ code, field, message }> }
+ */
+const validateCourseForPublish = async (courseId) => {
+  const course = await prisma.course.findUnique({
+    where: { id: courseId },
+    include: {
+      modules: {
+        orderBy: { order: "asc" },
+        include: {
+          lessons: {
+            orderBy: { order: "asc" },
+            include: {
+              topics: {
+                orderBy: { order: "asc" },
+                include: {
+                  contents: { orderBy: { order: "asc" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  if (!course) {
+    throw new ApiError(404, "Course not found");
+  }
+
+  const errors = [];
+
+  if (!course.title || course.title.trim() === "") {
+    errors.push({
+      code: "MISSING_TITLE",
+      field: "title",
+      message: "Course title is required."
+    });
+  }
+
+  if (!course.description || course.description.trim() === "") {
+    errors.push({
+      code: "MISSING_DESCRIPTION",
+      field: "description",
+      message: "Course description is required before publishing."
+    });
+  }
+
+  if (!course.modules || course.modules.length === 0) {
+    errors.push({
+      code: "NO_MODULES",
+      field: "modules",
+      message: "Course must contain at least one module."
+    });
+  } else {
+    for (let mIdx = 0; mIdx < course.modules.length; mIdx++) {
+      const mod = course.modules[mIdx];
+      if (!mod.lessons || mod.lessons.length === 0) {
+        errors.push({
+          code: "EMPTY_MODULE",
+          field: `modules[${mIdx}].lessons`,
+          message: `Module "${mod.title || `Module ${mIdx + 1}`}" must contain at least one lesson.`
+        });
+      } else {
+        for (let lIdx = 0; lIdx < mod.lessons.length; lIdx++) {
+          const lesson = mod.lessons[lIdx];
+          const hasContent = (lesson.topics || []).some((t) =>
+            (t.contents || []).some((c) => {
+              if (!c) return false;
+              if (typeof c.htmlContent === "string" && c.htmlContent.trim().length > 0) return true;
+              if (typeof c.videoUrl === "string" && c.videoUrl.trim().length > 0) return true;
+              if (typeof c.fileUrl === "string" && c.fileUrl.trim().length > 0) return true;
+              if (typeof c.externalUrl === "string" && c.externalUrl.trim().length > 0) return true;
+              if (c.data !== null && c.data !== undefined) {
+                if (typeof c.data === "object" && Object.keys(c.data).length > 0) return true;
+                if (typeof c.data === "string" && c.data.trim().length > 0) return true;
+              }
+              return false;
+            })
+          );
+          if (!hasContent) {
+            errors.push({
+              code: "EMPTY_LESSON",
+              field: `modules[${mIdx}].lessons[${lIdx}].contents`,
+              message: `Lesson "${lesson.title || `Lesson ${lIdx + 1}`}" in module "${mod.title}" must contain usable content.`
+            });
+          }
+        }
+      }
     }
   }
 
-  const course = await prisma.course.update({
-    where: {
-      id: courseId
-    },
+  return {
+    canPublish: errors.length === 0,
+    errors
+  };
+};
+
+/**
+ * Publishes a course (DRAFT -> PUBLISHED).
+ */
+const publishCourse = async (courseId, userId, userRole) => {
+  const course = await prisma.course.findUnique({ where: { id: courseId } });
+  if (!course) {
+    throw new ApiError(404, "Course not found");
+  }
+
+  if (course.status === "ARCHIVED") {
+    const error = new ApiError(400, "Archived courses cannot be published directly. Restore the course to DRAFT first.");
+    error.code = "INVALID_STATUS_TRANSITION";
+    throw error;
+  }
+
+  if (userRole !== "ADMIN" && course.creatorId !== userId) {
+    throw new ApiError(403, "Forbidden: You do not own this course.");
+  }
+
+  const validation = await validateCourseForPublish(courseId);
+  if (!validation.canPublish) {
+    const error = new ApiError(400, "Course is not ready to be published.");
+    error.code = "COURSE_NOT_READY_TO_PUBLISH";
+    error.errors = validation.errors;
+    throw error;
+  }
+
+  const updatedCourse = await prisma.$transaction(async (tx) => {
+    const courseObj = await tx.course.update({
+      where: { id: courseId },
+      data: {
+        status: "PUBLISHED",
+        publishedAt: course.publishedAt || new Date()
+      }
+    });
+
+    await tx.module.updateMany({
+      where: { courseId },
+      data: { isPublished: true }
+    });
+
+    await tx.lesson.updateMany({
+      where: { module: { courseId } },
+      data: { isPublished: true }
+    });
+
+    await tx.topic.updateMany({
+      where: { lesson: { module: { courseId } } },
+      data: { isPublished: true }
+    });
+
+    return courseObj;
+  });
+
+  try {
+    await notificationService.createNotification(updatedCourse.creatorId, {
+      title: "Course Published 🚀",
+      message: `Your course "${updatedCourse.title}" is now published and active.`,
+      type: "COURSE_STATUS",
+      link: `/courses/${courseId}`
+    });
+  } catch (err) {
+    console.error("Error sending publish notification:", err.message);
+  }
+
+  return updatedCourse;
+};
+
+/**
+ * Unpublishes a course (PUBLISHED -> DRAFT).
+ * Student learning data (enrollments, progress, quiz attempts) is strictly PRESERVED.
+ */
+const unpublishCourse = async (courseId, userId, userRole) => {
+  const course = await prisma.course.findUnique({ where: { id: courseId } });
+  if (!course) {
+    throw new ApiError(404, "Course not found");
+  }
+
+  if (userRole !== "ADMIN" && course.creatorId !== userId) {
+    throw new ApiError(403, "Forbidden: You do not own this course.");
+  }
+
+  const updatedCourse = await prisma.course.update({
+    where: { id: courseId },
     data: {
-      status: finalStatus,
-      publishedAt: isPublished ? new Date() : null
+      status: "DRAFT"
     }
   });
 
   try {
-    await notificationService.createNotification(course.creatorId, {
-      title: "Course Status Updated 📢",
-      message: `Your course "${course.title}" status has been updated to "${finalStatus}".`,
+    await notificationService.createNotification(updatedCourse.creatorId, {
+      title: "Course Unpublished ✏️",
+      message: `Your course "${updatedCourse.title}" has been unpublished and set back to DRAFT.`,
       type: "COURSE_STATUS",
       link: `/courses/${courseId}`
     });
-  } catch (error) {
-    console.error("Error creating course status notification:", error.message);
+  } catch (err) {
+    console.error("Error sending unpublish notification:", err.message);
   }
 
-  return course;
+  return updatedCourse;
 };
 
-const deleteCourse = async (courseId) => {
-  return await prisma.course.delete({
-    where: {
-      id: courseId
+/**
+ * Archives a course (ANY -> ARCHIVED). Admin-only lifecycle action.
+ */
+const archiveCourse = async (courseId, userId, userRole) => {
+  const course = await prisma.course.findUnique({ where: { id: courseId } });
+  if (!course) {
+    throw new ApiError(404, "Course not found");
+  }
+
+  if (userRole !== "ADMIN") {
+    throw new ApiError(403, "Forbidden: Archiving courses is restricted to administrators.");
+  }
+
+  const updatedCourse = await prisma.course.update({
+    where: { id: courseId },
+    data: {
+      status: "ARCHIVED"
     }
   });
+
+  try {
+    await notificationService.createNotification(updatedCourse.creatorId, {
+      title: "Course Archived 📦",
+      message: `Your course "${updatedCourse.title}" has been archived by an admin.`,
+      type: "COURSE_STATUS",
+      link: `/courses/${courseId}`
+    });
+  } catch (err) {
+    console.error("Error sending archive notification:", err.message);
+  }
+
+  return updatedCourse;
+};
+
+/**
+ * Evaluates deletion safety and deletes a course if safe.
+ */
+const deleteCourse = async (courseId, userId, userRole) => {
+  const course = await prisma.course.findUnique({
+    where: { id: courseId },
+    include: {
+      _count: {
+        select: {
+          enrollments: true,
+          reviews: true,
+          certificates: true,
+          liveClasses: true,
+          assignments: true,
+          exams: true,
+          batches: true
+        }
+      }
+    }
+  });
+
+  if (!course) {
+    throw new ApiError(404, "Course not found");
+  }
+
+  if (userRole !== "ADMIN" && course.creatorId !== userId) {
+    throw new ApiError(403, "Forbidden: You do not own this course.");
+  }
+
+  // Instructors cannot delete published courses directly
+  if (userRole !== "ADMIN" && course.status === "PUBLISHED") {
+    const error = new ApiError(400, "Published courses cannot be directly deleted by instructors. Unpublish the course first.");
+    error.code = "DELETE_NOT_ALLOWED";
+    throw error;
+  }
+
+  // Inspect student and historical records
+  const [
+    quizSubmissionsCount,
+    assignmentSubmissionsCount,
+    progressCount,
+    lessonQueriesCount,
+    stickyNotesCount,
+    batchesCount,
+    studentStatesCount,
+    studentCourseStatesCount
+  ] = await Promise.all([
+    prisma.quizSubmission.count({ where: { quiz: { courseId } } }),
+    prisma.assignmentSubmission.count({ where: { assignment: { courseId } } }),
+    prisma.progress.count({ where: { lesson: { module: { courseId } } } }),
+    prisma.lessonQuery.count({ where: { lesson: { module: { courseId } } } }),
+    prisma.stickyNote.count({ where: { lesson: { module: { courseId } } } }),
+    prisma.batch.count({ where: { courseId } }),
+    prisma.studentState.count({ where: { courseId } }),
+    prisma.studentCourseState.count({ where: { courseId } })
+  ]);
+
+  const hasStudentData =
+    course._count.enrollments > 0 ||
+    course._count.reviews > 0 ||
+    course._count.certificates > 0 ||
+    quizSubmissionsCount > 0 ||
+    assignmentSubmissionsCount > 0 ||
+    progressCount > 0 ||
+    lessonQueriesCount > 0 ||
+    stickyNotesCount > 0 ||
+    batchesCount > 0 ||
+    studentStatesCount > 0 ||
+    studentCourseStatesCount > 0;
+
+  if (hasStudentData) {
+    const error = new ApiError(
+      400,
+      "This course contains student or historical data and cannot be deleted. Archive the course instead to preserve data."
+    );
+    error.code = "COURSE_HAS_STUDENT_DATA";
+    error.hasStudentData = true;
+    throw error;
+  }
+
+  // Safe draft hard-deletion inside transaction
+  return await prisma.$transaction(async (tx) => {
+    return await tx.course.delete({
+      where: { id: courseId }
+    });
+  });
+};
+
+/**
+ * Universal updateStatus adapter for backward compatibility.
+ */
+const updateStatus = async (courseId, status, userId, userRole) => {
+  if (status === "PUBLISHED") {
+    return await publishCourse(courseId, userId, userRole);
+  } else if (status === "DRAFT") {
+    return await unpublishCourse(courseId, userId, userRole);
+  } else if (status === "ARCHIVED") {
+    return await archiveCourse(courseId, userId, userRole);
+  } else {
+    throw new ApiError(400, `Invalid course status: ${status}`);
+  }
 };
 
 /**
@@ -738,6 +1070,109 @@ const getCourseStudents = async (courseId) => {
   });
 };
 
+/**
+ * Exports a full 5-layer course into a portable ZIP package containing course.json and physical assets.
+ * 
+ * @param {string} courseId Database course ID
+ * @returns {Promise<{ filePath: string, filename: string, totalEntries: number }>}
+ */
+const exportCourse = async (courseId) => {
+  const { collectCourseAssets } = require("../import/collectors/assetCollector");
+  const { mapCourseToPackageData } = require("../import/mappers/courseMapper");
+  const { buildCoursePackage } = require("../import/builders/packageBuilder");
+
+  const course = await prisma.course.findUnique({
+    where: { id: courseId },
+    include: {
+      modules: {
+        orderBy: { order: "asc" },
+        include: {
+          lessons: {
+            orderBy: { order: "asc" },
+            include: {
+              topics: {
+                orderBy: { order: "asc" },
+                include: { contents: { orderBy: { order: "asc" } } }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  if (!course) {
+    const error = new Error("Course not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  // 1. Run Asset Collector
+  const assetCollection = collectCourseAssets(course);
+  if (!assetCollection.success) {
+    const errorMsg = Array.isArray(assetCollection.errors) && assetCollection.errors.length > 0
+      ? assetCollection.errors.join("; ")
+      : "Missing course assets on disk.";
+    const error = new Error(`Asset collection failed: ${errorMsg}`);
+    error.statusCode = 400;
+    error.details = assetCollection;
+    throw error;
+  }
+
+  // 2. Map course to canonical JSON v2 using collision-safe assetMap
+  const courseJson = mapCourseToPackageData(course, { assetMap: assetCollection.assetMap });
+
+  // 3. Build portable ZIP package
+  const packageResult = buildCoursePackage({ courseJson, assetCollection });
+  if (!packageResult.success) {
+    const error = new Error(`Package creation failed: ${packageResult.errors.join("; ")}`);
+    error.statusCode = 500;
+    throw error;
+  }
+
+  return packageResult;
+};
+
+/**
+ * Restores an archived course (ARCHIVED -> DRAFT). Admin-only lifecycle action.
+ */
+const restoreCourse = async (courseId, userId, userRole) => {
+  const course = await prisma.course.findUnique({ where: { id: courseId } });
+  if (!course) {
+    throw new ApiError(404, "Course not found");
+  }
+
+  if (userRole !== "ADMIN") {
+    throw new ApiError(403, "Forbidden: Restoring archived courses is restricted to administrators.");
+  }
+
+  if (course.status !== "ARCHIVED") {
+    const error = new ApiError(400, "Only archived courses can be restored.");
+    error.code = "INVALID_STATUS_TRANSITION";
+    throw error;
+  }
+
+  const updatedCourse = await prisma.course.update({
+    where: { id: courseId },
+    data: {
+      status: "DRAFT"
+    }
+  });
+
+  try {
+    await notificationService.createNotification(updatedCourse.creatorId, {
+      title: "Course Restored 🔄",
+      message: `Your archived course "${updatedCourse.title}" has been restored to DRAFT.`,
+      type: "COURSE_STATUS",
+      link: `/courses/${courseId}`
+    });
+  } catch (err) {
+    console.error("Error sending restore notification:", err.message);
+  }
+
+  return updatedCourse;
+};
+
 module.exports = {
   getCourses,
   getCourseById,
@@ -745,7 +1180,13 @@ module.exports = {
   updateCourse,
   updateStatus,
   deleteCourse,
+  validateCourseForPublish,
+  publishCourse,
+  unpublishCourse,
+  archiveCourse,
+  restoreCourse,
   duplicateCourse,
   getCourseStudents,
-  getCourseStatusCounts
-};
+  getCourseStatusCounts,
+  exportCourse
+};

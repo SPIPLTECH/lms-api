@@ -9,6 +9,7 @@ const { validateCourse } = require("./validator.service");
 const composerMapper = require("./composerMapper.service");
 const serverQuizMapper = require("./serverQuizMapper.service");
 
+const v2PackageImporter = require("./v2PackageImporter.service");
 const courseService = require("../../courses/course.service");
 const moduleService = require("../../modules/module.service");
 const lessonService = require("../../lessons/lesson.service");
@@ -42,6 +43,37 @@ const createJob = async ({ instructorId, sourceFileName, zipFilePath }) => {
   });
 };
 
+const createJsonJob = async ({ instructorId, canonicalJson, sourceFileName }) => {
+  const { validateV2Manifest } = require("./v2PackageImporter.service");
+  const validation = validateV2Manifest(canonicalJson);
+
+  const title = canonicalJson?.metadata?.title || "Course JSON Package";
+  const name = sourceFileName || `${title.toLowerCase().replace(/[^a-z0-9]/g, "_")}.json`;
+
+  const validationReport = {
+    isValid: validation.isValid,
+    errors: validation.errors,
+    warnings: [],
+    info: validation.isValid
+      ? ["Course JSON schema validation passed successfully."]
+      : ["Course JSON validation failed."]
+  };
+
+  const job = await prisma.courseImportJob.create({
+    data: {
+      instructorId,
+      sourceFileName: name,
+      sourcePath: "json-import",
+      status: validation.isValid ? "READY" : "FAILED",
+      canonicalJson,
+      validationReport,
+      errorMessage: validation.isValid ? null : validation.errors.join("; ")
+    }
+  });
+
+  return job;
+};
+
 const getJob = async (jobId) => prisma.courseImportJob.findUnique({ where: { id: jobId } });
 
 const listJobs = async (instructorId) => prisma.courseImportJob.findMany({ where: { instructorId }, orderBy: { createdAt: "desc" } });
@@ -53,6 +85,38 @@ const processJob = async (jobId, baseUrl) => {
   await prisma.courseImportJob.update({ where: { id: jobId }, data: { status: "EXTRACTING" } });
 
   const jobDir = path.join(UPLOAD_ROOT, jobId);
+
+  // Check for V2 Canonical Package Manifest (course.json)
+  const courseJsonPath = path.join(jobDir, "course.json");
+  if (fs.existsSync(courseJsonPath)) {
+    let rawCourseJson;
+    try {
+      rawCourseJson = JSON.parse(fs.readFileSync(courseJsonPath, "utf8"));
+    } catch (parseErr) {
+      return prisma.courseImportJob.update({
+        where: { id: jobId },
+        data: { status: "FAILED", errorMessage: `Invalid course.json format: ${parseErr.message}` },
+      });
+    }
+
+    if (rawCourseJson && (rawCourseJson.version === "2.0" || rawCourseJson.$schema?.includes("course-v2.json"))) {
+      await prisma.courseImportJob.update({ where: { id: jobId }, data: { status: "ANALYZING" } });
+      try {
+        const v2Result = await v2PackageImporter.processV2Package(jobDir, jobId, rawCourseJson);
+        return await prisma.courseImportJob.update({
+          where: { id: jobId },
+          data: { status: "READY", canonicalJson: v2Result.canonicalJson, validationReport: v2Result.validationReport },
+        });
+      } catch (v2Err) {
+        return prisma.courseImportJob.update({
+          where: { id: jobId },
+          data: { status: "FAILED", errorMessage: v2Err.message },
+        });
+      }
+    }
+  }
+
+  // Fallback to V1 folder/file scanning processing path
   const files = scanDirectory(jobDir);
 
   await prisma.courseImportJob.update({ where: { id: jobId }, data: { status: "ANALYZING" } });
@@ -76,13 +140,11 @@ const processJob = async (jobId, baseUrl) => {
 const updateCanonicalJson = async (jobId, canonicalJson) => {
   const job = await getJob(jobId);
   if (!job) throw new ApiError(404, "Import job not found.");
-  if (!canonicalJson?.course) throw new ApiError(400, "canonicalJson.course is required.");
-
-  const validationReport = validateCourse(canonicalJson.course);
+  if (!canonicalJson) throw new ApiError(400, "canonicalJson is required.");
 
   return prisma.courseImportJob.update({
     where: { id: jobId },
-    data: { canonicalJson, validationReport, status: "READY" },
+    data: { canonicalJson, status: "READY" },
   });
 };
 
@@ -109,6 +171,21 @@ const attachGradableQuestion = async (block, { courseId, moduleId, lessonId, les
 const importJob = async (jobId, instructorId) => {
   const job = await getJob(jobId);
   if (!job) throw new ApiError(404, "Import job not found.");
+
+  if (job.status === "COMPLETED") {
+    return job;
+  }
+  if (job.status === "IMPORTING") {
+    return job;
+  }
+
+  // Check for V2 Package canonicalJson (has metadata, modules, or version)
+  if (job.canonicalJson?.metadata || job.canonicalJson?.modules || job.canonicalJson?.version === "2.0") {
+    await prisma.courseImportJob.update({ where: { id: jobId }, data: { status: "IMPORTING" } });
+    return await v2PackageImporter.importV2Job(job, instructorId);
+  }
+
+  // Fallback to V1 import execution
   if (!job.canonicalJson?.course) throw new ApiError(400, "This job has no processed course to import yet — run /process first.");
 
   await prisma.courseImportJob.update({ where: { id: jobId }, data: { status: "IMPORTING" } });
@@ -146,42 +223,42 @@ const importJob = async (jobId, instructorId) => {
           moduleId: createdModule.id,
         });
 
-        // Imported content has no notion of topics yet, so every lesson gets
-        // one default "General" topic to hold its blocks — same convention
-        // the Topic backfill migration used for pre-existing content.
-        const createdTopic = await topicService.createTopic({
-          title: "General",
-          order: 1,
-          isPublished: true,
-          lessonId: createdLesson.id,
-        });
+        const topicsToImport = (lessonDef.topics && lessonDef.topics.length > 0)
+          ? lessonDef.topics
+          : [{ title: "General", order: 1, contents: lessonDef.content || [] }];
 
-        let contentOrder = 1;
-        for (const block of lessonDef.content || []) {
-          if (block.blockType === "quiz") {
-            await attachGradableQuestion(block, {
-              courseId: createdCourseId,
-              moduleId: createdModule.id,
-              lessonId: createdLesson.id,
-              lessonTitle: createdLesson.title,
-              quizIdByLesson,
-            });
+        let lessonHasContent = false;
+
+        for (const topicDef of topicsToImport) {
+          const createdTopic = await topicService.createTopic({
+            title: topicDef.title || "General",
+            order: topicDef.order || 1,
+            isPublished: true,
+            lessonId: createdLesson.id,
+          });
+
+          let contentOrder = 1;
+          const contentsToImport = topicDef.contents || topicDef.content || [];
+
+          for (const block of contentsToImport) {
+            if (block.blockType === "quiz") {
+              await attachGradableQuestion(block, {
+                courseId: createdCourseId,
+                moduleId: createdModule.id,
+                lessonId: createdLesson.id,
+                lessonTitle: createdLesson.title,
+                quizIdByLesson,
+              });
+            }
+
+            const payload = composerMapper.toContentPayload(block, { topicId: createdTopic.id, order: contentOrder });
+            await contentService.createContent(payload);
+            contentOrder += 1;
+            lessonHasContent = true;
           }
-
-          const payload = composerMapper.toContentPayload(block, { topicId: createdTopic.id, order: contentOrder });
-          await contentService.createContent(payload);
-          contentOrder += 1;
         }
 
-        // Modules/lessons can't be published at creation time (createLesson/
-        // createModule both reject isPublished:true until they have
-        // children) — clicking "Import Course" is the instructor's
-        // deliberate approval of the reviewed preview, so every lesson with
-        // real content is published immediately after, same as a course the
-        // instructor finishes authoring by hand. The Course itself still
-        // stays DRAFT — publishing the course is a separate, bigger action
-        // the instructor takes explicitly, same as any hand-built course.
-        if (contentOrder > 1) {
+        if (lessonHasContent) {
           await lessonService.updateLesson(createdLesson.id, { isPublished: true });
         }
       }
@@ -230,4 +307,4 @@ const deleteJob = async (jobId) => {
   return prisma.courseImportJob.delete({ where: { id: jobId } });
 };
 
-module.exports = { createJob, getJob, listJobs, processJob, updateCanonicalJson, importJob, deleteJob };
+module.exports = { createJob, createJsonJob, getJob, listJobs, processJob, updateCanonicalJson, importJob, deleteJob };

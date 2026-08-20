@@ -252,8 +252,6 @@ class QuestionUploadParser {
       report.successCount++;
 
       report.validQuestions.push({
-        // Question has no `title` column — `title` above is only used for
-        // the row-level error/report labels, never written to the DB.
         question: questionText,
         questionType: type,
         options: optionsList,

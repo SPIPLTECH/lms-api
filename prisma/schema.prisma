@@ -423,9 +423,9 @@ model Question {
 
   explanation String? @db.Text
 
-  tags          String?         @default("")
   subject       String?         @default("General")
   topic         String?         @default("General")
+  tags          String?         @default("")
   marks         Int             @default(1)
   negativeMarks Float           @default(0)
   difficulty    DifficultyLevel @default(MEDIUM)
@@ -437,7 +437,7 @@ model Question {
   isPublished   Boolean        @default(true)
   quizQuestions QuizQuestion[]
 
-  order Int?
+  order   Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt

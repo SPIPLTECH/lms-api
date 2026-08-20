@@ -1,16 +1,18 @@
 const questionService = require("./question.service");
 const questionRepositoryService = require("./services/questionRepository.service");
 
+/** Creating a "single question" is repository-only unless a quizId was supplied — mirrors how bulkCreateQuestions/importQuestions already attach their inserted questions via the QuizQuestion join table, which this path was missing entirely. */
+const attachIfQuizProvided = async (question, quizId) => {
+  if (!quizId) return;
+  await questionService.attachQuestionsToQuiz(quizId, [question.id]);
+};
+
 // =========================
 // Get Repository Questions (Paginated & Filtered)
 // =========================
 const getQuestions = async (req, res, next) => {
   try {
-    const questions = await questionService.getQuestions({
-      quizId: req.query.quizId,
-      courseId: req.query.courseId,
-      moduleId: req.query.moduleId,
-    });
+    const result = await questionRepositoryService.getQuestions(req.query, req.user || {});
 
     res.json({
       success: true,
@@ -84,6 +86,7 @@ const createQuestion = async (req, res, next) => {
 
     // Repository creation
     const question = await questionRepositoryService.createQuestion(req.body, userId);
+    await attachIfQuizProvided(question, req.body.quizId);
 
     res.status(201).json({
       success: true,

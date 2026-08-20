@@ -7,11 +7,24 @@ const registerReadReceiptEvents = require("./readReceipt.socket");
 const registerPresenceEvents = require("./presence.socket");
 let io;
 
+const DEFAULT_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "https://lms-web-demo.vercel.app",
+];
+
 const initializeSocket = (server) => {
-    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+    // FRONTEND_URL may hold a single origin or a comma-separated list, so
+    // preview/staging deployments can be allowed without a code change.
+    const configuredOrigins = (process.env.FRONTEND_URL || "")
+        .split(",")
+        .map((url) => url.trim())
+        .filter(Boolean);
+
+    const allowedOrigins = [...new Set([...configuredOrigins, ...DEFAULT_ALLOWED_ORIGINS])];
+
     io = new Server(server, {
         cors: {
-            origin: [frontendUrl, "http://localhost:3000"],
+            origin: allowedOrigins,
             credentials: true,
         },
     });

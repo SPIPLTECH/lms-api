@@ -83,6 +83,57 @@ router.put(
   controller.updateCourse
 );
 
+router.get(
+  "/:courseId/publish-validation",
+  verifyToken,
+  checkRole([
+    "ADMIN",
+    "INSTRUCTOR"
+  ]),
+  verifyCourseOwnership,
+  controller.validatePublish
+);
+
+router.post(
+  "/:courseId/publish",
+  verifyToken,
+  checkRole([
+    "ADMIN",
+    "INSTRUCTOR"
+  ]),
+  verifyCourseOwnership,
+  controller.publishCourse
+);
+
+router.post(
+  "/:courseId/unpublish",
+  verifyToken,
+  checkRole([
+    "ADMIN",
+    "INSTRUCTOR"
+  ]),
+  verifyCourseOwnership,
+  controller.unpublishCourse
+);
+
+router.post(
+  "/:courseId/archive",
+  verifyToken,
+  checkRole([
+    "ADMIN"
+  ]),
+  controller.archiveCourse
+);
+
+router.post(
+  "/:courseId/restore",
+  verifyToken,
+  checkRole([
+    "ADMIN"
+  ]),
+  controller.restoreCourse
+);
+
 router.patch(
   "/:courseId/status",
   verifyToken,
@@ -122,6 +173,14 @@ router.get(
   checkRole(["ADMIN", "INSTRUCTOR"]),
   verifyCourseOwnership,
   controller.getCourseStudents
+);
+
+router.get(
+  "/:courseId/export",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  verifyCourseOwnership,
+  controller.exportCourse
 );
 
 router.post(

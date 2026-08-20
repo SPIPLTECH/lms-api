@@ -29,4 +29,11 @@ const packageUpload = multer({
   fileFilter: zipFileFilter,
 });
 
-module.exports = { packageUpload };
+// Memory storage for JSON file imports
+const memoryStorage = multer.memoryStorage();
+const jsonUpload = multer({
+  storage: memoryStorage,
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max JSON size
+});
+
+module.exports = { packageUpload, jsonUpload };

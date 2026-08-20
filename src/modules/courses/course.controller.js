@@ -1,3 +1,4 @@
+const fs = require("fs");
 const courseService = require("./course.service");
 
 const getCourses = async (req, res) => {
@@ -54,7 +55,8 @@ const getCourseById = async (
     const course =
       await courseService.getCourseById(
         req.params.courseId,
-        req.user.role
+        req.user?.role,
+        req.user?.id
       );
 
     if (!course) {
@@ -72,6 +74,7 @@ const getCourseById = async (
     next(error);
   }
 };
+
 const createCourse = async (
   req,
   res,
@@ -116,6 +119,88 @@ const updateCourse = async (
   }
 };
 
+const validatePublish = async (req, res, next) => {
+  try {
+    const validation = await courseService.validateCourseForPublish(
+      req.params.courseId
+    );
+    res.json({
+      success: true,
+      data: validation
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const publishCourse = async (req, res, next) => {
+  try {
+    const course = await courseService.publishCourse(
+      req.params.courseId,
+      req.user.id,
+      req.user.role
+    );
+    res.json({
+      success: true,
+      data: course,
+      message: "Course published successfully"
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const unpublishCourse = async (req, res, next) => {
+  try {
+    const course = await courseService.unpublishCourse(
+      req.params.courseId,
+      req.user.id,
+      req.user.role
+    );
+    res.json({
+      success: true,
+      data: course,
+      message: "Course unpublished successfully"
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const archiveCourse = async (req, res, next) => {
+  try {
+    const course = await courseService.archiveCourse(
+      req.params.courseId,
+      req.user.id,
+      req.user.role
+    );
+    res.json({
+      success: true,
+      data: course,
+      message: "Course archived successfully"
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const restoreCourse = async (req, res, next) => {
+  try {
+    const course = await courseService.restoreCourse(
+      req.params.courseId,
+      req.user.id,
+      req.user.role
+    );
+    res.json({
+      success: true,
+      data: course,
+      message: "Course restored to DRAFT successfully"
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const updateStatus = async (
   req,
   res,
@@ -125,7 +210,9 @@ const updateStatus = async (
     const course =
       await courseService.updateStatus(
         req.params.courseId,
-        req.body.status
+        req.body.status,
+        req.user.id,
+        req.user.role
       );
 
     res.json({
@@ -145,7 +232,9 @@ const deleteCourse = async (
 ) => {
   try {
     await courseService.deleteCourse(
-      req.params.courseId
+      req.params.courseId,
+      req.user.id,
+      req.user.role
     );
 
     res.status(200).json({
@@ -218,6 +307,28 @@ const sendAnnouncement = async (req, res, next) => {
   }
 };
 
+const exportCourse = async (req, res, next) => {
+  try {
+    const packageResult = await courseService.exportCourse(req.params.courseId);
+
+    res.download(packageResult.filePath, packageResult.filename, (err) => {
+      // Clean up temporary ZIP file on disk after response finishes
+      if (fs.existsSync(packageResult.filePath)) {
+        try {
+          fs.unlinkSync(packageResult.filePath);
+        } catch (unlinkErr) {
+          // Ignore unlink cleanup error
+        }
+      }
+      if (err && !res.headersSent) {
+        next(err);
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getCourses,
   getCourseById,
@@ -225,8 +336,14 @@ module.exports = {
   updateCourse,
   updateStatus,
   deleteCourse,
+  validatePublish,
+  publishCourse,
+  unpublishCourse,
+  archiveCourse,
+  restoreCourse,
   duplicateCourse,
   getCourseStudents,
   sendAnnouncement,
-  getCourseStatusCounts
+  getCourseStatusCounts,
+  exportCourse
 };

@@ -149,36 +149,65 @@ const buildFromScorm = async (manifestFile, files, jobId, baseUrl, sourceFileNam
   };
 };
 
-/** Orchestrates fileScanner output -> extraction -> classification -> structure -> the canonical Course JSON. */
+const signalExtractor = require("./signalExtractor.service");
+const relationshipDetector = require("./relationshipDetector.service");
+const lessonGrouping = require("./lessonGrouping.service");
+const topicDetection = require("./topicDetection.service");
+const resourceMapping = require("./resourceMapping.service");
+const canonicalCourseMapper = require("./canonicalCourseMapper.service");
+
+/** Orchestrates fileScanner output -> extraction -> deterministic mapping pipeline -> canonical Course JSON. */
 const buildCanonicalCourse = async ({ files, jobId, baseUrl, sourceFileName }) => {
   const manifestFile = scormExtractor.detectManifest(files);
   if (manifestFile) {
     return buildFromScorm(manifestFile, files, jobId, baseUrl, sourceFileName);
   }
 
-  const { modules: structured, structureSource } = await analyzeStructure(files);
+  const extractedFiles = await Promise.all(
+    files.map(async (file) => {
+      const extractor = registry.getExtractorFor(file);
+      if (!extractor) {
+        return { fileName: file.fileName, relativePath: file.relativePath, blocks: [] };
+      }
+      try {
+        const ctx = { jobId, baseUrl, sourceRelativePath: file.relativePath };
+        const rawBlocks = await extractor(file, ctx);
+        const classified = classifyBlocks(rawBlocks);
+        return { fileName: file.fileName, relativePath: file.relativePath, blocks: classified };
+      } catch (err) {
+        console.error(`Error extracting file ${file.fileName}:`, err.message);
+        return { fileName: file.fileName, relativePath: file.relativePath, blocks: [] };
+      }
+    })
+  );
 
-  const modules = [];
-  for (const moduleDef of structured) {
-    const lessons = [];
-    for (const lessonDef of moduleDef.lessons) {
-      lessons.push(await buildLesson(lessonDef, jobId, baseUrl));
-    }
-    modules.push({ title: moduleDef.title, order: moduleDef.order, lessons });
-  }
+  const blocksByFile = {};
+  extractedFiles.forEach((ef) => {
+    blocksByFile[ef.fileName] = ef.blocks;
+    if (ef.relativePath) blocksByFile[ef.relativePath] = ef.blocks;
+  });
 
-  dedupeDuplicateLocalAssets(modules);
+  const rels = relationshipDetector.detectRelationships(extractedFiles);
+  const grouping = lessonGrouping.groupLessons(rels);
+  const topicResult = topicDetection.detectTopicsForCourse({ lessonGroupingResult: grouping, blocksByFile });
+  const resMapping = resourceMapping.mapResources({
+    lessonGroupingResult: grouping,
+    topicDetectionResult: topicResult,
+    relationshipResult: rels,
+    blocksByFile
+  });
+
+  const canonicalCourseObj = canonicalCourseMapper.buildCanonicalCourse({
+    courseMetadata: { title: sourceFileName ? sourceFileName.replace(/\.[^.]+$/, "") : "Imported Course" },
+    lessonGroupingResult: grouping,
+    topicDetectionResult: topicResult,
+    resourceMappingResult: resMapping,
+    relationshipResult: rels,
+    blocksByFile
+  });
 
   return {
-    course: {
-      title: sourceFileName.replace(/\.[^.]+$/, ""),
-      description: "",
-      category: "",
-      level: "",
-      metadata: { sourceFileName, structureSource },
-      modules: modules.filter((m) => m.lessons.length > 0),
-      unmappedAssignments: [],
-    },
+    course: canonicalCourseObj
   };
 };
 

@@ -28,10 +28,26 @@ const renderMarkdown = (markdown) => {
 
 const renderPlainText = (text) => sanitizeHtml(text || "", { allowedTags: [], allowedAttributes: {} });
 
+const getEffectiveBlockType = (block) => {
+  if (!block) return "unknown";
+  if (block.blockType && block.blockType !== "unknown") {
+    return block.blockType;
+  }
+  if (
+    block.kind === "text" ||
+    (typeof block.markdown === "string" && block.markdown.trim().length > 0) ||
+    block.htmlContent
+  ) {
+    return "text";
+  }
+  return block.blockType || "unknown";
+};
+
 const toTypedColumns = (block) => {
-  switch (block.blockType) {
+  const effectiveBlockType = getEffectiveBlockType(block);
+  switch (effectiveBlockType) {
     case "text":
-      return { htmlContent: renderMarkdown(block.markdown) };
+      return { htmlContent: block.htmlContent || renderMarkdown(block.markdown) };
     case "image":
       return { fileUrl: block.url || null, htmlContent: renderMarkdown(block.caption) };
     case "video":
@@ -56,13 +72,16 @@ const toTypedColumns = (block) => {
 };
 
 /** Converts a canonical content block into a Content create body — typed columns for legacy consumers + the full block in `data` for lossless round-trip editing in the Composer, same dual-write the Composer's own save flow performs. */
-const toContentPayload = (block, { topicId, order }) => ({
-  topicId,
-  order,
-  type: BLOCK_TO_CONTENT_TYPE[block.blockType] || "FILE",
-  title: block.title || null,
-  data: block,
-  ...toTypedColumns(block),
-});
+const toContentPayload = (block, { topicId, order }) => {
+  const effectiveBlockType = getEffectiveBlockType(block);
+  return {
+    topicId,
+    order,
+    type: BLOCK_TO_CONTENT_TYPE[effectiveBlockType] || "FILE",
+    title: block.title || null,
+    data: block,
+    ...toTypedColumns(block),
+  };
+};
 
-module.exports = { toContentPayload, BLOCK_TO_CONTENT_TYPE };
+module.exports = { toContentPayload, BLOCK_TO_CONTENT_TYPE, getEffectiveBlockType };
