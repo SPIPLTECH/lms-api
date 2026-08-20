@@ -327,27 +327,43 @@ const getQuizById = async (
 };
 
 /**
- * Quizzes are created batch-first: the instructor picks a batch, then one of
- * that batch's linked courses, then optionally a module inside that course.
- * Enforced here (not just in the UI) so a mismatched batchId/courseId/
- * moduleId combination can never be written via a direct API call either.
+ * Quizzes are created against a course (and optionally one of its modules)
+ * directly — batch scoping is no longer required at creation time. A
+ * batchId is still accepted for backward compatibility (e.g. callers that
+ * still want to link a quiz to a batch), and when present is validated the
+ * same way as before. Enforced here (not just in the UI) so a mismatched
+ * batchId/courseId/moduleId combination can never be written via a direct
+ * API call either.
  */
 const validateQuizScope = async ({ batchId, courseId, moduleId }) => {
-  const batch = await prisma.batch.findUnique({
-    where: { id: batchId },
-    select: { courses: { select: { id: true } } }
+  const course = await prisma.course.findUnique({
+    where: { id: courseId },
+    select: { id: true }
   });
 
-  if (!batch) {
-    const error = new Error("Batch not found");
+  if (!course) {
+    const error = new Error("Course not found");
     error.statusCode = 404;
     throw error;
   }
 
-  if (!batch.courses.some((c) => c.id === courseId)) {
-    const error = new Error("This course is not linked to the selected batch");
-    error.statusCode = 400;
-    throw error;
+  if (batchId) {
+    const batch = await prisma.batch.findUnique({
+      where: { id: batchId },
+      select: { courses: { select: { id: true } } }
+    });
+
+    if (!batch) {
+      const error = new Error("Batch not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (!batch.courses.some((c) => c.id === courseId)) {
+      const error = new Error("This course is not linked to the selected batch");
+      error.statusCode = 400;
+      throw error;
+    }
   }
 
   if (moduleId) {

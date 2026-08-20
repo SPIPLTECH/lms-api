@@ -49,6 +49,54 @@ const VALID_CONTENT_TYPES = new Set([
   "SLIDE"
 ]);
 
+function validateQuizDef(quiz, prefix = "quiz") {
+  const quizErrors = [];
+  if (!quiz || typeof quiz !== "object") {
+    quizErrors.push(`${prefix}: Quiz item must be an object.`);
+    return quizErrors;
+  }
+  if (!quiz.title || typeof quiz.title !== "string" || !quiz.title.trim()) {
+    quizErrors.push(`${prefix}.title is required.`);
+  }
+  if (quiz.passingScore !== undefined && (typeof quiz.passingScore !== "number" || quiz.passingScore < 0 || quiz.passingScore > 100)) {
+    quizErrors.push(`${prefix}.passingScore must be a number between 0 and 100.`);
+  }
+  if (quiz.timeLimit !== undefined && quiz.timeLimit !== null && (typeof quiz.timeLimit !== "number" || quiz.timeLimit < 0)) {
+    quizErrors.push(`${prefix}.timeLimit must be a non-negative number.`);
+  }
+  if (quiz.questions !== undefined) {
+    if (!Array.isArray(quiz.questions)) {
+      quizErrors.push(`${prefix}.questions must be an array.`);
+    } else {
+      quiz.questions.forEach((q, qIndex) => {
+        const qPrefix = `${prefix}.questions[${qIndex}]`;
+        if (!q || typeof q !== "object") {
+          quizErrors.push(`${qPrefix}: Question item must be an object.`);
+          return;
+        }
+        if (!q.question || typeof q.question !== "string" || !q.question.trim()) {
+          quizErrors.push(`${qPrefix}.question is required.`);
+        }
+        if (!q.questionType || typeof q.questionType !== "string") {
+          quizErrors.push(`${qPrefix}.questionType is required.`);
+        } else {
+          const validTypes = new Set([
+            "MCQ_SINGLE", "MCQ_MULTI", "TRUE_FALSE", "FILL_BLANK",
+            "SHORT_ANSWER", "LONG_ANSWER", "ARRANGE_TOKENS", "MATCH_PAIRS", "SELF_ASSESSMENT"
+          ]);
+          if (!validTypes.has(q.questionType.toUpperCase())) {
+            quizErrors.push(`${qPrefix}.questionType "${q.questionType}" is not supported.`);
+          }
+        }
+        if (q.options !== undefined && q.options !== null && typeof q.options !== "object") {
+          quizErrors.push(`${qPrefix}.options must be an array or object.`);
+        }
+      });
+    }
+  }
+  return quizErrors;
+}
+
 /**
  * Validates Canonical Course JSON v2 schema structure.
  * 
@@ -72,6 +120,17 @@ function validateV2Manifest(courseJson) {
     errors.push("settings: Missing or invalid settings object.");
   }
 
+  // Validate Course-Level Quizzes (when present)
+  if (courseJson.quizzes !== undefined) {
+    if (!Array.isArray(courseJson.quizzes)) {
+      errors.push("quizzes: Must be an array.");
+    } else {
+      courseJson.quizzes.forEach((qz, qi) => {
+        errors.push(...validateQuizDef(qz, `quizzes[${qi}]`));
+      });
+    }
+  }
+
   if (!Array.isArray(courseJson.modules)) {
     errors.push("modules: Missing or invalid modules array.");
   } else if (courseJson.modules.length === 0) {
@@ -84,6 +143,17 @@ function validateV2Manifest(courseJson) {
       }
       if (!mod.title || typeof mod.title !== "string" || !mod.title.trim()) {
         errors.push(`modules[${mi}].title is required.`);
+      }
+
+      // Validate Module-Level Quizzes (when present)
+      if (mod.quizzes !== undefined) {
+        if (!Array.isArray(mod.quizzes)) {
+          errors.push(`modules[${mi}].quizzes: Must be an array.`);
+        } else {
+          mod.quizzes.forEach((qz, qi) => {
+            errors.push(...validateQuizDef(qz, `modules[${mi}].quizzes[${qi}]`));
+          });
+        }
       }
 
       if (!Array.isArray(mod.lessons)) {
@@ -250,6 +320,7 @@ async function processV2Package(jobDir, jobId, rawCourseJson) {
     $schema: rawCourseJson.$schema,
     metadata: rawCourseJson.metadata,
     settings: rawCourseJson.settings,
+    quizzes: Array.isArray(rawCourseJson.quizzes) ? rawCourseJson.quizzes : [],
     modules: rawCourseJson.modules,
     assetMap: assetMapObj
   };
@@ -266,17 +337,7 @@ async function processV2Package(jobDir, jobId, rawCourseJson) {
 
 /**
  * Imports a processed V2 CoursePackage into the database inside an ATOMIC PRISMA TRANSACTION.
- * Preserves full 5-layer hierarchy: Course -> Module -> Lesson -> Topic -> Content.
- *
- * Module/Lesson/Topic/Content rows are batched one createMany() per level instead of one
- * create() per row. Module/Lesson/Topic ids are generated client-side (crypto.randomUUID)
- * so each child row's foreign key is already known before its parent's batch insert runs —
- * Content keeps its normal Prisma-generated cuid() id since nothing references it as a
- * parent. This turns an O(course+modules+lessons+topics+contents) sequence of round trips
- * into a fixed 5 round trips regardless of course size, which is what actually made large
- * packages exceed the transaction timeout (see investigation: ~150ms/round-trip against the
- * remote Postgres instance, so a few hundred sequential creates alone can take well over a
- * minute).
+ * Preserves full hierarchy: Course -> Module -> Lesson -> Topic -> Content + Course/Module Quizzes & Questions.
  *
  * @param {Object} job CourseImportJob Prisma model object
  * @param {string} instructorId Authenticated user ID importing the course
@@ -291,6 +352,7 @@ async function importV2Job(job, instructorId) {
   const metadata = canonical.metadata || {};
   const settings = canonical.settings || {};
   const modules = Array.isArray(canonical.modules) ? canonical.modules : [];
+  const courseQuizzes = Array.isArray(canonical.quizzes) ? canonical.quizzes : [];
   const assetMap = canonical.assetMap || {};
 
   // Resolve thumbnail server URL
@@ -325,14 +387,66 @@ async function importV2Job(job, instructorId) {
         }
       });
 
-      // 2-5. Walk the Module -> Lesson -> Topic -> Content hierarchy once, building one flat
-      // row array per level (Explicit Topic Preservation - NO artificial "General" topic
-      // injection, same as before). Module/Lesson/Topic ids are minted here so a child's
-      // foreign key is ready before that parent level is actually inserted below.
+      // 2-5. Walk the Module -> Lesson -> Topic -> Content hierarchy once
       const moduleRows = [];
       const lessonRows = [];
       const topicRows = [];
       const contentRows = [];
+
+      // Quizzes & Questions collectors
+      const quizRows = [];
+      const questionRows = [];
+      const quizQuestionRows = [];
+
+      const processQuizDef = (quizDef, targetModuleId = null) => {
+        const quizId = crypto.randomUUID();
+        quizRows.push({
+          id: quizId,
+          title: quizDef.title || "Imported Quiz",
+          description: quizDef.description ?? null,
+          passingScore: quizDef.passingScore !== undefined && quizDef.passingScore !== null ? Number(quizDef.passingScore) : 50,
+          timeLimit: quizDef.timeLimit !== undefined && quizDef.timeLimit !== null ? Number(quizDef.timeLimit) : null,
+          isPublished: quizDef.isPublished !== undefined ? Boolean(quizDef.isPublished) : true,
+          status: "ACTIVE",
+          courseId: courseRecord.id,
+          moduleId: targetModuleId,
+          batchId: null
+        });
+
+        const questions = Array.isArray(quizDef.questions) ? quizDef.questions : [];
+        questions.forEach((qDef, qIdx) => {
+          const questionId = crypto.randomUUID();
+          questionRows.push({
+            id: questionId,
+            quizId: null,
+            courseId: courseRecord.id,
+            moduleId: targetModuleId,
+            question: qDef.question || "",
+            questionType: (qDef.questionType || "MCQ_SINGLE").toUpperCase(),
+            options: qDef.options ?? [],
+            correctAnswer: qDef.correctAnswer ?? "",
+            explanation: qDef.explanation ?? null,
+            marks: qDef.marks ? Number(qDef.marks) : 1,
+            negativeMarks: qDef.negativeMarks ? Number(qDef.negativeMarks) : 0,
+            difficulty: (qDef.difficulty || "MEDIUM").toUpperCase(),
+            createdBy: instructorId
+          });
+
+          quizQuestionRows.push({
+            id: crypto.randomUUID(),
+            quizId,
+            questionId,
+            order: qIdx + 1,
+            marks: qDef.marks ? Number(qDef.marks) : 1,
+            isMandatory: true
+          });
+        });
+      };
+
+      // Process Course-Level Quizzes
+      for (const courseQuizDef of courseQuizzes) {
+        processQuizDef(courseQuizDef, null);
+      }
 
       for (const moduleDef of rawModules) {
         const moduleId = crypto.randomUUID();
@@ -344,6 +458,12 @@ async function importV2Job(job, instructorId) {
           isPublished: Boolean(moduleDef.isPublished),
           courseId: courseRecord.id
         });
+
+        // Process Module-Level Quizzes
+        const modQuizzes = Array.isArray(moduleDef.quizzes) ? moduleDef.quizzes : [];
+        for (const modQuizDef of modQuizzes) {
+          processQuizDef(modQuizDef, moduleId);
+        }
 
         const rawLessons = Array.isArray(moduleDef.lessons) ? moduleDef.lessons : [];
         for (const lessonDef of rawLessons) {
@@ -401,11 +521,16 @@ async function importV2Job(job, instructorId) {
         }
       }
 
-      // One batched insert per level (parent before child) instead of one round trip per row.
+      // One batched insert per level
       if (moduleRows.length > 0) await tx.module.createMany({ data: moduleRows });
       if (lessonRows.length > 0) await tx.lesson.createMany({ data: lessonRows });
       if (topicRows.length > 0) await tx.topic.createMany({ data: topicRows });
       if (contentRows.length > 0) await tx.content.createMany({ data: contentRows });
+
+      // Insert Quiz, Question, and QuizQuestion rows
+      if (quizRows.length > 0) await tx.quiz.createMany({ data: quizRows });
+      if (questionRows.length > 0) await tx.question.createMany({ data: questionRows });
+      if (quizQuestionRows.length > 0) await tx.quizQuestion.createMany({ data: quizQuestionRows });
 
       return courseRecord;
     }, {

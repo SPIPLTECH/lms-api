@@ -3,7 +3,7 @@ const Joi = require("joi");
 const createQuizSchema = Joi.object({
   title: Joi.string().required(),
   description: Joi.string().optional().allow(null, ""),
-  batchId: Joi.string().required(),
+  batchId: Joi.string().optional().allow(null, ""),
   courseId: Joi.string().required(),
   moduleId: Joi.string().optional().allow(null, ""),
   passingScore: Joi.number().integer().min(0).max(100).optional(),

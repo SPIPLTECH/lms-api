@@ -152,13 +152,12 @@ const getTemplate = async (req, res, next) => {
   try {
     const template = {
       metadata: {
-        title: "Course Title Here",
-        description: "Course description here.",
-        category: "General",
+        title: "C Programming Fundamentals",
+        description: "Master C programming concepts from basic syntax to memory pointers.",
+        category: "Computer Science",
         level: "BEGINNER",
-        thumbnail: null,
         language: "English",
-        tags: ["sample", "template"],
+        tags: ["c", "programming", "coding"],
         estimatedLearningHours: 10,
         price: 0
       },
@@ -168,34 +167,84 @@ const getTemplate = async (req, res, next) => {
         discussionEnabled: true,
         dripContentEnabled: false
       },
+      quizzes: [
+        {
+          title: "C Programming Final Assessment",
+          description: "Comprehensive course-level assessment covering C fundamentals.",
+          passingScore: 60,
+          timeLimit: 30,
+          isPublished: true,
+          questions: [
+            {
+              question: "Which header file is required for printf()?",
+              questionType: "MCQ_SINGLE",
+              options: ["<stdio.h>", "<stdlib.h>", "<string.h>", "<math.h>"],
+              correctAnswer: "<stdio.h>",
+              explanation: "printf() is declared in stdio.h.",
+              marks: 1,
+              negativeMarks: 0,
+              difficulty: "EASY"
+            },
+            {
+              question: "Is C a compiled programming language?",
+              questionType: "TRUE_FALSE",
+              options: ["True", "False"],
+              correctAnswer: "True",
+              explanation: "C code is directly compiled into machine executable binaries.",
+              marks: 1,
+              difficulty: "EASY"
+            }
+          ]
+        }
+      ],
       modules: [
         {
-          title: "Module 1: Getting Started",
-          description: "First module description.",
+          title: "C Fundamentals",
+          description: "First steps in writing C programs.",
           order: 1,
           isPublished: true,
+          quizzes: [
+            {
+              title: "Module 1 Quick Check",
+              description: "Check understanding of basic C concepts.",
+              passingScore: 60,
+              timeLimit: 15,
+              isPublished: true,
+              questions: [
+                {
+                  question: "What is the entry point of a C program?",
+                  questionType: "MCQ_SINGLE",
+                  options: ["start()", "main()", "run()", "execute()"],
+                  correctAnswer: "main()",
+                  explanation: "Execution of a C program always begins from main().",
+                  marks: 1,
+                  difficulty: "EASY"
+                }
+              ]
+            }
+          ],
           lessons: [
             {
-              title: "Lesson 1: Introduction",
-              description: "First lesson description.",
+              title: "Introduction to C",
+              description: "Understanding compilation and basic structure.",
               order: 1,
               isPublished: true,
               topics: [
                 {
-                  title: "Topic 1: Overview",
-                  description: "Topic overview description.",
+                  title: "What is C?",
+                  description: "Overview of procedural programming.",
                   order: 1,
                   isPublished: true,
                   contents: [
                     {
                       type: "HTML",
-                      title: "Welcome Note",
+                      title: "Introduction to C Language",
                       order: 1,
-                      htmlContent: "<h1>Welcome to the course!</h1><p>Start your learning journey here.</p>"
+                      htmlContent: "<h2>What is C?</h2><p>C is a low-level, high-efficiency compiled programming language.</p>"
                     },
                     {
                       type: "VIDEO",
-                      title: "Introductory Video",
+                      title: "Writing Your First Hello World",
                       order: 2,
                       duration: 300,
                       videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"

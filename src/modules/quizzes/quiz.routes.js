@@ -5,7 +5,6 @@ const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
 const verifyQuizOwnership = require("../../middleware/quizOwnership.middleware");
 const verifyCourseOwnership = require("../../middleware/courseOwnership.middleware");
-const { verifyBatchOwnershipFromBody } = require("../../middleware/batchOwnership.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
 const {
   createQuizSchema,
@@ -42,7 +41,6 @@ router.post(
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
   validate(createQuizSchema),
-  verifyBatchOwnershipFromBody,
   verifyCourseOwnership.fromBody,
   controller.createQuiz
 );
