@@ -255,6 +255,7 @@ model Lesson {
   progress        Progress[]
   stickyNotes     StickyNote[]
   videoAnalytics  VideoAnalytics[]
+  quizzes         Quiz[]
 
   @@unique([moduleId, order])
 }
@@ -387,12 +388,14 @@ model Quiz {
   courseId         String
   batchId          String?
   moduleId         String?
+  lessonId         String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   questions        Question[]
   course           Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
   batch            Batch?           @relation(fields: [batchId], references: [id], onDelete: SetNull)
   module           Module?          @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+  lesson           Lesson?          @relation(fields: [lessonId], references: [id], onDelete: SetNull)
   quizSubmissions  QuizSubmission[]
   instructions     String?          @db.Text
   shuffleQuestions Boolean          @default(false)

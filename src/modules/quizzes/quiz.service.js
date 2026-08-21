@@ -327,26 +327,16 @@ const getQuizById = async (
 };
 
 /**
- * Quizzes are created against a course (and optionally one of its modules)
- * directly — batch scoping is no longer required at creation time. A
- * batchId is still accepted for backward compatibility (e.g. callers that
- * still want to link a quiz to a batch), and when present is validated the
- * same way as before. Enforced here (not just in the UI) so a mismatched
+ * A batch-scoped quiz is created batch-first: the instructor picks a batch,
+ * then one of that batch's linked courses, then optionally a module inside
+ * that course — enforced here (not just in the UI) so a mismatched
  * batchId/courseId/moduleId combination can never be written via a direct
- * API call either.
+ * API call either. `batchId` is optional (see schema.prisma) for quizzes
+ * created straight from the Course Composer, which aren't tied to any
+ * batch — that path skips batch-linkage validation entirely, but still gets
+ * the module/course consistency check below.
  */
-const validateQuizScope = async ({ batchId, courseId, moduleId }) => {
-  const course = await prisma.course.findUnique({
-    where: { id: courseId },
-    select: { id: true }
-  });
-
-  if (!course) {
-    const error = new Error("Course not found");
-    error.statusCode = 404;
-    throw error;
-  }
-
+const validateQuizScope = async ({ batchId, courseId, moduleId, lessonId }) => {
   if (batchId) {
     const batch = await prisma.batch.findUnique({
       where: { id: batchId },
@@ -378,6 +368,25 @@ const validateQuizScope = async ({ batchId, courseId, moduleId }) => {
       throw error;
     }
   }
+
+  if (lessonId) {
+    const lesson = await prisma.lesson.findUnique({
+      where: { id: lessonId },
+      select: { module: { select: { id: true, courseId: true } } }
+    });
+
+    if (!lesson || lesson.module.courseId !== courseId) {
+      const error = new Error("This lesson does not belong to the selected course");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (moduleId && lesson.module.id !== moduleId) {
+      const error = new Error("This lesson does not belong to the selected module");
+      error.statusCode = 400;
+      throw error;
+    }
+  }
 };
 
 const createQuiz = async (
@@ -388,7 +397,8 @@ const createQuiz = async (
   const quiz = await prisma.quiz.create({
     data: {
       ...data,
-      moduleId: data.moduleId || null
+      moduleId: data.moduleId || null,
+      lessonId: data.lessonId || null
     }
   });
 

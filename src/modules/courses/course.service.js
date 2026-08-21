@@ -1,6 +1,7 @@
 const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
 const ApiError = require("../../utils/ApiError");
+const { buildLessonLockMap } = require("../../utils/dripAccess");
 // const verifyToken = require(
 //   "../../middleware/auth.middleware"
 // );
@@ -397,12 +398,14 @@ const getCourseById = async (courseId, role, userId) => {
 
   // If role is STUDENT, check if student holds an active enrollment
   let isEnrolledStudent = false;
+  let studentProfileId = null;
   if (role === "STUDENT" && userId) {
     const studentProfile = await prisma.studentProfile.findUnique({
       where: { userId },
       select: { id: true }
     });
     if (studentProfile) {
+      studentProfileId = studentProfile.id;
       const enrollment = await prisma.enrollment.findUnique({
         where: {
           studentId_courseId: {
@@ -508,6 +511,19 @@ const getCourseById = async (courseId, role, userId) => {
 
   if (isStudentOrGuest && course.status !== "PUBLISHED" && !isEnrolledStudent) {
     return null;
+  }
+
+  if (role === "STUDENT") {
+    const lockMap = await buildLessonLockMap(courseId, studentProfileId);
+    course.modules.forEach((moduleItem) => {
+      moduleItem.lessons.forEach((lesson) => {
+        const locked = lockMap.get(lesson.id) ?? false;
+        lesson.locked = locked;
+        if (locked) {
+          lesson.topics = [];
+        }
+      });
+    });
   }
 
   return attachCourseStats(course);

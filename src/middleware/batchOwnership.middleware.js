@@ -58,6 +58,11 @@ const verifyBatchOwnership = async (req, res, next) => {
  * req.body.batchId instead of req.params.batchId — for "create a child of
  * this batch" routes (e.g. quizzes) where the batch hasn't been reached via
  * a resource id yet. Mirrors courseOwnership.middleware.js's `.fromBody`.
+ *
+ * batchId is optional on these routes (a Course/Module quiz created from the
+ * Course Composer isn't scoped to any batch) — course ownership is already
+ * enforced separately by verifyCourseOwnership.fromBody, so this just skips
+ * the extra check when there's no batch to verify.
  */
 const verifyBatchOwnershipFromBody = async (req, res, next) => {
   try {
@@ -68,7 +73,7 @@ const verifyBatchOwnershipFromBody = async (req, res, next) => {
     const batchId = req.body.batchId;
 
     if (!batchId) {
-      return next(new ApiError(400, "batchId is required"));
+      return next();
     }
 
     const batch = await findBatchWithCourseOwners(batchId);

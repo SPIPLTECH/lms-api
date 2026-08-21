@@ -1,10 +1,34 @@
 const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
+const ApiError = require("../../utils/ApiError");
+const { buildLessonLockMap } = require("../../utils/dripAccess");
 
 const completeLesson = async (
   studentId,
   lessonId
 ) => {
+  const lesson =
+    await prisma.lesson.findUnique({
+      where: {
+        id: lessonId
+      },
+      include: {
+        module: true
+      }
+    });
+
+  if (!lesson) {
+    throw new ApiError(404, "Lesson not found");
+  }
+
+  const courseId =
+    lesson.module.courseId;
+
+  const lockMap = await buildLessonLockMap(courseId, studentId);
+  if (lockMap.get(lessonId)) {
+    throw new ApiError(403, "Complete the previous lesson first to unlock this one.");
+  }
+
   const progress =
     await prisma.progress.upsert({
       where: {
@@ -24,19 +48,6 @@ const completeLesson = async (
         completedAt: new Date()
       }
     });
-
-  const lesson =
-    await prisma.lesson.findUnique({
-      where: {
-        id: lessonId
-      },
-      include: {
-        module: true
-      }
-    });
-
-  const courseId =
-    lesson.module.courseId;
 
   const lessons =
     await prisma.lesson.findMany({

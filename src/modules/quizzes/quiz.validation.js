@@ -6,6 +6,7 @@ const createQuizSchema = Joi.object({
   batchId: Joi.string().optional().allow(null, ""),
   courseId: Joi.string().required(),
   moduleId: Joi.string().optional().allow(null, ""),
+  lessonId: Joi.string().optional().allow(null, ""),
   passingScore: Joi.number().integer().min(0).max(100).optional(),
   timeLimit: Joi.number().integer().min(0).optional().allow(null),
   isPublished: Joi.boolean().optional()

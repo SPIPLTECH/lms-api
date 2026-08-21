@@ -37,12 +37,26 @@ test("V2 Importer Module Tests", async (t) => {
       version: "2.0",
       metadata: { title: "Valid Course" },
       settings: { visibility: "PUBLIC" },
-      modules: []
+      modules: [{ title: "Module 1", lessons: [] }]
     };
 
     const res = v2Importer.validateV2Manifest(validManifest);
     assert.strictEqual(res.isValid, true);
     assert.strictEqual(res.errors.length, 0);
+  });
+
+  await t.test("1b. Empty modules array fails manifest validation (at least one module required)", () => {
+    const emptyModulesManifest = {
+      $schema: "https://orangetree.lms/schemas/course-v2.json",
+      version: "2.0",
+      metadata: { title: "Valid Course" },
+      settings: { visibility: "PUBLIC" },
+      modules: []
+    };
+
+    const res = v2Importer.validateV2Manifest(emptyModulesManifest);
+    assert.strictEqual(res.isValid, false);
+    assert.ok(res.errors.some((e) => e.includes("At least one module is required")));
   });
 
   await t.test("2. Missing course.json metadata.title fails validation", () => {
