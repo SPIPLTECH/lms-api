@@ -394,13 +394,57 @@ const createQuiz = async (
 ) => {
   await validateQuizScope(data);
 
+  const { questions, ...quizData } = data;
+
   const quiz = await prisma.quiz.create({
     data: {
-      ...data,
-      moduleId: data.moduleId || null,
-      lessonId: data.lessonId || null
+      ...quizData,
+      moduleId: quizData.moduleId || null,
+      lessonId: quizData.lessonId || null
     }
   });
+
+  if (Array.isArray(questions) && questions.length > 0) {
+    for (let idx = 0; idx < questions.length; idx++) {
+      const q = questions[idx];
+      let questionId = q.id;
+
+      const isDraftId =
+        !questionId ||
+        typeof questionId !== "string" ||
+        questionId.startsWith("draft-") ||
+        questionId.startsWith("temp-");
+
+      if (isDraftId) {
+        const createdQ = await prisma.question.create({
+          data: {
+            question: q.question || q.title || "Untitled Question",
+            questionType: (q.questionType || q.type || "MCQ_SINGLE").toUpperCase(),
+            options: Array.isArray(q.options) ? q.options : [],
+            correctAnswer:
+              typeof q.correctAnswer === "object"
+                ? JSON.stringify(q.correctAnswer)
+                : String(q.correctAnswer ?? ""),
+            explanation: q.explanation || "",
+            marks: Number(q.marks) || 1,
+            difficulty: (q.difficulty || "MEDIUM").toUpperCase(),
+            isRequired: q.isMandatory !== false,
+          },
+        });
+        questionId = createdQ.id;
+      }
+
+      await prisma.quizQuestion.create({
+        data: {
+          quizId: quiz.id,
+          questionId,
+          order: idx + 1,
+          marks: Number(q.marks) || 1,
+          isMandatory: q.isMandatory !== false,
+        },
+      });
+    }
+  }
 
   try {
     const course = await prisma.course.findUnique({
@@ -420,7 +464,7 @@ const createQuiz = async (
     console.error("Error sending quiz creation notification:", error.message);
   }
 
-  return quiz;
+  return getQuizById(quiz.id, "INSTRUCTOR");
 };
 
 const updateQuiz = async (
@@ -434,12 +478,97 @@ const updateQuiz = async (
     throw error;
   }
 
-  return prisma.quiz.update({
+  const { questions, ...quizData } = data;
+
+  const updatedQuiz = await prisma.quiz.update({
     where: {
       id: quizId
     },
-    data
+    data: quizData
   });
+
+  if (Array.isArray(questions)) {
+    // Re-link questions cleanly
+    await prisma.quizQuestion.deleteMany({ where: { quizId } });
+
+    for (let idx = 0; idx < questions.length; idx++) {
+      const q = questions[idx];
+      let questionId = q.id;
+
+      const isDraftId =
+        !questionId ||
+        typeof questionId !== "string" ||
+        questionId.startsWith("draft-") ||
+        questionId.startsWith("temp-");
+
+      if (isDraftId) {
+        const createdQ = await prisma.question.create({
+          data: {
+            question: q.question || q.title || "Untitled Question",
+            questionType: (q.questionType || q.type || "MCQ_SINGLE").toUpperCase(),
+            options: Array.isArray(q.options) ? q.options : [],
+            correctAnswer:
+              typeof q.correctAnswer === "object"
+                ? JSON.stringify(q.correctAnswer)
+                : String(q.correctAnswer ?? ""),
+            explanation: q.explanation || "",
+            marks: Number(q.marks) || 1,
+            difficulty: (q.difficulty || "MEDIUM").toUpperCase(),
+            isRequired: q.isMandatory !== false,
+          },
+        });
+        questionId = createdQ.id;
+      } else {
+        try {
+          await prisma.question.update({
+            where: { id: questionId },
+            data: {
+              question: q.question || q.title || "Untitled Question",
+              questionType: (q.questionType || q.type || "MCQ_SINGLE").toUpperCase(),
+              options: Array.isArray(q.options) ? q.options : [],
+              correctAnswer:
+                typeof q.correctAnswer === "object"
+                  ? JSON.stringify(q.correctAnswer)
+                  : String(q.correctAnswer ?? ""),
+              explanation: q.explanation || "",
+              marks: Number(q.marks) || 1,
+              difficulty: (q.difficulty || "MEDIUM").toUpperCase(),
+              isRequired: q.isMandatory !== false,
+            },
+          });
+        } catch {
+          const createdQ = await prisma.question.create({
+            data: {
+              question: q.question || q.title || "Untitled Question",
+              questionType: (q.questionType || q.type || "MCQ_SINGLE").toUpperCase(),
+              options: Array.isArray(q.options) ? q.options : [],
+              correctAnswer:
+                typeof q.correctAnswer === "object"
+                  ? JSON.stringify(q.correctAnswer)
+                  : String(q.correctAnswer ?? ""),
+              explanation: q.explanation || "",
+              marks: Number(q.marks) || 1,
+              difficulty: (q.difficulty || "MEDIUM").toUpperCase(),
+              isRequired: q.isMandatory !== false,
+            },
+          });
+          questionId = createdQ.id;
+        }
+      }
+
+      await prisma.quizQuestion.create({
+        data: {
+          quizId,
+          questionId,
+          order: idx + 1,
+          marks: Number(q.marks) || 1,
+          isMandatory: q.isMandatory !== false,
+        },
+      });
+    }
+  }
+
+  return getQuizById(quizId, "INSTRUCTOR");
 };
 
 const deleteQuiz = async (
