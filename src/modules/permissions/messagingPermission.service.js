@@ -36,11 +36,11 @@ const canCreateConversation = async (senderId, receiverId) => {
 
     /*
     |--------------------------------------------------------------------------
-    | ADMIN -> Anyone
+    | ADMIN <-> Anyone
     |--------------------------------------------------------------------------
     */
 
-    if (sender.role === "ADMIN") {
+    if (sender.role === "ADMIN" || receiver.role === "ADMIN") {
         return true;
     }
 

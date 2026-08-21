@@ -13,7 +13,6 @@ const BLOCK_TO_CONTENT_TYPE = {
   video: "VIDEO",
   slideshow: "PRESENTATION",
   interactive: "INTERACTIVE_LAB",
-  quiz: "EMBED",
   audio: "AUDIO",
   document: "DOCUMENT",
   link: "LINK",
@@ -56,8 +55,6 @@ const toTypedColumns = (block) => {
       return { htmlContent: renderMarkdown(block.markdown) };
     case "interactive":
       return { externalUrl: block.url || null };
-    case "quiz":
-      return { htmlContent: renderMarkdown(block.question) };
     case "audio":
       return { fileUrl: block.url || null };
     case "document":

@@ -80,6 +80,7 @@ const participantInclude = {
             select: {
                 id: true,
                 name: true,
+                email: true,
                 role: true,
             },
         },
@@ -144,12 +145,7 @@ const createConversation = async (data, userId) => {
     // Validation and the messaging-permission check are intentionally OUTSIDE
     // any try/catch: they throw on purpose when the request is invalid or
     // disallowed, and that must reach the client as a real error (400/403),
-    // never be swallowed. This function used to catch everything here —
-    // including these deliberate rejections — and paper over them with a
-    // fabricated, never-persisted "mock_conv_..." conversation, which just
-    // deferred the failure to the next request (loading messages for a
-    // conversation that was never actually created) as an unrelated-looking
-    // 500 instead of showing the real reason at the point of failure.
+    // never be swallowed.
     const participantIds = [...new Set([userId, ...data.participantIds])];
 
     if (
@@ -178,17 +174,17 @@ const createConversation = async (data, userId) => {
         const existingConversation = await prisma.conversation.findFirst({
             where: {
                 type: "DIRECT",
-                AND: participantIds.map((participantId) => ({
-                    participants: {
-                        some: {
-                            userId: participantId,
-                        },
-                    },
-                })),
+                AND: [
+                    { participants: { some: { userId: participantIds[0] } } },
+                    { participants: { some: { userId: participantIds[1] } } },
+                ],
             },
 
             include: {
                 participants: participantInclude,
+            },
+            orderBy: {
+                createdAt: "desc",
             },
         });
 
@@ -218,6 +214,17 @@ const createConversation = async (data, userId) => {
             participants: participantInclude,
         },
     });
+
+    try {
+        const { getIO } = require("../../socket");
+        const io = getIO();
+        for (const p of conversation.participants) {
+            const formattedForP = await formatConversation(conversation, p.userId);
+            io.to(`user_${p.userId}`).emit("conversation:created", formattedForP);
+        }
+    } catch (socketError) {
+        // Socket may not be initialized during CLI tests
+    }
 
     return formatConversation(conversation, userId);
 };

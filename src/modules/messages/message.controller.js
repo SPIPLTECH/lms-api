@@ -44,9 +44,22 @@ const sendMessage = async (req, res, next) => {
 
         try {
             const { getIO } = require("../../socket");
+            const prisma = require("../../config/database");
             const io = getIO();
+
             io.to(req.body.conversationId).emit("receive_message", message);
             io.to(req.body.conversationId).emit("message:new", message);
+
+            const conv = await prisma.conversation.findUnique({
+                where: { id: req.body.conversationId },
+                include: { participants: true },
+            });
+            if (conv && conv.participants) {
+                conv.participants.forEach((p) => {
+                    io.to(`user_${p.userId}`).emit("receive_message", message);
+                    io.to(`user_${p.userId}`).emit("message:new", message);
+                });
+            }
         } catch (socketError) {
             console.error("Failed to broadcast message via socket:", socketError);
         }

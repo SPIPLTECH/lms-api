@@ -31,10 +31,21 @@ const registerMessageEvents = (io, socket) => {
                 }
             );
 
-            io.to(conversationId).emit(
-                "receive_message",
-                message
-            );
+            const prisma = require("../config/database");
+
+            io.to(conversationId).emit("receive_message", message);
+            io.to(conversationId).emit("message:new", message);
+
+            const conv = await prisma.conversation.findUnique({
+                where: { id: conversationId },
+                include: { participants: true },
+            });
+            if (conv && conv.participants) {
+                conv.participants.forEach((p) => {
+                    io.to(`user_${p.userId}`).emit("receive_message", message);
+                    io.to(`user_${p.userId}`).emit("message:new", message);
+                });
+            }
 
         } catch (error) {
             socket.emit("error", {
