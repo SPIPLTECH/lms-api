@@ -1,4 +1,5 @@
 const courseImporterService = require("../services/courseImporter.service");
+const aiCourseGeneratorService = require("../services/aiCourseGenerator.service");
 const ApiError = require("../../../utils/ApiError");
 
 const uploadPackage = async (req, res, next) => {
@@ -83,7 +84,14 @@ const processJsonJob = async (req, res, next) => {
     let canonicalJson = null;
     let sourceFileName = "course.json";
 
-    if (req.file) {
+    if (req.body?.prompt && typeof req.body.prompt === "string" && req.body.prompt.trim()) {
+      sourceFileName = "ai_generated_course.json";
+      canonicalJson = await aiCourseGeneratorService.generateCourseFromPrompt({
+        prompt: req.body.prompt,
+        scope: req.body.scope || "COURSE",
+        context: req.body.context || {},
+      });
+    } else if (req.file) {
       sourceFileName = req.file.originalname;
       const rawText = stripMarkdownCodeFences(req.file.buffer.toString("utf-8"));
       try {

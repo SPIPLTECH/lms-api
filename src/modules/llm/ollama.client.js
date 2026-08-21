@@ -54,10 +54,10 @@ const chat = async ({ systemPrompt, prompt, think }) => {
   const isThinking = Boolean(think);
   const timeout = isThinking ? llmConfig.thinkTimeoutMs : llmConfig.timeoutMs;
 
-  const options = {};
-  if (!isThinking) {
-    options.num_predict = llmConfig.maxOutputTokens;
-  }
+  const options = {
+    num_predict: llmConfig.maxOutputTokens,
+    temperature: 0.1
+  };
 
   try {
     response = await axios.post(
@@ -66,8 +66,9 @@ const chat = async ({ systemPrompt, prompt, think }) => {
         model: llmConfig.model,
         messages: buildMessages(systemPrompt, prompt),
         think: isThinking,
+        format: "json",
         stream: false,
-        ...(Object.keys(options).length > 0 ? { options } : {}),
+        options,
       },
       { timeout }
     );
