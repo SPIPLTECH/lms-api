@@ -5,49 +5,51 @@ const ApiError = require("../../../utils/ApiError");
 const SYSTEM_PROMPT = `You are an expert LMS course content generator for Orange Tree LMS.
 Generate complete, valid course packages in Canonical Course JSON v2 format.
 
-STRICT RULES:
+STRICT CONSTRAINTS & OUTPUT SIZE LIMITS:
 1. Output raw JSON only. Do NOT output markdown fences (\`\`\`json), thinking tags, reasoning text, or preamble.
-2. Structure:
+2. ULTRA-CONCISE BREVITY RULES (MINIMIZE OUTPUT TOKENS FOR MAXIMUM SPEED):
+   - Course description: maximum 1 short sentence.
+   - Module description: maximum 1 short sentence.
+   - Lesson description: maximum 1 short sentence.
+   - Topic explanation / htmlContent: maximum 1 short sentence.
+   - Code example: 3-5 lines of code.
+   - Quiz question: maximum 1 short sentence.
+   - Quiz option: maximum 3-5 words.
+   - Quiz feedback/explanation: maximum 1 short sentence.
+   - Exactly 3 quiz questions per requested quiz.
+   - No unnecessary topics, extra lessons, extra quizzes, or verbose educational prose.
+
+3. STRUCTURE:
    Course
    ├── metadata (title, description, category, level, estimatedLearningHours)
    ├── settings (visibility, certificatesEnabled, discussionEnabled, dripContentEnabled)
    ├── quizzes[] (Optional Course-level quizzes)
    └── modules[]
        ├── title, description, order, isPublished
-       ├── quizzes[] (Optional Module-level quizzes)
+       ├── quizzes[] (Module-level quizzes)
+       │   └── title, description, passingScore, timeLimit, isPublished, questions[]
        └── lessons[]
            ├── title, description, order, isPublished
            └── topics[]
                ├── title, description, order, isPublished
-               └── contents[] (Array of content objects: { type: "HTML"|"VIDEO"|"TEXT"|"CODE", title, order, htmlContent, videoUrl })
+               └── contents[] ({ type: "HTML"|"VIDEO"|"TEXT"|"CODE", title, order, htmlContent, videoUrl })
 
-3. QUIZ PLACEMENT:
-   - Quizzes belong ONLY in course.quizzes[] or modules[].quizzes[].
-   - DO NOT place quizzes inside topics[].contents[].
+4. QUIZ SCHEMA & PLACEMENT:
+   - Quizzes belong ONLY in course.quizzes[] or modules[].quizzes[]. DO NOT place quizzes inside topics[].contents[].
+   - Question Object Schema (questionType MUST be exactly "MCQ_SINGLE"):
+     {
+       "question": "Question text?",
+       "questionType": "MCQ_SINGLE",
+       "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+       "correctAnswer": "Option 1",
+       "explanation": "Brief 1-sentence explanation.",
+       "marks": 1,
+       "negativeMarks": 0,
+       "difficulty": "EASY"
+     }
 
-4. Quiz Object:
-   {
-     "title": "Quiz Title",
-     "description": "Quiz description",
-     "passingScore": 60,
-     "timeLimit": 15,
-     "isPublished": true,
-     "questions": [
-       {
-         "question": "Question text?",
-         "questionType": "MCQ_SINGLE",
-         "options": ["A", "B", "C", "D"],
-         "correctAnswer": "A",
-         "explanation": "Explanation",
-         "marks": 1,
-         "negativeMarks": 0,
-         "difficulty": "EASY"
-       }
-     ]
-   }
-
-5. Supported QuestionType: MCQ_SINGLE, MCQ_MULTI, TRUE_FALSE, FILL_BLANK, SHORT_ANSWER, LONG_ANSWER.
-6. Supported ContentType: HTML, VIDEO, TEXT, CODE, DOCUMENT, PDF, IMAGE, AUDIO, LINK, PRESENTATION.
+5. Supported QuestionType values: "MCQ_SINGLE", "MCQ_MULTI", "TRUE_FALSE", "FILL_BLANK", "SHORT_ANSWER", "LONG_ANSWER".
+6. Supported ContentType values: "HTML", "VIDEO", "TEXT", "CODE", "DOCUMENT", "PDF", "IMAGE", "AUDIO", "LINK", "PRESENTATION".
 7. Do NOT include database IDs (id, courseId, etc.). Keep string values concise.`;
 
 function stripMarkdownCodeFences(str) {
@@ -57,6 +59,27 @@ function stripMarkdownCodeFences(str) {
     trimmed = trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   }
   return trimmed;
+}
+
+function normalizeQuizDef(quiz) {
+  if (!quiz || typeof quiz !== "object") return;
+  if (quiz.passingScore === undefined) quiz.passingScore = 60;
+  if (quiz.timeLimit === undefined) quiz.timeLimit = 15;
+  if (quiz.isPublished === undefined) quiz.isPublished = true;
+  if (Array.isArray(quiz.questions)) {
+    quiz.questions.forEach((q) => {
+      if (!q || typeof q !== "object") return;
+      if (typeof q.questionType === "string") {
+        const raw = q.questionType.toUpperCase().trim();
+        if (raw.includes("MCQ") || raw.includes("MC")) q.questionType = "MCQ_SINGLE";
+        else if (raw.includes("TRUE") || raw.includes("FALSE")) q.questionType = "TRUE_FALSE";
+        else if (raw.includes("MULTI")) q.questionType = "MCQ_MULTI";
+        else q.questionType = "MCQ_SINGLE";
+      } else {
+        q.questionType = "MCQ_SINGLE";
+      }
+    });
+  }
 }
 
 /** Repair missing optional metadata/settings if missing */
@@ -81,6 +104,8 @@ function normalizeCourseJson(json) {
   }
 
   if (!Array.isArray(json.quizzes)) json.quizzes = [];
+  json.quizzes.forEach(normalizeQuizDef);
+
   if (!Array.isArray(json.modules)) json.modules = [];
 
   // Normalize order & missing topics/contents
@@ -88,6 +113,7 @@ function normalizeCourseJson(json) {
     if (!mod.order) mod.order = mIdx + 1;
     if (mod.isPublished === undefined) mod.isPublished = true;
     if (!Array.isArray(mod.quizzes)) mod.quizzes = [];
+    mod.quizzes.forEach(normalizeQuizDef);
     if (!Array.isArray(mod.lessons)) mod.lessons = [];
 
     mod.lessons.forEach((les, lIdx) => {
@@ -106,14 +132,16 @@ function normalizeCourseJson(json) {
         top.contents = top.contents.filter((cnt) => {
           if (!cnt || typeof cnt !== "object") return false;
           if (cnt.type?.toUpperCase() === "QUIZ") {
-            mod.quizzes.push({
+            const qz = {
               title: cnt.title || "Module Quiz",
               description: cnt.description || "Quiz auto-relocated from topic",
               passingScore: 60,
               timeLimit: 15,
               isPublished: true,
               questions: Array.isArray(cnt.questions) ? cnt.questions : []
-            });
+            };
+            normalizeQuizDef(qz);
+            mod.quizzes.push(qz);
             return false;
           }
           return true;

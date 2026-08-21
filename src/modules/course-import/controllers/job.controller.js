@@ -80,17 +80,22 @@ function stripMarkdownCodeFences(str) {
 }
 
 const processJsonJob = async (req, res, next) => {
+  const reqStartTime = Date.now();
+  console.log("[AI DEBUG] REQUEST RECEIVED");
   try {
     let canonicalJson = null;
     let sourceFileName = "course.json";
 
     if (req.body?.prompt && typeof req.body.prompt === "string" && req.body.prompt.trim()) {
       sourceFileName = "ai_generated_course.json";
+      console.log("[AI DEBUG] AI GENERATION START");
+      const aiStart = Date.now();
       canonicalJson = await aiCourseGeneratorService.generateCourseFromPrompt({
         prompt: req.body.prompt,
         scope: req.body.scope || "COURSE",
         context: req.body.context || {},
       });
+      console.log(`[AI DEBUG] AI GENERATION END: ${Date.now() - aiStart} ms`);
     } else if (req.file) {
       sourceFileName = req.file.originalname;
       const rawText = stripMarkdownCodeFences(req.file.buffer.toString("utf-8"));
@@ -135,13 +140,17 @@ const processJsonJob = async (req, res, next) => {
       });
     }
 
+    console.log("[AI DEBUG] JOB CREATION START");
+    const jobStart = Date.now();
     const job = await courseImporterService.createJsonJob({
       instructorId: req.user.id,
       canonicalJson,
       sourceFileName,
     });
+    console.log(`[AI DEBUG] JOB CREATION END: ${Date.now() - jobStart} ms`);
 
     if (job.status === "FAILED") {
+      console.log(`[AI DEBUG] RESPONSE SEND (FAILED) | TOTAL REQUEST: ${Date.now() - reqStartTime} ms`);
       return res.status(400).json({
         success: false,
         message: "Course JSON validation failed.",
@@ -150,8 +159,10 @@ const processJsonJob = async (req, res, next) => {
       });
     }
 
+    console.log(`[AI DEBUG] RESPONSE SEND | TOTAL REQUEST: ${Date.now() - reqStartTime} ms`);
     res.status(201).json({ success: true, data: job });
   } catch (error) {
+    console.error(`[AI DEBUG] REQUEST ERROR after ${Date.now() - reqStartTime} ms:`, error);
     next(error);
   }
 };
