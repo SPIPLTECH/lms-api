@@ -168,9 +168,14 @@ const attachGradableQuestion = async (block, { courseId, moduleId, lessonId, les
   }
 };
 
-const importJob = async (jobId, instructorId) => {
+const importJob = async (jobId, instructorId, fallbackCanonicalJson = null) => {
   const job = await getJob(jobId);
-  if (!job) throw new ApiError(404, "Import job not found.");
+  if (!job) {
+    if (fallbackCanonicalJson || (jobId && (jobId.startsWith("draft-") || jobId === "draft"))) {
+      return await v2PackageImporter.importV2Manifest(fallbackCanonicalJson || {}, instructorId);
+    }
+    throw new ApiError(404, "Import job not found.");
+  }
 
   if (job.status === "COMPLETED") {
     return job;

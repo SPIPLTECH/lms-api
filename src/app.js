@@ -163,6 +163,7 @@ app.use("/placement", placement.router);
 app.use("/admin-intelligence", adminIntelligence.router);
 app.use("/mentor", mentor.router);
 app.use("/course-import", courseImportRoutes);
+app.use("/api/ai", courseImportRoutes);
 app.use(
   "/learner-model",
   require("./modules/learner-model/learnerModel.routes")

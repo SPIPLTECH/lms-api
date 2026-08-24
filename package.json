@@ -17,6 +17,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
     "@getbrevo/brevo": "^5.0.4",
+    "@google/genai": "^2.18.0",
     "@prisma/client": "^6.19.0",
     "adm-zip": "^0.6.0",
     "axios": "^1.18.1",

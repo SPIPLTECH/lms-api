@@ -343,17 +343,16 @@ async function processV2Package(jobDir, jobId, rawCourseJson) {
  * @param {string} instructorId Authenticated user ID importing the course
  * @returns {Promise<Object>} Created course database object
  */
-async function importV2Job(job, instructorId) {
-  const canonical = job.canonicalJson;
-  if (!canonical) {
-    throw new ApiError(400, "Job canonicalJson is missing.");
+async function importV2Manifest(canonicalJson, instructorId) {
+  if (!canonicalJson) {
+    throw new ApiError(400, "canonicalJson is missing.");
   }
 
-  const metadata = canonical.metadata || {};
-  const settings = canonical.settings || {};
-  const modules = Array.isArray(canonical.modules) ? canonical.modules : [];
-  const courseQuizzes = Array.isArray(canonical.quizzes) ? canonical.quizzes : [];
-  const assetMap = canonical.assetMap || {};
+  const metadata = canonicalJson.metadata || {};
+  const settings = canonicalJson.settings || {};
+  const modules = Array.isArray(canonicalJson.modules) ? canonicalJson.modules : [];
+  const courseQuizzes = Array.isArray(canonicalJson.quizzes) ? canonicalJson.quizzes : [];
+  const assetMap = canonicalJson.assetMap || {};
 
   // Resolve thumbnail server URL
   let thumbnailUrl = null;
@@ -363,21 +362,18 @@ async function importV2Job(job, instructorId) {
 
   const rawModules = Array.isArray(modules) ? modules : [];
 
-  // Execute database creation inside ATOMIC Prisma transaction
-  let createdCourse;
-  try {
-    createdCourse = await prisma.$transaction(async (tx) => {
-      // 1. Create Course
-      const courseRecord = await tx.course.create({
-        data: {
-          title: metadata.title || "Imported Course",
-          description: metadata.description ?? null,
-          category: metadata.category ?? null,
-          level: metadata.level ?? null,
-          thumbnailUrl,
-          status: "DRAFT",
-          visibility: settings?.visibility || "PUBLIC",
-          language: metadata.language ?? null,
+  return await prisma.$transaction(async (tx) => {
+    // 1. Create Course
+    const courseRecord = await tx.course.create({
+      data: {
+        title: metadata.title || "Imported Course",
+        description: metadata.description ?? null,
+        category: metadata.category ?? null,
+        level: metadata.level ?? null,
+        thumbnailUrl,
+        status: "DRAFT",
+        visibility: settings?.visibility || "PUBLIC",
+        language: metadata.language ?? null,
           tags: Array.isArray(metadata.tags) ? metadata.tags : [],
           certificatesEnabled: Boolean(settings?.certificatesEnabled),
           discussionEnabled: Boolean(settings?.discussionEnabled),
@@ -537,20 +533,34 @@ async function importV2Job(job, instructorId) {
       maxWait: 20000,
       timeout: 60000
     });
+}
 
-    // Update job status to COMPLETED
-    await prisma.courseImportJob.update({
-      where: { id: job.id },
-      data: { status: "COMPLETED", courseId: createdCourse.id }
-    });
+async function importV2Job(job, instructorId) {
+  const canonical = job.canonicalJson;
+  if (!canonical) {
+    throw new ApiError(400, "Job canonicalJson is missing.");
+  }
+
+  let createdCourse;
+  try {
+    createdCourse = await importV2Manifest(canonical, instructorId);
+
+    // Update job status to COMPLETED if job exists
+    if (job.id && !job.id.startsWith("draft-")) {
+      await prisma.courseImportJob.update({
+        where: { id: job.id },
+        data: { status: "COMPLETED", courseId: createdCourse.id }
+      });
+    }
 
     return createdCourse;
   } catch (error) {
-    // Update job status to FAILED
-    await prisma.courseImportJob.update({
-      where: { id: job.id },
-      data: { status: "FAILED", errorMessage: error.message, courseId: null }
-    });
+    if (job.id && !job.id.startsWith("draft-")) {
+      await prisma.courseImportJob.update({
+        where: { id: job.id },
+        data: { status: "FAILED", errorMessage: error.message, courseId: null }
+      });
+    }
     throw error;
   }
 }
@@ -560,5 +570,6 @@ module.exports = {
   validateV2Manifest,
   prepareV2Assets,
   processV2Package,
+  importV2Manifest,
   importV2Job
 };
