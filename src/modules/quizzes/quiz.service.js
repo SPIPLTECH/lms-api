@@ -336,7 +336,7 @@ const getQuizById = async (
  * batch — that path skips batch-linkage validation entirely, but still gets
  * the module/course consistency check below.
  */
-const validateQuizScope = async ({ batchId, courseId, moduleId, lessonId }) => {
+const validateQuizScope = async ({ batchId, courseId, moduleId, lessonId, topicId }) => {
   if (batchId) {
     const batch = await prisma.batch.findUnique({
       where: { id: batchId },
@@ -387,6 +387,25 @@ const validateQuizScope = async ({ batchId, courseId, moduleId, lessonId }) => {
       throw error;
     }
   }
+
+  if (topicId) {
+    const topic = await prisma.topic.findUnique({
+      where: { id: topicId },
+      select: { lessonId: true, lesson: { select: { module: { select: { id: true, courseId: true } } } } }
+    });
+
+    if (!topic || topic.lesson.module.courseId !== courseId) {
+      const error = new Error("This topic does not belong to the selected course");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (lessonId && topic.lessonId !== lessonId) {
+      const error = new Error("This topic does not belong to the selected lesson");
+      error.statusCode = 400;
+      throw error;
+    }
+  }
 };
 
 const createQuiz = async (
@@ -398,7 +417,8 @@ const createQuiz = async (
     data: {
       ...data,
       moduleId: data.moduleId || null,
-      lessonId: data.lessonId || null
+      lessonId: data.lessonId || null,
+      topicId: data.topicId || null
     }
   });
 

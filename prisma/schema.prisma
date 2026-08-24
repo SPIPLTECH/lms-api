@@ -271,6 +271,7 @@ model Topic {
   updatedAt   DateTime @updatedAt
   contents    Content[]
   lesson      Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  quizzes     Quiz[]
 
   @@unique([lessonId, order])
 }
@@ -389,6 +390,7 @@ model Quiz {
   batchId          String?
   moduleId         String?
   lessonId         String?
+  topicId          String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   questions        Question[]
@@ -396,6 +398,7 @@ model Quiz {
   batch            Batch?           @relation(fields: [batchId], references: [id], onDelete: SetNull)
   module           Module?          @relation(fields: [moduleId], references: [id], onDelete: SetNull)
   lesson           Lesson?          @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+  topic            Topic?           @relation(fields: [topicId], references: [id], onDelete: SetNull)
   quizSubmissions  QuizSubmission[]
   instructions     String?          @db.Text
   shuffleQuestions Boolean          @default(false)
@@ -406,6 +409,7 @@ model Quiz {
 
   @@index([batchId])
   @@index([moduleId])
+  @@index([topicId])
 }
 
 model Question {
