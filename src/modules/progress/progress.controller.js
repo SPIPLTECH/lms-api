@@ -38,7 +38,7 @@ const completeLesson = async (
   }
 };
 
-const getProgress = async (
+const markContentVisited = async (
   req,
   res,
   next
@@ -59,10 +59,48 @@ const getProgress = async (
     }
 
     const result =
-      await progressService.getCourseProgress(
+      await progressService.markContentVisited(
         student.id,
-        req.query.courseId
+        req.body.contentIds
       );
+
+    res.status(200).json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getProgress = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const student =
+      await prisma.studentProfile.findUnique({
+        where: {
+          userId: req.user.id
+        }
+      });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found"
+      });
+    }
+
+    const result = req.query.courseId
+      ? await progressService.getCourseProgress(
+          student.id,
+          req.query.courseId
+        )
+      : await progressService.getAllCoursesProgress(
+          student.id
+        );
 
     res.json({
       success: true,
@@ -75,5 +113,6 @@ const getProgress = async (
 
 module.exports = {
   completeLesson,
+  markContentVisited,
   getProgress
 };

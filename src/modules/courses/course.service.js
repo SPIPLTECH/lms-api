@@ -514,11 +514,12 @@ const getCourseById = async (courseId, role, userId) => {
   }
 
   if (role === "STUDENT") {
-    const lockMap = await buildLessonLockMap(courseId, studentProfileId);
+    const { lockMap, completedSet } = await buildLessonLockMap(courseId, studentProfileId);
     course.modules.forEach((moduleItem) => {
       moduleItem.lessons.forEach((lesson) => {
         const locked = lockMap.get(lesson.id) ?? false;
         lesson.locked = locked;
+        lesson.completed = completedSet.has(lesson.id);
         if (locked) {
           lesson.topics = [];
         }

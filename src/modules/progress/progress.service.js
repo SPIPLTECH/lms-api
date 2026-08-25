@@ -24,7 +24,7 @@ const completeLesson = async (
   const courseId =
     lesson.module.courseId;
 
-  const lockMap = await buildLessonLockMap(courseId, studentId);
+  const { lockMap } = await buildLessonLockMap(courseId, studentId);
   if (lockMap.get(lessonId)) {
     throw new ApiError(403, "Complete the previous lesson first to unlock this one.");
   }
@@ -136,6 +136,142 @@ const completeLesson = async (
   return progress;
 };
 
+// Records that a student has visited one or more Content rows (a video
+// watched to the end, or a document/file/link block scrolled into view on
+// the frontend — see contentDocument.js for why a single displayed block
+// can map to several underlying Content ids). Once every Content row under
+// a lesson has been visited, the lesson auto-completes via the exact same
+// completeLesson() path the manual "Mark Complete" button uses, so
+// certificate issuance and percentage math are never duplicated.
+const markContentVisited = async (
+  studentId,
+  contentIds
+) => {
+  const contents = await prisma.content.findMany({
+    where: { id: { in: contentIds } },
+    select: { id: true, topic: { select: { lessonId: true } } }
+  });
+
+  if (contents.length === 0) {
+    throw new ApiError(404, "Content not found");
+  }
+
+  const lessonId = contents[0].topic.lessonId;
+
+  await prisma.$transaction(
+    contents.map((content) =>
+      prisma.contentProgress.upsert({
+        where: {
+          studentId_contentId: { studentId, contentId: content.id }
+        },
+        update: {},
+        create: { studentId, contentId: content.id }
+      })
+    )
+  );
+
+  const lessonContents = await prisma.content.findMany({
+    where: { topic: { lessonId } },
+    select: { id: true }
+  });
+  const lessonContentIds = lessonContents.map((c) => c.id);
+
+  const visitedCount = await prisma.contentProgress.count({
+    where: { studentId, contentId: { in: lessonContentIds } }
+  });
+
+  const allContentVisited =
+    lessonContentIds.length > 0 && visitedCount === lessonContentIds.length;
+
+  let lessonCompleted = false;
+  if (allContentVisited) {
+    try {
+      await completeLesson(studentId, lessonId);
+      lessonCompleted = true;
+    } catch (error) {
+      // Drip-locked or otherwise not completable yet — visiting content
+      // still gets recorded above, it just doesn't force completion.
+      lessonCompleted = false;
+    }
+  }
+
+  return { lessonId, allContentVisited, lessonCompleted };
+};
+
+const getAllCoursesProgress = async (
+  studentId
+) => {
+  const enrollments =
+    await prisma.enrollment.findMany({
+      where: { studentId },
+      select: {
+        course: {
+          select: {
+            id: true,
+            title: true,
+            creator: { select: { name: true } },
+            modules: {
+              select: {
+                lessons: { select: { id: true } }
+              }
+            }
+          }
+        }
+      }
+    });
+
+  const courseIds = enrollments.map((e) => e.course.id);
+
+  const completedProgress = courseIds.length
+    ? await prisma.progress.findMany({
+        where: {
+          studentId,
+          completed: true,
+          lesson: { module: { courseId: { in: courseIds } } }
+        },
+        select: {
+          lesson: { select: { module: { select: { courseId: true } } } }
+        }
+      })
+    : [];
+
+  const completedByCourse = new Map();
+  for (const p of completedProgress) {
+    const cid = p.lesson.module.courseId;
+    completedByCourse.set(cid, (completedByCourse.get(cid) || 0) + 1);
+  }
+
+  const courses = enrollments.map(({ course }) => {
+    const totalLessons = course.modules.reduce(
+      (sum, m) => sum + m.lessons.length,
+      0
+    );
+    const completedLessons = completedByCourse.get(course.id) || 0;
+    const progress =
+      totalLessons === 0
+        ? 0
+        : Math.round((completedLessons / totalLessons) * 100);
+
+    return {
+      id: course.id,
+      title: course.title,
+      instructor: course.creator?.name || "Unknown",
+      completedLessons,
+      totalLessons,
+      progress
+    };
+  });
+
+  const totalLessons = courses.reduce((sum, c) => sum + c.totalLessons, 0);
+  const completedLessons = courses.reduce((sum, c) => sum + c.completedLessons, 0);
+  const percentage =
+    totalLessons === 0
+      ? 0
+      : Math.round((completedLessons / totalLessons) * 100);
+
+  return { totalLessons, completedLessons, percentage, courses };
+};
+
 const getCourseProgress = async (
   studentId,
   courseId
@@ -189,5 +325,7 @@ const getCourseProgress = async (
 
 module.exports = {
   completeLesson,
+  markContentVisited,
+  getAllCoursesProgress,
   getCourseProgress
 };
