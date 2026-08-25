@@ -33,3 +33,6 @@ Thumbs.db
 
 # Scratch folder for temporary scripts
 scratch/
+
+# AI agent removal backup/restoration package (contains raw DB data exports)
+backup/
