@@ -1,5 +1,22 @@
 const prisma = require("../config/database");
 
+// The lesson ids a student can actually see and complete for a course, in
+// course order: published lessons within published modules only. A lesson
+// can be individually published while its parent module is still a draft
+// (e.g. an instructor still building out a module) — in that case the whole
+// module is hidden from students by getCourseById, so it must not count
+// toward totalLessons/percentage either, or completion math (and the 100%
+// certificate check) would divide by a denominator the student can never
+// actually reach.
+const getPublishedLessonIds = async (courseId) => {
+  const lessons = await prisma.lesson.findMany({
+    where: { module: { courseId, isPublished: true }, isPublished: true },
+    orderBy: [{ module: { order: "asc" } }, { order: "asc" }],
+    select: { id: true },
+  });
+  return lessons.map((lesson) => lesson.id);
+};
+
 // Sequential lesson gating for courses with dripContentEnabled: a lesson
 // unlocks once the lesson immediately before it (course-wide order — module
 // order, then lesson order) has been marked complete by this student. The
@@ -15,18 +32,14 @@ const buildLessonLockMap = async (courseId, studentId) => {
     select: { dripContentEnabled: true },
   });
 
-  const lessons = await prisma.lesson.findMany({
-    where: { module: { courseId }, isPublished: true },
-    orderBy: [{ module: { order: "asc" } }, { order: "asc" }],
-    select: { id: true },
-  });
+  const lessonIds = await getPublishedLessonIds(courseId);
 
   const completedSet = new Set();
   if (studentId) {
     const completedRows = await prisma.progress.findMany({
       where: {
         studentId,
-        lessonId: { in: lessons.map((lesson) => lesson.id) },
+        lessonId: { in: lessonIds },
         completed: true,
       },
       select: { lessonId: true },
@@ -37,17 +50,17 @@ const buildLessonLockMap = async (courseId, studentId) => {
   const lockMap = new Map();
 
   if (!course?.dripContentEnabled) {
-    lessons.forEach((lesson) => lockMap.set(lesson.id, false));
+    lessonIds.forEach((lessonId) => lockMap.set(lessonId, false));
     return { lockMap, completedSet };
   }
 
   let prevCompleted = true;
-  for (const lesson of lessons) {
-    lockMap.set(lesson.id, !prevCompleted);
-    prevCompleted = completedSet.has(lesson.id);
+  for (const lessonId of lessonIds) {
+    lockMap.set(lessonId, !prevCompleted);
+    prevCompleted = completedSet.has(lessonId);
   }
 
   return { lockMap, completedSet };
 };
 
-module.exports = { buildLessonLockMap };
+module.exports = { buildLessonLockMap, getPublishedLessonIds };

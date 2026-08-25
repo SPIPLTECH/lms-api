@@ -1,7 +1,17 @@
 const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
 const ApiError = require("../../utils/ApiError");
-const { buildLessonLockMap } = require("../../utils/dripAccess");
+const { buildLessonLockMap, getPublishedLessonIds } = require("../../utils/dripAccess");
+const { publishEvent, EVENT_TYPES } = require("../observation");
+
+// Fire-and-forget observation call, mirroring auth.controller.js's
+// observeAuthEvent: progress tracking must never fail because the
+// Observation Agent is slow or down.
+const observeProgressEvent = (studentId, eventType, extra) => {
+  publishEvent({ studentId, eventType, source: "progress.service", ...extra }).catch((error) => {
+    console.error(`[observation] failed to record ${eventType}:`, error.message);
+  });
+};
 
 const completeLesson = async (
   studentId,
@@ -29,6 +39,16 @@ const completeLesson = async (
     throw new ApiError(403, "Complete the previous lesson first to unlock this one.");
   }
 
+  // Read before the upsert so LESSON_COMPLETED only publishes on a genuine
+  // not-completed -> completed transition. Downstream student-state reducers
+  // increment counters (not idempotent flags) on this event, so re-firing it
+  // on a redundant re-completion would inflate those counts.
+  const existingProgress = await prisma.progress.findUnique({
+    where: { studentId_lessonId: { studentId, lessonId } },
+    select: { completed: true }
+  });
+  const wasAlreadyCompleted = existingProgress?.completed === true;
+
   const progress =
     await prisma.progress.upsert({
       where: {
@@ -49,22 +69,11 @@ const completeLesson = async (
       }
     });
 
-  const lessons =
-    await prisma.lesson.findMany({
-      where: {
-        module: {
-          courseId
-        }
-      },
-      select: {
-        id: true
-      }
-    });
+  if (!wasAlreadyCompleted) {
+    observeProgressEvent(studentId, EVENT_TYPES.LESSON_COMPLETED, { courseId, lessonId });
+  }
 
-  const lessonIds =
-    lessons.map(
-      (lesson) => lesson.id
-    );
+  const lessonIds = await getPublishedLessonIds(courseId);
 
   const completedLessons =
     await prisma.progress.count({
@@ -78,7 +87,7 @@ const completeLesson = async (
     });
 
   const totalLessons =
-    lessons.length;
+    lessonIds.length;
 
   const percentage =
     totalLessons === 0
@@ -99,6 +108,8 @@ const completeLesson = async (
       });
 
     if (!existingCertificate) {
+      observeProgressEvent(studentId, EVENT_TYPES.COURSE_COMPLETED, { courseId });
+
       const certificate = await prisma.certificate.create({
         data: {
           certificateNo:
@@ -211,8 +222,9 @@ const getAllCoursesProgress = async (
             title: true,
             creator: { select: { name: true } },
             modules: {
+              where: { isPublished: true },
               select: {
-                lessons: { select: { id: true } }
+                lessons: { where: { isPublished: true }, select: { id: true } }
               }
             }
           }
@@ -276,22 +288,7 @@ const getCourseProgress = async (
   studentId,
   courseId
 ) => {
-  const lessons =
-    await prisma.lesson.findMany({
-      where: {
-        module: {
-          courseId
-        }
-      },
-      select: {
-        id: true
-      }
-    });
-
-  const lessonIds =
-    lessons.map(
-      (lesson) => lesson.id
-    );
+  const lessonIds = await getPublishedLessonIds(courseId);
 
   const completedLessons =
     await prisma.progress.count({
@@ -305,7 +302,7 @@ const getCourseProgress = async (
     });
 
   const totalLessons =
-    lessons.length;
+    lessonIds.length;
 
   const percentage =
     totalLessons === 0
