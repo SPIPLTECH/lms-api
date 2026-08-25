@@ -450,17 +450,86 @@ const getCourseById = async (courseId, role, userId) => {
           order: "asc"
         },
         include: {
+          quizzes: {
+            include: {
+              quizQuestions: {
+                orderBy: { order: "asc" },
+                select: {
+                  id: true,
+                  quizId: true,
+                  order: true,
+                  marks: true,
+                  question: {
+                    select: {
+                      id: true,
+                      question: true,
+                      questionType: true,
+                      options: true,
+                      difficulty: true,
+                      ...(isStudentOrGuest ? {} : { correctAnswer: true, explanation: true }),
+                    }
+                  }
+                }
+              }
+            }
+          },
           lessons: {
             where: isStudentOrGuest ? { isPublished: true } : undefined,
             orderBy: {
               order: "asc"
             },
             include: {
+              quizzes: {
+                include: {
+                  quizQuestions: {
+                    orderBy: { order: "asc" },
+                    select: {
+                      id: true,
+                      quizId: true,
+                      order: true,
+                      marks: true,
+                      question: {
+                        select: {
+                          id: true,
+                          question: true,
+                          questionType: true,
+                          options: true,
+                          difficulty: true,
+                          ...(isStudentOrGuest ? {} : { correctAnswer: true, explanation: true }),
+                        }
+                      }
+                    }
+                  }
+                }
+              },
               topics: {
                 orderBy: {
                   order: "asc"
                 },
                 include: {
+                  quizzes: {
+                    include: {
+                      quizQuestions: {
+                        orderBy: { order: "asc" },
+                        select: {
+                          id: true,
+                          quizId: true,
+                          order: true,
+                          marks: true,
+                          question: {
+                            select: {
+                              id: true,
+                              question: true,
+                              questionType: true,
+                              options: true,
+                              difficulty: true,
+                              ...(isStudentOrGuest ? {} : { correctAnswer: true, explanation: true }),
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
                   contents: {
                     orderBy: {
                       order: "asc"
@@ -865,6 +934,19 @@ const deleteCourse = async (courseId, userId, userRole) => {
 
   // Safe draft hard-deletion inside transaction
   return await prisma.$transaction(async (tx) => {
+    const quizzes = await tx.quiz.findMany({
+      where: { courseId },
+      select: { id: true }
+    });
+
+    const quizIds = quizzes.map((q) => q.id);
+
+    if (quizIds.length > 0) {
+      await tx.quizQuestion.deleteMany({ where: { quizId: { in: quizIds } } });
+      await tx.quizSubmission.deleteMany({ where: { quizId: { in: quizIds } } });
+      await tx.quiz.deleteMany({ where: { id: { in: quizIds } } });
+    }
+
     return await tx.course.delete({
       where: { id: courseId }
     });

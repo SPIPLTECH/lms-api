@@ -396,9 +396,9 @@ model Quiz {
   questions        Question[]
   course           Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
   batch            Batch?           @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  module           Module?          @relation(fields: [moduleId], references: [id], onDelete: SetNull)
-  lesson           Lesson?          @relation(fields: [lessonId], references: [id], onDelete: SetNull)
-  topic            Topic?           @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  module           Module?          @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  lesson           Lesson?          @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  topic            Topic?           @relation(fields: [topicId], references: [id], onDelete: Cascade)
   quizSubmissions  QuizSubmission[]
   instructions     String?          @db.Text
   shuffleQuestions Boolean          @default(false)

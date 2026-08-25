@@ -319,6 +319,21 @@ const getTemplate = async (req, res, next) => {
   }
 };
 
+const applyAiEntity = async (req, res, next) => {
+  try {
+    const { scope, generatedData, context } = req.body || {};
+    const result = await courseImporterService.applyAiEntity({
+      scope,
+      generatedData,
+      context,
+      instructorId: req.user.id,
+    });
+    res.status(200).json({ success: true, data: result, message: "AI entity generated structure applied successfully." });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const deleteJob = async (req, res, next) => {
   try {
     await courseImporterService.deleteJob(req.params.jobId);
@@ -328,4 +343,4 @@ const deleteJob = async (req, res, next) => {
   }
 };
 
-module.exports = { uploadPackage, processJsonJob, getTemplate, processJob, getJob, listJobs, updateJob, importJob, deleteJob };
+module.exports = { uploadPackage, processJsonJob, getTemplate, processJob, getJob, listJobs, updateJob, importJob, deleteJob, applyAiEntity };

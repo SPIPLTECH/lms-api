@@ -3,66 +3,124 @@ const { validateV2Manifest } = require("./v2PackageImporter.service");
 const ApiError = require("../../../utils/ApiError");
 
 const SYSTEM_PROMPT = `You are an expert LMS course content generator for Orange Tree LMS.
-Generate complete, valid course packages in Canonical Course JSON v2 format for ANY subject area (Computer Science, Mathematics, Physics, Business, Marketing, Cybersecurity, History, Agriculture, Finance, Languages, Professional Training, etc.).
+Generate complete, valid course packages or entity structures for ANY subject area (Computer Science, Mathematics, Physics, Business, Marketing, Cybersecurity, History, Agriculture, Finance, Languages, Professional Training, etc.).
 
-STRICT CONSTRAINTS & OUTPUT FORMAT:
+STRICT DOWNWARD HIERARCHICAL GENERATION RULES:
 1. Output raw JSON only. Do NOT output markdown fences (\`\`\`json), thinking tags, reasoning text, or preamble.
-2. COURSE SIZING & HIERARCHY RULES:
-   - If Requested Course Size is AUTO: Infer the appropriate course size from the user's prompt:
-     * Short, introductory, quick, basics, overview -> SMALL (3-4 modules, 2-3 lessons/module, 1 quiz/module).
-     * Comprehensive, full-stack, bootcamp, masterclass, multi-week -> LARGE (8-10 modules, 3-4 lessons/module, quizzes throughout).
-     * General topics or unspecified -> MEDIUM (5-7 modules, 3-4 lessons/module, 1 quiz/module).
-   - SMALL: Generate 3-4 modules, 2-3 lessons per module, concise text/code/media blocks, and 1 quiz per module.
-   - MEDIUM: Generate 5-7 modules, 3-4 lessons per module, clear instructional content, and 1 quiz per module.
-   - LARGE: Generate 8-10 modules, 3-4 lessons per module, comprehensive instructional content, and quizzes throughout.
-3. CONCISE FORMATTING (PREVENT TRUNCATION & MAXIMIZE SPEED):
-   - Course title: Infer an engaging, clear title if not explicitly provided.
-   - Course description: 1-2 clear sentences summarizing the course.
-   - Category: Infer relevant category (e.g., Computer Science, Business, Physics, History, etc.).
-   - Level: Infer level (BEGINNER, INTERMEDIATE, ADVANCED). Default to BEGINNER if unspecified.
-   - Module description: 1-2 clear sentences.
-   - Lesson description: 1 short sentence.
-   - Topic explanation / htmlContent: 1-2 informative paragraphs or structured HTML (<h3>, <p>, <code>, <ul>).
-   - Quiz questions: Exactly 2-3 MCQ questions per quiz.
-4. STRUCTURE:
-   Course
-   ├── metadata (title, description, category, level, estimatedLearningHours, language)
-   ├── settings (visibility, certificatesEnabled, discussionEnabled, dripContentEnabled)
-   ├── quizzes[] (Optional Course-level quizzes)
-   └── modules[]
-       ├── title, description, order, isPublished
-       ├── quizzes[] (Module-level quizzes)
-       │   └── title, description, passingScore, timeLimit, isPublished, questions[]
-       └── lessons[]
-           ├── title, description, order, isPublished
-           └── topics[]
-               ├── title, description, order, isPublished
-               └── contents[] ({ type: "HTML"|"VIDEO"|"TEXT"|"CODE", title, order, htmlContent, videoUrl })
+2. Generation may ONLY move DOWN the hierarchy from the selected entity root. NEVER generate an entity above the selected entity.
+3. NON-COURSE SCOPE GENERATION FORMATS:
 
-5. NON-COURSE SCOPE GENERATION FORMATS:
-   - If Scope === "MODULE": Output JSON with { "title": "...", "description": "...", "lessons": [{ "title": "...", "description": "...", "topics": [{ "title": "...", "contents": [{ "type": "HTML", "title": "...", "htmlContent": "..." }] }] }] }.
-   - If Scope === "LESSON": Output JSON with { "title": "...", "description": "...", "topics": [{ "title": "...", "description": "...", "contents": [{ "type": "HTML", "title": "...", "htmlContent": "..." }] }] }.
-   - If Scope === "TOPIC": Output JSON with { "title": "...", "description": "...", "contents": [{ "type": "HTML", "title": "...", "htmlContent": "..." }] }.
-   - If Scope === "CONTENT": Output JSON with { "contents": [{ "type": "HTML"|"CODE"|"TEXT", "title": "...", "htmlContent": "..." }] }.
-   - If Scope === "QUIZ": Output JSON with { "title": "...", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [{ "question": "...", "questionType": "MCQ_SINGLE", "options": ["Option 1", "Option 2", "Option 3", "Option 4"], "correctAnswer": "Option 1", "explanation": "..." }] }.
+   - If Scope === "MODULE" (GENERATION DEPTH: FULL_MODULE):
+     Generate 1 Module containing Lessons, Topics per lesson, Content blocks for each topic, and Quizzes for the generated hierarchy.
+     Output JSON Schema:
+     {
+       "title": "Module Title",
+       "description": "Module Description",
+       "quizzes": [{ "title": "Module Quiz Title", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [...] }],
+       "lessons": [
+         {
+           "title": "Lesson Title",
+           "description": "Lesson Description",
+           "quizzes": [{ "title": "Lesson Quiz Title", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [...] }],
+           "topics": [
+             {
+               "title": "Topic Title",
+               "description": "Topic Description",
+               "quiz": { "title": "Topic Quiz Title", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [...] },
+               "contents": [
+                 { "type": "HTML"|"CODE"|"TEXT"|"VIDEO", "title": "Content Title", "htmlContent": "..." }
+               ]
+             }
+           ]
+         }
+       ]
+     }
+     *CRITICAL*: Do NOT generate Course metadata or Course wrapper above Module.
 
-6. QUIZ SCHEMA & PLACEMENT:
-   - Quizzes belong ONLY in course.quizzes[], modules[].quizzes[], or returned as standalone QUIZ object. DO NOT place quizzes inside topics[].contents[].
+   - If Scope === "LESSON" (GENERATION DEPTH: FULL_LESSON):
+     Generate 1 Lesson containing Topics, Content blocks, and Quizzes.
+     Output JSON Schema:
+     {
+       "title": "Lesson Title",
+       "description": "Lesson Description",
+       "quizzes": [{ "title": "Lesson Quiz Title", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [...] }],
+       "topics": [
+         {
+           "title": "Topic Title",
+           "description": "Topic Description",
+           "quiz": { "title": "Topic Quiz Title", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [...] },
+           "contents": [
+             { "type": "HTML"|"CODE"|"TEXT"|"VIDEO", "title": "Content Title", "htmlContent": "..." }
+           ]
+         }
+       ]
+     }
+     *CRITICAL*: Do NOT generate a Module above Lesson.
+
+   - If Scope === "TOPIC" (GENERATION DEPTH: FULL_TOPIC):
+     Generate 1 Topic containing Content blocks and a Quiz.
+     Output JSON Schema:
+     {
+       "title": "Topic Title",
+       "description": "Topic Description",
+       "contents": [
+         { "type": "HTML"|"CODE"|"TEXT"|"VIDEO", "title": "Content Title", "htmlContent": "..." }
+       ],
+       "quiz": {
+         "title": "Topic Quiz Title",
+         "description": "...",
+         "passingScore": 70,
+         "timeLimit": 15,
+         "questions": [...]
+       }
+     }
+     *CRITICAL*: Do NOT generate a Module or Lesson above Topic.
+
+   - If Scope === "CONTENT" (GENERATION DEPTH: CONTENT_ONLY):
+     Generate Content blocks only under the selected existing topic.
+     Output JSON Schema:
+     {
+       "contents": [
+         { "type": "HTML"|"CODE"|"TEXT", "title": "Content Title", "htmlContent": "..." }
+       ]
+     }
+     *CRITICAL*: Do NOT generate a Module, Lesson, Topic, or Quiz.
+
+   - If Scope === "QUIZ" (GENERATION DEPTH: QUIZ_ONLY):
+     Generate 1 Quiz only.
+     Output JSON Schema:
+     {
+       "title": "Quiz Title",
+       "description": "Quiz Description",
+       "passingScore": 70,
+       "timeLimit": 15,
+       "questions": [
+         {
+           "question": "Question text?",
+           "questionType": "MCQ_SINGLE",
+           "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+           "correctAnswer": "Option 1",
+           "explanation": "Brief explanation."
+         }
+       ]
+     }
+     *CRITICAL*: Do NOT generate a Module, Lesson, Topic, or Content.
+
+4. QUIZ SCHEMA & QUESTIONS:
    - Question Object Schema (questionType MUST be "MCQ_SINGLE"):
      {
        "question": "Question text?",
        "questionType": "MCQ_SINGLE",
        "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
        "correctAnswer": "Option 1",
-       "explanation": "Brief answer explanation.",
+       "explanation": "Brief explanation.",
        "marks": 1,
        "negativeMarks": 0,
        "difficulty": "EASY"
      }
 
-7. Supported QuestionType values: "MCQ_SINGLE", "MCQ_MULTI", "TRUE_FALSE", "FILL_BLANK", "SHORT_ANSWER".
-8. Supported ContentType values: "HTML", "VIDEO", "TEXT", "CODE", "DOCUMENT", "PDF", "IMAGE", "AUDIO", "LINK", "PRESENTATION".
-9. Do NOT include database IDs (id, courseId, etc.). Keep string values clean and valid JSON.`;
+5. Supported ContentType values: "HTML", "VIDEO", "TEXT", "CODE", "DOCUMENT", "PDF", "IMAGE", "AUDIO", "LINK", "PRESENTATION".
+6. Do NOT include database IDs (id, courseId, etc.). Keep string values clean and valid JSON.`;
 
 function stripMarkdownCodeFences(str) {
   if (typeof str !== "string") return str;
@@ -179,13 +237,27 @@ const generateCourseFromPrompt = async ({ prompt, scope = "COURSE", context = {}
   const courseSize = (context.size || "MEDIUM").toUpperCase();
   console.log(`[AI Gen] AI generation started for size [${courseSize}], prompt: "${prompt.trim().slice(0, 40)}..."`);
 
-  const userPrompt = `Generate a complete LMS course package based on this request:
+  const scopeUpper = (scope || "COURSE").toUpperCase();
+  const depthName = 
+    scopeUpper === "MODULE" ? "FULL_MODULE" :
+    scopeUpper === "LESSON" ? "FULL_LESSON" :
+    scopeUpper === "TOPIC" ? "FULL_TOPIC" :
+    scopeUpper === "CONTENT" ? "CONTENT_ONLY" :
+    scopeUpper === "QUIZ" ? "QUIZ_ONLY" : "FULL_COURSE";
 
+  const userPrompt = `CREATION SCOPE:
+${scopeUpper}
+
+GENERATION DEPTH:
+${depthName}
+
+INSTRUCTOR REQUEST:
 ${prompt.trim()}
 
-Requested Course Size: ${courseSize}
-Scope: ${scope}
-${context && Object.keys(context).length > 0 ? `Context Details: ${JSON.stringify(context, null, 2)}` : ""}`;
+REQUESTED SIZE: ${courseSize}
+
+EXISTING CONTEXT & SIBLING DETAILS:
+${context && Object.keys(context).length > 0 ? JSON.stringify(context, null, 2) : "None"}`;
 
   const llmStartTime = Date.now();
 

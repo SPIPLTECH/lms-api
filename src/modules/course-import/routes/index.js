@@ -12,6 +12,7 @@ const requireInstructor = [verifyToken, checkRole(["ADMIN", "INSTRUCTOR"])];
 router.get("/template", ...requireInstructor, controller.getTemplate);
 router.post("/json", ...requireInstructor, jsonUpload.single("package"), controller.processJsonJob);
 router.post("/generate", ...requireInstructor, jsonUpload.single("package"), controller.processJsonJob);
+router.post("/apply", ...requireInstructor, controller.applyAiEntity);
 
 router.get("/jobs", ...requireInstructor, controller.listJobs);
 router.post("/jobs", ...requireInstructor, packageUpload.single("package"), controller.uploadPackage);

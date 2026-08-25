@@ -394,7 +394,7 @@ async function importV2Manifest(canonicalJson, instructorId) {
       const questionRows = [];
       const quizQuestionRows = [];
 
-      const processQuizDef = (quizDef, targetModuleId = null) => {
+      const processQuizDef = (quizDef, targetModuleId = null, targetLessonId = null, targetTopicId = null) => {
         const quizId = crypto.randomUUID();
         quizRows.push({
           id: quizId,
@@ -406,6 +406,8 @@ async function importV2Manifest(canonicalJson, instructorId) {
           status: "ACTIVE",
           courseId: courseRecord.id,
           moduleId: targetModuleId,
+          lessonId: targetLessonId,
+          topicId: targetTopicId,
           batchId: null
         });
 
@@ -441,7 +443,7 @@ async function importV2Manifest(canonicalJson, instructorId) {
 
       // Process Course-Level Quizzes
       for (const courseQuizDef of courseQuizzes) {
-        processQuizDef(courseQuizDef, null);
+        processQuizDef(courseQuizDef, null, null, null);
       }
 
       for (const moduleDef of rawModules) {
@@ -458,7 +460,7 @@ async function importV2Manifest(canonicalJson, instructorId) {
         // Process Module-Level Quizzes
         const modQuizzes = Array.isArray(moduleDef.quizzes) ? moduleDef.quizzes : [];
         for (const modQuizDef of modQuizzes) {
-          processQuizDef(modQuizDef, moduleId);
+          processQuizDef(modQuizDef, moduleId, null, null);
         }
 
         const rawLessons = Array.isArray(moduleDef.lessons) ? moduleDef.lessons : [];
@@ -473,6 +475,12 @@ async function importV2Manifest(canonicalJson, instructorId) {
             moduleId
           });
 
+          // Process Lesson-Level Quizzes
+          const lesQuizzes = Array.isArray(lessonDef.quizzes) ? lessonDef.quizzes : [];
+          for (const lesQuizDef of lesQuizzes) {
+            processQuizDef(lesQuizDef, moduleId, lessonId, null);
+          }
+
           const rawTopics = Array.isArray(lessonDef.topics) ? lessonDef.topics : [];
           for (const topicDef of rawTopics) {
             const topicId = crypto.randomUUID();
@@ -484,6 +492,16 @@ async function importV2Manifest(canonicalJson, instructorId) {
               isPublished: Boolean(topicDef.isPublished),
               lessonId
             });
+
+            // Process Topic-Level Quiz (topicDef.quiz or topicDef.quizzes)
+            const topQuizDef = topicDef.quiz;
+            if (topQuizDef) {
+              processQuizDef(topQuizDef, moduleId, lessonId, topicId);
+            }
+            const topQuizzes = Array.isArray(topicDef.quizzes) ? topicDef.quizzes : [];
+            for (const topQDef of topQuizzes) {
+              processQuizDef(topQDef, moduleId, lessonId, topicId);
+            }
 
             const rawContents = Array.isArray(topicDef.contents) ? topicDef.contents : [];
             for (const contentDef of rawContents) {
