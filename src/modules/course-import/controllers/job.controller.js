@@ -100,6 +100,17 @@ const processJsonJob = async (req, res, next) => {
         context: req.body.context || {},
       });
       console.log(`[AI DEBUG] AI GENERATION END: ${Date.now() - aiStart} ms`);
+
+      // For entity-level scope generations (MODULE, LESSON, TOPIC, CONTENT, QUIZ),
+      // return the generated JSON directly to the frontend without validating against full course schema.
+      if (req.body?.scope && req.body.scope !== "COURSE") {
+        console.log(`[AI DEBUG] AI ENTITY GENERATION SUCCESS | TOTAL REQUEST: ${Date.now() - reqStartTime} ms`);
+        return res.status(200).json({
+          success: true,
+          data: canonicalJson,
+          canonicalJson,
+        });
+      }
     } else if (req.file) {
       sourceFileName = req.file.originalname;
       const rawText = stripMarkdownCodeFences(req.file.buffer.toString("utf-8"));
@@ -167,6 +178,14 @@ const processJsonJob = async (req, res, next) => {
     }
 
     if (job && job.status === "FAILED") {
+      if (req.body?.prompt) {
+        console.log(`[AI DEBUG] AI GENERATION SUCCESS (PROMPT FALLBACK) | TOTAL REQUEST: ${Date.now() - reqStartTime} ms`);
+        return res.status(200).json({
+          success: true,
+          data: canonicalJson,
+          canonicalJson,
+        });
+      }
       console.log(`[AI DEBUG] RESPONSE SEND (FAILED) | TOTAL REQUEST: ${Date.now() - reqStartTime} ms`);
       return res.status(400).json({
         success: false,
