@@ -34,6 +34,14 @@ router.get("/landing-data", async (req, res) => {
           select: {
             id: true
           }
+        },
+        store: {
+          select: {
+            price: true,
+            discountPrice: true,
+            currency: true,
+            isFree: true
+          }
         }
       }
     });
@@ -60,7 +68,16 @@ router.get("/landing-data", async (req, res) => {
         category: course.category || "General",
         status: course.status,
         enrollmentsCount: course.enrollments.length,
-        modulesCount: course.modules.length
+        modulesCount: course.modules.length,
+        lessonsCount: totalLessons,
+        store: course.store
+          ? {
+              price: course.store.price,
+              discountPrice: course.store.discountPrice,
+              currency: course.store.currency,
+              isFree: course.store.isFree
+            }
+          : null
       };
     });
 
