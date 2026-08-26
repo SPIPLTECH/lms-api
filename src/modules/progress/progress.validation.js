@@ -6,6 +6,14 @@ const completeLessonSchema = Joi.object({
   }),
 });
 
+const markContentVisitedSchema = Joi.object({
+  contentIds: Joi.array().items(Joi.string()).min(1).required().messages({
+    "any.required": "contentIds is required",
+    "array.min": "contentIds must contain at least one id"
+  }),
+});
+
 module.exports = {
-  completeLessonSchema
+  completeLessonSchema,
+  markContentVisitedSchema
 };

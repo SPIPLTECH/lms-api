@@ -83,6 +83,7 @@ model StudentProfile {
   certificates                Certificate[]
   enrollments                 Enrollment[]
   progress                    Progress[]
+  contentProgress             ContentProgress[]
   quizSubmissions             QuizSubmission[]
   reviews                     Review[]
   stickyNotes                 StickyNote[]
@@ -245,8 +246,22 @@ model Content {
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
   topic       Topic       @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  visits      ContentProgress[]
 
   @@unique([topicId, order])
+}
+
+model ContentProgress {
+  id        String         @id @default(cuid())
+  studentId String
+  contentId String
+  visitedAt DateTime       @default(now())
+  content   Content        @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, contentId])
+  @@index([studentId])
+  @@index([contentId])
 }
 
 model LessonQuery {
