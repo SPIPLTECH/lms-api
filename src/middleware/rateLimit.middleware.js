@@ -33,21 +33,9 @@ const llmRateLimiter = rateLimit({
   }
 });
 
-const mentorRateLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 30, // Limit each IP to 30 chatbot mentor requests per 5 minutes
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    success: false,
-    message: "Too many mentor requests, please try again shortly."
-  }
-});
-
 module.exports = {
   authRateLimiter,
   passwordResetRateLimiter,
-  llmRateLimiter,
-  mentorRateLimiter
+  llmRateLimiter
 };
 

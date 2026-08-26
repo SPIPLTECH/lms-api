@@ -896,8 +896,7 @@ const deleteCourse = async (courseId, userId, userRole) => {
     lessonQueriesCount,
     stickyNotesCount,
     batchesCount,
-    studentStatesCount,
-    studentCourseStatesCount
+    studentStatesCount
   ] = await Promise.all([
     prisma.quizSubmission.count({ where: { quiz: { courseId } } }),
     prisma.assignmentSubmission.count({ where: { assignment: { courseId } } }),
@@ -905,8 +904,7 @@ const deleteCourse = async (courseId, userId, userRole) => {
     prisma.lessonQuery.count({ where: { lesson: { module: { courseId } } } }),
     prisma.stickyNote.count({ where: { lesson: { module: { courseId } } } }),
     prisma.batch.count({ where: { courseId } }),
-    prisma.studentState.count({ where: { courseId } }),
-    prisma.studentCourseState.count({ where: { courseId } })
+    prisma.studentState.count({ where: { courseId } })
   ]);
 
   const hasStudentData =
@@ -919,8 +917,7 @@ const deleteCourse = async (courseId, userId, userRole) => {
     lessonQueriesCount > 0 ||
     stickyNotesCount > 0 ||
     batchesCount > 0 ||
-    studentStatesCount > 0 ||
-    studentCourseStatesCount > 0;
+    studentStatesCount > 0;
 
   if (hasStudentData) {
     const error = new ApiError(
