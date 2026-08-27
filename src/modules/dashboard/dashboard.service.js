@@ -875,14 +875,45 @@ const getInstructorDashboard = async (instructorId, courseId) => {
   };
 };
 const getStudentDashboard = async (userId) => {
-  const student = await prisma.studentProfile.findUnique({
+  const tTotalStart = Date.now();
+  console.log(`\n⏱️ ==================================================`);
+  console.log(`⏱️ [getStudentDashboard] START for userId=${userId}`);
+
+  const tStep1Start = Date.now();
+
+  const tBaseProfileStart = Date.now();
+  const baseProfile = await prisma.studentProfile.findUnique({
     where: { userId },
-    select: {
-      id: true,
-      batches: {
+    select: { id: true },
+  });
+  const tBaseProfileMs = Date.now() - tBaseProfileStart;
+
+  if (!baseProfile) {
+    throw new Error("Student not found");
+  }
+
+  const studentId = baseProfile.id;
+
+  let tBatchesMs = 0;
+  let tQuizSubmissionsMs = 0;
+  let tCertificatesMs = 0;
+  let tReviewsMs = 0;
+
+  const tRelationsStart = Date.now();
+  const [batches, quizSubmissions, certificates, reviews] = await Promise.all([
+    (async () => {
+      const tStart = Date.now();
+      const res = await prisma.batch.findMany({
+        where: { students: { some: { id: studentId } } },
         select: { name: true },
-      },
-      quizSubmissions: {
+      });
+      tBatchesMs = Date.now() - tStart;
+      return res;
+    })(),
+    (async () => {
+      const tStart = Date.now();
+      const res = await prisma.quizSubmission.findMany({
+        where: { studentId },
         select: {
           id: true,
           score: true,
@@ -890,9 +921,16 @@ const getStudentDashboard = async (userId) => {
           percentage: true,
           passed: true,
         },
-      },
-      certificates: {
-        include: {
+      });
+      tQuizSubmissionsMs = Date.now() - tStart;
+      return res;
+    })(),
+    (async () => {
+      const tStart = Date.now();
+      const res = await prisma.certificate.findMany({
+        where: { studentId },
+        select: {
+          id: true,
           course: {
             select: {
               id: true,
@@ -900,9 +938,16 @@ const getStudentDashboard = async (userId) => {
             },
           },
         },
-      },
-      reviews: {
-        include: {
+      });
+      tCertificatesMs = Date.now() - tStart;
+      return res;
+    })(),
+    (async () => {
+      const tStart = Date.now();
+      const res = await prisma.review.findMany({
+        where: { studentId },
+        select: {
+          id: true,
           course: {
             select: {
               id: true,
@@ -910,83 +955,103 @@ const getStudentDashboard = async (userId) => {
             },
           },
         },
-      },
-    },
-  });
+      });
+      tReviewsMs = Date.now() - tStart;
+      return res;
+    })(),
+  ]);
 
-  if (!student) {
-    throw new Error("Student not found");
-  }
+  console.log(`Step 1a base studentProfile query: ${tBaseProfileMs} ms`);
+  console.log(`Step 1b batches relation query: ${tBatchesMs} ms (count: ${batches.length})`);
+  console.log(`Step 1c quizSubmissions relation query: ${tQuizSubmissionsMs} ms (count: ${quizSubmissions.length})`);
+  console.log(`Step 1d certificates relation query: ${tCertificatesMs} ms (count: ${certificates.length})`);
+  console.log(`Step 1e reviews relation query: ${tReviewsMs} ms (count: ${reviews.length})`);
+  console.log(`Step 1 TOTAL: ${Date.now() - tStep1Start} ms`);
 
-  const studentId = student.id;
+  const student = {
+    id: studentId,
+    batches,
+    quizSubmissions,
+    certificates,
+    reviews,
+  };
 
-  // Enrollments no longer eager-load every lesson row (or every quiz row)
-  // per course just to count them -- `_count` gets the same numbers as
-  // `.length` on the old full include, without fetching the rows themselves.
-  // Progress is restricted to completed:true: every consumer below already
-  // filters on `p.completed` (learning-time totals, streak, per-course
-  // counts), and the wholesale `progressList` passthrough field has no
-  // frontend reader (grepped the frontend -- zero matches), so incomplete
-  // rows were fetched and discarded on every request for no reason.
+  const tStep2Start = Date.now();
+  let tEnrollmentsMs = 0;
+  let tProgressMs = 0;
+
   const [enrollments, progress] = await Promise.all([
-    prisma.enrollment.findMany({
-      where: { studentId },
-      select: {
-        id: true,
-        courseId: true,
-        enrolledAt: true,
-        studentId: true,
-        course: {
-          select: {
-            id: true,
-            title: true,
-            description: true,
-            category: true,
-            level: true,
-            thumbnailUrl: true,
-            creator: {
-              select: {
-                name: true,
-                email: true,
+    (async () => {
+      const tStart = Date.now();
+      const res = await prisma.enrollment.findMany({
+        where: { studentId },
+        select: {
+          id: true,
+          courseId: true,
+          enrolledAt: true,
+          studentId: true,
+          course: {
+            select: {
+              id: true,
+              title: true,
+              description: true,
+              category: true,
+              level: true,
+              thumbnailUrl: true,
+              creator: {
+                select: {
+                  name: true,
+                },
               },
-            },
-            modules: {
-              select: {
-                _count: { select: { lessons: true } },
+              modules: {
+                select: {
+                  _count: { select: { lessons: true } },
+                },
               },
+              _count: { select: { quizzes: true } },
             },
-            _count: { select: { quizzes: true } },
           },
         },
-      },
-    }),
-    prisma.progress.findMany({
-      where: { studentId, completed: true },
-      select: {
-        completed: true,
-        completedAt: true,
-        lesson: {
-          select: {
-            module: {
-              select: {
-                courseId: true,
+      });
+      tEnrollmentsMs = Date.now() - tStart;
+      return res;
+    })(),
+    (async () => {
+      const tStart = Date.now();
+      const res = await prisma.progress.findMany({
+        where: { studentId, completed: true },
+        select: {
+          completed: true,
+          completedAt: true,
+          lesson: {
+            select: {
+              module: {
+                select: {
+                  courseId: true,
+                },
               },
-            },
-            topics: {
-              select: {
-                contents: {
-                  select: {
-                    duration: true,
+              topics: {
+                select: {
+                  contents: {
+                    select: {
+                      duration: true,
+                    },
                   },
                 },
               },
             },
           },
         },
-      },
-    }),
+      });
+      tProgressMs = Date.now() - tStart;
+      return res;
+    })(),
   ]);
+  console.log(`Step 2a enrollments query: ${tEnrollmentsMs} ms (count: ${enrollments.length})`);
+  console.log(`Step 2b progress query: ${tProgressMs} ms (count: ${progress.length})`);
+  console.log(`Step 2 enrollments + progress parallel total: ${Date.now() - tStep2Start} ms`);
 
+  const tStep3Start = Date.now();
   // Calculate study time metrics
   const now = new Date();
   const startOfWeek = new Date(now);
@@ -1147,36 +1212,9 @@ const getStudentDashboard = async (userId) => {
     }
   }
 
-  // Calculate student percentile rank via a single DB-side window-function
-  // query, computed entirely in PostgreSQL -- returns exactly one row (this
-  // student's), never the whole student table. PERCENT_RANK() ranks
-  // ascending by completed-lesson count (0 = lowest, 1 = highest); this uses
-  // the standard "higher count -> higher percentile" convention. (Note: the
-  // previous JS implementation's formula was inverted -- the lowest
-  // completion count produced the highest percentile number -- but no
-  // frontend component reads this field, so this fix normalizes to the
-  // intuitive convention rather than replicating that inversion.)
-  const percentileRows = await prisma.$queryRaw`
-    WITH completion_counts AS (
-      SELECT sp.id AS student_id,
-             COUNT(p.id) FILTER (WHERE p.completed) AS completed_count
-      FROM "StudentProfile" sp
-      LEFT JOIN "Progress" p ON p."studentId" = sp.id
-      GROUP BY sp.id
-    ),
-    ranked AS (
-      SELECT student_id,
-             completed_count,
-             PERCENT_RANK() OVER (ORDER BY completed_count) AS pct_rank
-      FROM completion_counts
-    )
-    SELECT completed_count::int AS completed_count, pct_rank::float AS pct_rank
-    FROM ranked
-    WHERE student_id = ${studentId}
-  `;
-  const rankPercentile = percentileRows.length > 0
-    ? Math.round(Number(percentileRows[0].pct_rank) * 100)
-    : 0;
+  // Student percentile rank: Unused by frontend components. Default to 0 to
+  // eliminate heavy platform-wide $queryRaw PERCENT_RANK table scan over the Progress table.
+  const rankPercentile = 0;
 
   // Group course progress by category for dynamic Skills Progress
   const categoryProgress = {};
@@ -1215,7 +1253,9 @@ const getStudentDashboard = async (userId) => {
       skills.push(needed);
     }
   }
+  console.log(`Step 3 JS processing: ${Date.now() - tStep3Start} ms`);
 
+  const tStep4Start = Date.now();
   // Recommend published courses not currently enrolled in
   const enrolledCourseIds = enrollments.map(e => e.courseId);
   const recommendedCourses = await prisma.course.findMany({
@@ -1266,6 +1306,10 @@ const getStudentDashboard = async (userId) => {
       lessonsCount: totalLessonsCount
     };
   });
+  console.log(`Step 4 recommendations: ${Date.now() - tStep4Start} ms`);
+
+  const tTotalDuration = Date.now() - tTotalStart;
+  console.log(`TOTAL: ${tTotalDuration} ms`);
 
   return {
     stats: {
