@@ -168,9 +168,14 @@ const attachGradableQuestion = async (block, { courseId, moduleId, lessonId, les
   }
 };
 
-const importJob = async (jobId, instructorId) => {
+const importJob = async (jobId, instructorId, fallbackCanonicalJson = null) => {
   const job = await getJob(jobId);
-  if (!job) throw new ApiError(404, "Import job not found.");
+  if (!job) {
+    if (fallbackCanonicalJson || (jobId && (jobId.startsWith("draft-") || jobId === "draft"))) {
+      return await v2PackageImporter.importV2Manifest(fallbackCanonicalJson || {}, instructorId);
+    }
+    throw new ApiError(404, "Import job not found.");
+  }
 
   if (job.status === "COMPLETED") {
     return job;
@@ -307,4 +312,350 @@ const deleteJob = async (jobId) => {
   return prisma.courseImportJob.delete({ where: { id: jobId } });
 };
 
-module.exports = { createJob, createJsonJob, getJob, listJobs, processJob, updateCanonicalJson, importJob, deleteJob };
+/**
+ * Applies AI-generated nested entity structures (MODULE, LESSON, TOPIC, CONTENT, QUIZ) into the database in a SINGLE ATOMIC TRANSACTION.
+ * If any step fails, the entire operation is rolled back, guaranteeing zero partial persistence.
+ */
+const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId }) => {
+  if (!scope || !generatedData) {
+    throw new ApiError(400, "Scope and generatedData are required for AI entity application.");
+  }
+
+  const scopeUpper = scope.toUpperCase();
+  const { courseId, moduleId, lessonId, topicId, position, quizLevel } = context;
+
+  return await prisma.$transaction(async (tx) => {
+    // Helper to calculate target order and shift existing siblings if needed
+    const getPositionalOrderAndShift = async (tableName, parentFilter, pos) => {
+      const existing = await tx[tableName].findMany({
+        where: parentFilter,
+        orderBy: { order: "asc" },
+        select: { id: true, order: true },
+      });
+
+      if (!pos || pos === "AUTO_END" || pos === "END") {
+        const maxOrd = existing.length > 0 ? Math.max(...existing.map((e) => e.order || 0)) : 0;
+        return maxOrd + 1;
+      }
+
+      if (pos === "BEGINNING") {
+        for (const item of existing) {
+          await tx[tableName].update({
+            where: { id: item.id },
+            data: { order: (item.order || 0) + 1 },
+          });
+        }
+        return 1;
+      }
+
+      if (pos.startsWith("AFTER_")) {
+        const afterId = pos.replace("AFTER_", "");
+        const targetItem = existing.find((e) => String(e.id) === String(afterId));
+        const targetOrder = targetItem ? targetItem.order : (existing.length > 0 ? Math.max(...existing.map((e) => e.order || 0)) : 0);
+
+        for (const item of existing) {
+          if (item.order > targetOrder) {
+            await tx[tableName].update({
+              where: { id: item.id },
+              data: { order: item.order + 1 },
+            });
+          }
+        }
+        return targetOrder + 1;
+      }
+
+      const maxOrd = existing.length > 0 ? Math.max(...existing.map((e) => e.order || 0)) : 0;
+      return maxOrd + 1;
+    };
+
+    // Helper to process and create Quiz + Questions in transaction
+    const createQuizWithQuestionsInTx = async (quizDef, levelIds) => {
+      if (!quizDef || typeof quizDef !== "object") return null;
+
+      const quizRecord = await tx.quiz.create({
+        data: {
+          title: quizDef.title || "AI Generated Quiz",
+          description: quizDef.description ?? null,
+          passingScore: quizDef.passingScore ? Number(quizDef.passingScore) : 70,
+          timeLimit: quizDef.timeLimit ? Number(quizDef.timeLimit) : 15,
+          isPublished: true,
+          status: "ACTIVE",
+          courseId: levelIds.courseId || courseId,
+          moduleId: levelIds.moduleId || null,
+          lessonId: levelIds.lessonId || null,
+          topicId: levelIds.topicId || null,
+          batchId: null,
+        },
+      });
+
+      const questions = Array.isArray(quizDef.questions) ? quizDef.questions : [];
+      for (let qIdx = 0; qIdx < questions.length; qIdx++) {
+        const qDef = questions[qIdx];
+        const questionRecord = await tx.question.create({
+          data: {
+            courseId: levelIds.courseId || courseId,
+            moduleId: levelIds.moduleId || null,
+            question: qDef.question || `Question ${qIdx + 1}`,
+            questionType: (qDef.questionType || "MCQ_SINGLE").toUpperCase(),
+            options: qDef.options || ["Option 1", "Option 2", "Option 3", "Option 4"],
+            correctAnswer: qDef.correctAnswer || (Array.isArray(qDef.options) ? qDef.options[0] : "Option 1"),
+            explanation: qDef.explanation ?? null,
+            marks: qDef.marks ? Number(qDef.marks) : 1,
+            negativeMarks: qDef.negativeMarks ? Number(qDef.negativeMarks) : 0,
+            difficulty: (qDef.difficulty || "MEDIUM").toUpperCase(),
+            createdBy: instructorId,
+          },
+        });
+
+        await tx.quizQuestion.create({
+          data: {
+            quizId: quizRecord.id,
+            questionId: questionRecord.id,
+            order: qIdx + 1,
+            marks: qDef.marks ? Number(qDef.marks) : 1,
+            isMandatory: true,
+          },
+        });
+      }
+
+      return quizRecord;
+    };
+
+    if (scopeUpper === "MODULE") {
+      if (!courseId) throw new ApiError(400, "courseId is required to create a Module.");
+
+      const targetOrder = await getPositionalOrderAndShift("module", { courseId }, position);
+
+      const createdModule = await tx.module.create({
+        data: {
+          courseId,
+          title: generatedData.title || "AI Generated Module",
+          description: generatedData.description ?? "",
+          order: targetOrder,
+          isPublished: true,
+        },
+      });
+
+      // Module-level quizzes
+      const modQuizzes = Array.isArray(generatedData.quizzes) ? generatedData.quizzes : [];
+      for (const qz of modQuizzes) {
+        await createQuizWithQuestionsInTx(qz, { courseId, moduleId: createdModule.id });
+      }
+
+      // Lessons -> Topics -> Contents + Quizzes
+      const lessons = Array.isArray(generatedData.lessons) ? generatedData.lessons : [];
+      for (let lIdx = 0; lIdx < lessons.length; lIdx++) {
+        const lDef = lessons[lIdx];
+        const createdLesson = await tx.lesson.create({
+          data: {
+            moduleId: createdModule.id,
+            title: lDef.title || `Lesson ${lIdx + 1}`,
+            description: lDef.description ?? "",
+            order: lIdx + 1,
+            isPublished: true,
+          },
+        });
+
+        const lesQuizzes = Array.isArray(lDef.quizzes) ? lDef.quizzes : [];
+        for (const qz of lesQuizzes) {
+          await createQuizWithQuestionsInTx(qz, { courseId, moduleId: createdModule.id, lessonId: createdLesson.id });
+        }
+
+        const topics = Array.isArray(lDef.topics) ? lDef.topics : [];
+        for (let tIdx = 0; tIdx < topics.length; tIdx++) {
+          const tDef = topics[tIdx];
+          const createdTopic = await tx.topic.create({
+            data: {
+              lessonId: createdLesson.id,
+              title: tDef.title || `Topic ${tIdx + 1}`,
+              description: tDef.description ?? "",
+              order: tIdx + 1,
+              isPublished: true,
+            },
+          });
+
+          if (tDef.quiz) {
+            await createQuizWithQuestionsInTx(tDef.quiz, { courseId, moduleId: createdModule.id, lessonId: createdLesson.id, topicId: createdTopic.id });
+          }
+
+          const contents = Array.isArray(tDef.contents) ? tDef.contents : [];
+          for (let cIdx = 0; cIdx < contents.length; cIdx++) {
+            const cDef = contents[cIdx];
+            let type = (cDef.type || "HTML").toUpperCase();
+            if (type === "TEXT_BLOCK" || type === "MARKDOWN") type = "HTML";
+            if (type === "CODE_BLOCK" || type === "SNIPPET") type = "CODE";
+
+            await tx.content.create({
+              data: {
+                topicId: createdTopic.id,
+                type,
+                title: cDef.title || `Content Block ${cIdx + 1}`,
+                htmlContent: cDef.htmlContent || cDef.code || cDef.body || cDef.content || "",
+                videoUrl: cDef.videoUrl ?? null,
+                fileUrl: cDef.fileUrl ?? null,
+                externalUrl: cDef.externalUrl ?? null,
+                order: cIdx + 1,
+              },
+            });
+          }
+        }
+      }
+
+      return createdModule;
+    } else if (scopeUpper === "LESSON") {
+      const targetModuleId = moduleId;
+      if (!targetModuleId) throw new ApiError(400, "moduleId is required to create a Lesson.");
+
+      const targetOrder = await getPositionalOrderAndShift("lesson", { moduleId: targetModuleId }, position);
+
+      const createdLesson = await tx.lesson.create({
+        data: {
+          moduleId: targetModuleId,
+          title: generatedData.title || "AI Generated Lesson",
+          description: generatedData.description ?? "",
+          order: targetOrder,
+          isPublished: true,
+        },
+      });
+
+      const lesQuizzes = Array.isArray(generatedData.quizzes) ? generatedData.quizzes : [];
+      for (const qz of lesQuizzes) {
+        await createQuizWithQuestionsInTx(qz, { courseId, moduleId: targetModuleId, lessonId: createdLesson.id });
+      }
+
+      const topics = Array.isArray(generatedData.topics) ? generatedData.topics : [];
+      for (let tIdx = 0; tIdx < topics.length; tIdx++) {
+        const tDef = topics[tIdx];
+        const createdTopic = await tx.topic.create({
+          data: {
+            lessonId: createdLesson.id,
+            title: tDef.title || `Topic ${tIdx + 1}`,
+            description: tDef.description ?? "",
+            order: tIdx + 1,
+            isPublished: true,
+          },
+        });
+
+        if (tDef.quiz) {
+          await createQuizWithQuestionsInTx(tDef.quiz, { courseId, moduleId: targetModuleId, lessonId: createdLesson.id, topicId: createdTopic.id });
+        }
+
+        const contents = Array.isArray(tDef.contents) ? tDef.contents : [];
+        for (let cIdx = 0; cIdx < contents.length; cIdx++) {
+          const cDef = contents[cIdx];
+          let type = (cDef.type || "HTML").toUpperCase();
+          if (type === "TEXT_BLOCK" || type === "MARKDOWN") type = "HTML";
+          if (type === "CODE_BLOCK" || type === "SNIPPET") type = "CODE";
+
+          await tx.content.create({
+            data: {
+              topicId: createdTopic.id,
+              type,
+              title: cDef.title || `Content Block ${cIdx + 1}`,
+              htmlContent: cDef.htmlContent || cDef.code || cDef.body || cDef.content || "",
+              videoUrl: cDef.videoUrl ?? null,
+              fileUrl: cDef.fileUrl ?? null,
+              externalUrl: cDef.externalUrl ?? null,
+              order: cIdx + 1,
+            },
+          });
+        }
+      }
+
+      return createdLesson;
+    } else if (scopeUpper === "TOPIC") {
+      const targetLessonId = lessonId;
+      if (!targetLessonId) throw new ApiError(400, "lessonId is required to create a Topic.");
+
+      const targetOrder = await getPositionalOrderAndShift("topic", { lessonId: targetLessonId }, position);
+
+      const createdTopic = await tx.topic.create({
+        data: {
+          lessonId: targetLessonId,
+          title: generatedData.title || "AI Generated Topic",
+          description: generatedData.description ?? "",
+          order: targetOrder,
+          isPublished: true,
+        },
+      });
+
+      if (generatedData.quiz) {
+        await createQuizWithQuestionsInTx(generatedData.quiz, { courseId, moduleId, lessonId: targetLessonId, topicId: createdTopic.id });
+      }
+
+      const contents = Array.isArray(generatedData.contents) ? generatedData.contents : [];
+      for (let cIdx = 0; cIdx < contents.length; cIdx++) {
+        const cDef = contents[cIdx];
+        let type = (cDef.type || "HTML").toUpperCase();
+        if (type === "TEXT_BLOCK" || type === "MARKDOWN") type = "HTML";
+        if (type === "CODE_BLOCK" || type === "SNIPPET") type = "CODE";
+
+        await tx.content.create({
+          data: {
+            topicId: createdTopic.id,
+            type,
+            title: cDef.title || `Content Block ${cIdx + 1}`,
+            htmlContent: cDef.htmlContent || cDef.code || cDef.body || cDef.content || "",
+            videoUrl: cDef.videoUrl ?? null,
+            fileUrl: cDef.fileUrl ?? null,
+            externalUrl: cDef.externalUrl ?? null,
+            order: cIdx + 1,
+          },
+        });
+      }
+
+      return createdTopic;
+    } else if (scopeUpper === "CONTENT") {
+      const targetTopicId = topicId;
+      if (!targetTopicId) throw new ApiError(400, "topicId is required to create Content blocks.");
+
+      const contents = Array.isArray(generatedData.contents)
+        ? generatedData.contents
+        : Array.isArray(generatedData)
+        ? generatedData
+        : [generatedData];
+
+      const startOrder = await getPositionalOrderAndShift("content", { topicId: targetTopicId }, position);
+
+      const createdContents = [];
+      for (let cIdx = 0; cIdx < contents.length; cIdx++) {
+        const cDef = contents[cIdx];
+        let type = (cDef.type || "HTML").toUpperCase();
+        if (type === "TEXT_BLOCK" || type === "MARKDOWN") type = "HTML";
+        if (type === "CODE_BLOCK" || type === "SNIPPET") type = "CODE";
+
+        const createdCnt = await tx.content.create({
+          data: {
+            topicId: targetTopicId,
+            type,
+            title: cDef.title || "Content Block",
+            htmlContent: cDef.htmlContent || cDef.code || cDef.body || cDef.content || "",
+            videoUrl: cDef.videoUrl ?? null,
+            fileUrl: cDef.fileUrl ?? null,
+            externalUrl: cDef.externalUrl ?? null,
+            order: startOrder + cIdx,
+          },
+        });
+        createdContents.push(createdCnt);
+      }
+
+      return createdContents;
+    } else if (scopeUpper === "QUIZ") {
+      const level = quizLevel || "COURSE";
+      let levelModuleId = null;
+
+      if (level === "MODULE" || level === "LESSON" || level === "TOPIC") {
+        levelModuleId = moduleId || null;
+      }
+
+      return await createQuizWithQuestionsInTx(generatedData, { courseId, moduleId: levelModuleId, lessonId, topicId });
+    } else {
+      throw new ApiError(400, `Unsupported scope '${scope}' for AI entity application.`);
+    }
+  }, {
+    maxWait: 20000,
+    timeout: 60000,
+  });
+};
+
+module.exports = { createJob, createJsonJob, getJob, listJobs, processJob, updateCanonicalJson, importJob, deleteJob, applyAiEntity };

@@ -2,7 +2,12 @@ const prisma = require("../../../config/database");
 
 const verifyCourseImportOwnership = async (req, res, next) => {
   try {
-    const job = await prisma.courseImportJob.findUnique({ where: { id: req.params.jobId } });
+    const jobId = req.params.jobId;
+    if (jobId && (jobId.startsWith("draft-") || jobId === "draft")) {
+      return next();
+    }
+
+    const job = await prisma.courseImportJob.findUnique({ where: { id: jobId } });
 
     if (!job) {
       return res.status(404).json({ success: false, message: "Import job not found." });

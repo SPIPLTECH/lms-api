@@ -1,4 +1,5 @@
 const ollamaClient = require("./ollama.client");
+const geminiProvider = require("./geminiProvider");
 const llmConfig = require("./llm.config");
 
 const buildPromptWithContext = (prompt, context) => {
@@ -18,6 +19,18 @@ const nsToMs = (nanoseconds) =>
 // The provider-independent LLM Gateway. This is the only entry point the
 // rest of the application should ever call to reach an LLM.
 const generate = async ({ systemPrompt, prompt, context, think = false } = {}) => {
+  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) {
+    console.log("[LLM Gateway] Routing request to Gemini Provider (@google/genai)...");
+    const geminiRes = await geminiProvider.generate({ systemPrompt, prompt, context });
+    return {
+      response: geminiRes.response,
+      usage: geminiRes.usage,
+      latency: { totalMs: null },
+      model: geminiRes.model,
+      thinkingEnabled: false,
+    };
+  }
+
   const result = await ollamaClient.chat({
     systemPrompt,
     prompt: buildPromptWithContext(prompt, context),

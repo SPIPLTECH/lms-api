@@ -3,54 +3,124 @@ const { validateV2Manifest } = require("./v2PackageImporter.service");
 const ApiError = require("../../../utils/ApiError");
 
 const SYSTEM_PROMPT = `You are an expert LMS course content generator for Orange Tree LMS.
-Generate complete, valid course packages in Canonical Course JSON v2 format.
+Generate complete, valid course packages or entity structures for ANY subject area (Computer Science, Mathematics, Physics, Business, Marketing, Cybersecurity, History, Agriculture, Finance, Languages, Professional Training, etc.).
 
-STRICT CONSTRAINTS & OUTPUT SIZE LIMITS:
+STRICT DOWNWARD HIERARCHICAL GENERATION RULES:
 1. Output raw JSON only. Do NOT output markdown fences (\`\`\`json), thinking tags, reasoning text, or preamble.
-2. ULTRA-CONCISE BREVITY RULES (MINIMIZE OUTPUT TOKENS FOR MAXIMUM SPEED):
-   - Course description: maximum 1 short sentence.
-   - Module description: maximum 1 short sentence.
-   - Lesson description: maximum 1 short sentence.
-   - Topic explanation / htmlContent: maximum 1 short sentence.
-   - Code example: 3-5 lines of code.
-   - Quiz question: maximum 1 short sentence.
-   - Quiz option: maximum 3-5 words.
-   - Quiz feedback/explanation: maximum 1 short sentence.
-   - Exactly 3 quiz questions per requested quiz.
-   - No unnecessary topics, extra lessons, extra quizzes, or verbose educational prose.
+2. Generation may ONLY move DOWN the hierarchy from the selected entity root. NEVER generate an entity above the selected entity.
+3. NON-COURSE SCOPE GENERATION FORMATS:
 
-3. STRUCTURE:
-   Course
-   ├── metadata (title, description, category, level, estimatedLearningHours)
-   ├── settings (visibility, certificatesEnabled, discussionEnabled, dripContentEnabled)
-   ├── quizzes[] (Optional Course-level quizzes)
-   └── modules[]
-       ├── title, description, order, isPublished
-       ├── quizzes[] (Module-level quizzes)
-       │   └── title, description, passingScore, timeLimit, isPublished, questions[]
-       └── lessons[]
-           ├── title, description, order, isPublished
-           └── topics[]
-               ├── title, description, order, isPublished
-               └── contents[] ({ type: "HTML"|"VIDEO"|"TEXT"|"CODE", title, order, htmlContent, videoUrl })
+   - If Scope === "MODULE" (GENERATION DEPTH: FULL_MODULE):
+     Generate 1 Module containing Lessons, Topics per lesson, Content blocks for each topic, and Quizzes for the generated hierarchy.
+     Output JSON Schema:
+     {
+       "title": "Module Title",
+       "description": "Module Description",
+       "quizzes": [{ "title": "Module Quiz Title", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [...] }],
+       "lessons": [
+         {
+           "title": "Lesson Title",
+           "description": "Lesson Description",
+           "quizzes": [{ "title": "Lesson Quiz Title", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [...] }],
+           "topics": [
+             {
+               "title": "Topic Title",
+               "description": "Topic Description",
+               "quiz": { "title": "Topic Quiz Title", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [...] },
+               "contents": [
+                 { "type": "HTML"|"CODE"|"TEXT"|"VIDEO", "title": "Content Title", "htmlContent": "..." }
+               ]
+             }
+           ]
+         }
+       ]
+     }
+     *CRITICAL*: Do NOT generate Course metadata or Course wrapper above Module.
 
-4. QUIZ SCHEMA & PLACEMENT:
-   - Quizzes belong ONLY in course.quizzes[] or modules[].quizzes[]. DO NOT place quizzes inside topics[].contents[].
-   - Question Object Schema (questionType MUST be exactly "MCQ_SINGLE"):
+   - If Scope === "LESSON" (GENERATION DEPTH: FULL_LESSON):
+     Generate 1 Lesson containing Topics, Content blocks, and Quizzes.
+     Output JSON Schema:
+     {
+       "title": "Lesson Title",
+       "description": "Lesson Description",
+       "quizzes": [{ "title": "Lesson Quiz Title", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [...] }],
+       "topics": [
+         {
+           "title": "Topic Title",
+           "description": "Topic Description",
+           "quiz": { "title": "Topic Quiz Title", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [...] },
+           "contents": [
+             { "type": "HTML"|"CODE"|"TEXT"|"VIDEO", "title": "Content Title", "htmlContent": "..." }
+           ]
+         }
+       ]
+     }
+     *CRITICAL*: Do NOT generate a Module above Lesson.
+
+   - If Scope === "TOPIC" (GENERATION DEPTH: FULL_TOPIC):
+     Generate 1 Topic containing Content blocks and a Quiz.
+     Output JSON Schema:
+     {
+       "title": "Topic Title",
+       "description": "Topic Description",
+       "contents": [
+         { "type": "HTML"|"CODE"|"TEXT"|"VIDEO", "title": "Content Title", "htmlContent": "..." }
+       ],
+       "quiz": {
+         "title": "Topic Quiz Title",
+         "description": "...",
+         "passingScore": 70,
+         "timeLimit": 15,
+         "questions": [...]
+       }
+     }
+     *CRITICAL*: Do NOT generate a Module or Lesson above Topic.
+
+   - If Scope === "CONTENT" (GENERATION DEPTH: CONTENT_ONLY):
+     Generate Content blocks only under the selected existing topic.
+     Output JSON Schema:
+     {
+       "contents": [
+         { "type": "HTML"|"CODE"|"TEXT", "title": "Content Title", "htmlContent": "..." }
+       ]
+     }
+     *CRITICAL*: Do NOT generate a Module, Lesson, Topic, or Quiz.
+
+   - If Scope === "QUIZ" (GENERATION DEPTH: QUIZ_ONLY):
+     Generate 1 Quiz only.
+     Output JSON Schema:
+     {
+       "title": "Quiz Title",
+       "description": "Quiz Description",
+       "passingScore": 70,
+       "timeLimit": 15,
+       "questions": [
+         {
+           "question": "Question text?",
+           "questionType": "MCQ_SINGLE",
+           "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+           "correctAnswer": "Option 1",
+           "explanation": "Brief explanation."
+         }
+       ]
+     }
+     *CRITICAL*: Do NOT generate a Module, Lesson, Topic, or Content.
+
+4. QUIZ SCHEMA & QUESTIONS:
+   - Question Object Schema (questionType MUST be "MCQ_SINGLE"):
      {
        "question": "Question text?",
        "questionType": "MCQ_SINGLE",
        "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
        "correctAnswer": "Option 1",
-       "explanation": "Brief 1-sentence explanation.",
+       "explanation": "Brief explanation.",
        "marks": 1,
        "negativeMarks": 0,
        "difficulty": "EASY"
      }
 
-5. Supported QuestionType values: "MCQ_SINGLE", "MCQ_MULTI", "TRUE_FALSE", "FILL_BLANK", "SHORT_ANSWER", "LONG_ANSWER".
-6. Supported ContentType values: "HTML", "VIDEO", "TEXT", "CODE", "DOCUMENT", "PDF", "IMAGE", "AUDIO", "LINK", "PRESENTATION".
-7. Do NOT include database IDs (id, courseId, etc.). Keep string values concise.`;
+5. Supported ContentType values: "HTML", "VIDEO", "TEXT", "CODE", "DOCUMENT", "PDF", "IMAGE", "AUDIO", "LINK", "PRESENTATION".
+6. Do NOT include database IDs (id, courseId, etc.). Keep string values clean and valid JSON.`;
 
 function stripMarkdownCodeFences(str) {
   if (typeof str !== "string") return str;
@@ -99,7 +169,7 @@ function normalizeCourseJson(json) {
       visibility: "PUBLIC",
       certificatesEnabled: true,
       discussionEnabled: true,
-      dripContentEnabled: false
+      dripContentEnabled: false,
     };
   }
 
@@ -138,7 +208,7 @@ function normalizeCourseJson(json) {
               passingScore: 60,
               timeLimit: 15,
               isPublished: true,
-              questions: Array.isArray(cnt.questions) ? cnt.questions : []
+              questions: Array.isArray(cnt.questions) ? cnt.questions : [],
             };
             normalizeQuizDef(qz);
             mod.quizzes.push(qz);
@@ -164,17 +234,32 @@ const generateCourseFromPrompt = async ({ prompt, scope = "COURSE", context = {}
   }
 
   const requestStartTime = Date.now();
-  console.log(`[AI Gen] AI generation started for prompt: "${prompt.trim().slice(0, 40)}..."`);
+  const courseSize = (context.size || "MEDIUM").toUpperCase();
+  console.log(`[AI Gen] AI generation started for size [${courseSize}], prompt: "${prompt.trim().slice(0, 40)}..."`);
 
-  const userPrompt = `Generate a complete LMS course package based on this request:
+  const scopeUpper = (scope || "COURSE").toUpperCase();
+  const depthName = 
+    scopeUpper === "MODULE" ? "FULL_MODULE" :
+    scopeUpper === "LESSON" ? "FULL_LESSON" :
+    scopeUpper === "TOPIC" ? "FULL_TOPIC" :
+    scopeUpper === "CONTENT" ? "CONTENT_ONLY" :
+    scopeUpper === "QUIZ" ? "QUIZ_ONLY" : "FULL_COURSE";
 
+  const userPrompt = `CREATION SCOPE:
+${scopeUpper}
+
+GENERATION DEPTH:
+${depthName}
+
+INSTRUCTOR REQUEST:
 ${prompt.trim()}
 
-Scope: ${scope}
-${context && Object.keys(context).length > 0 ? `Context: ${JSON.stringify(context)}` : ""}`;
+REQUESTED SIZE: ${courseSize}
 
-  const ollamaStartTime = Date.now();
-  console.log(`[AI Gen] Ollama request started...`);
+EXISTING CONTEXT & SIBLING DETAILS:
+${context && Object.keys(context).length > 0 ? JSON.stringify(context, null, 2) : "None"}`;
+
+  const llmStartTime = Date.now();
 
   let llmResult;
   try {
@@ -182,15 +267,16 @@ ${context && Object.keys(context).length > 0 ? `Context: ${JSON.stringify(contex
       systemPrompt: SYSTEM_PROMPT,
       prompt: userPrompt,
       context,
-      think: false, // Ensure reasoning/thinking is explicitly disabled
+      think: false,
     });
   } catch (err) {
     console.error("LLM Generation call error:", err);
-    throw new ApiError(502, `AI generation failed: ${err.message || "Could not reach LLM service."}`);
+    const status = err.statusCode || 502;
+    throw new ApiError(status, err.message || "AI generation failed.");
   }
 
-  const ollamaDuration = Date.now() - ollamaStartTime;
-  console.log(`[AI Gen] Ollama response received: ${ollamaDuration} ms`);
+  const llmDuration = Date.now() - llmStartTime;
+  console.log(`[AI Gen] LLM response received in ${llmDuration} ms`);
 
   const parseStartTime = Date.now();
   const rawResponse = llmResult.response || "";
@@ -200,12 +286,17 @@ ${context && Object.keys(context).length > 0 ? `Context: ${JSON.stringify(contex
   try {
     parsedJson = JSON.parse(cleanedJsonText);
   } catch (parseErr) {
-    console.error("Malformed AI JSON Response:", rawResponse);
-    throw new ApiError(502, `The AI returned an invalid JSON response format. Raw excerpt: ${cleanedJsonText.slice(0, 100)}...`);
+    console.error("Malformed AI JSON Response:", rawResponse.slice(0, 300));
+    throw new ApiError(502, `The AI returned an invalid JSON response format. Excerpt: ${cleanedJsonText.slice(0, 100)}...`);
   }
 
   const parseDuration = Date.now() - parseStartTime;
   console.log(`[AI Gen] JSON parsed: ${parseDuration} ms`);
+
+  if (scope && scope.toUpperCase() !== "COURSE") {
+    console.log(`[AI Gen] Returning generated payload for scope: ${scope}`);
+    return parsedJson;
+  }
 
   const validationStartTime = Date.now();
   const normalizedJson = normalizeCourseJson(parsedJson);
@@ -220,7 +311,7 @@ ${context && Object.keys(context).length > 0 ? `Context: ${JSON.stringify(contex
   console.log(`[AI Gen] validateV2Manifest completed: ${validationDuration} ms`);
 
   const totalDuration = Date.now() - requestStartTime;
-  console.log(`[AI Gen] Total AI generation: ${totalDuration} ms`);
+  console.log(`[AI Gen] Total AI generation for size [${courseSize}]: ${totalDuration} ms`);
 
   return normalizedJson;
 };
