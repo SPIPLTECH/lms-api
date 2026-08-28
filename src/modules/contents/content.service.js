@@ -27,24 +27,26 @@ const getContentById = async (contentId) => {
 };
 
 const createContent = async (data) => {
-  if (data.htmlContent) {
-    data.htmlContent = sanitizeContent(data.htmlContent);
+  const { lessonId, parentContentId, ...contentData } = data;
+
+  if (contentData.htmlContent) {
+    contentData.htmlContent = sanitizeContent(contentData.htmlContent);
   }
 
   // Auto-calculate order if missing or not an integer
-  if (data.order === undefined || data.order === null || isNaN(Number(data.order))) {
+  if (contentData.order === undefined || contentData.order === null || isNaN(Number(contentData.order))) {
     const maxContent = await prisma.content.findFirst({
-      where: { topicId: data.topicId },
+      where: { topicId: contentData.topicId },
       orderBy: { order: "desc" },
       select: { order: true },
     });
-    data.order = maxContent ? maxContent.order + 1 : 1;
+    contentData.order = maxContent ? maxContent.order + 1 : 1;
   } else {
-    data.order = Number(data.order);
+    contentData.order = Number(contentData.order);
   }
 
   return prisma.content.create({
-    data
+    data: contentData
   });
 };
 
@@ -56,17 +58,19 @@ const updateContent = async (contentId, data) => {
     throw error;
   }
 
-  if (data.htmlContent) {
-    data.htmlContent = sanitizeContent(data.htmlContent);
+  const { lessonId, parentContentId, ...contentData } = data;
+
+  if (contentData.htmlContent) {
+    contentData.htmlContent = sanitizeContent(contentData.htmlContent);
   }
-  if (data.order !== undefined && data.order !== null) {
-    data.order = Number(data.order);
+  if (contentData.order !== undefined && contentData.order !== null) {
+    contentData.order = Number(contentData.order);
   }
   return prisma.content.update({
     where: {
       id: contentId
     },
-    data
+    data: contentData
   });
 };
 

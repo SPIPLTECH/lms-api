@@ -81,10 +81,30 @@ const deleteTopic = async (topicId) => {
     throw error;
   }
 
-  return prisma.topic.delete({
-    where: {
-      id: topicId,
-    },
+  return await prisma.$transaction(async (tx) => {
+    // 1. Delete all topic-level quizzes
+    const quizzesToDelete = await tx.quiz.findMany({
+      where: { topicId },
+      select: { id: true }
+    });
+
+    const quizIds = quizzesToDelete.map((q) => q.id);
+
+    if (quizIds.length > 0) {
+      await tx.quizQuestion.deleteMany({ where: { quizId: { in: quizIds } } });
+      await tx.quizSubmission.deleteMany({ where: { quizId: { in: quizIds } } });
+      await tx.quiz.deleteMany({ where: { id: { in: quizIds } } });
+    }
+
+    // 2. Delete contents
+    await tx.content.deleteMany({ where: { topicId } });
+
+    // 3. Delete topic
+    return await tx.topic.delete({
+      where: {
+        id: topicId,
+      },
+    });
   });
 };
 

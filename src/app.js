@@ -139,6 +139,7 @@ app.use("/teaching-goals", teachingGoalRoutes);
 app.use("/calendar", calendarRoutes);
 app.use("/upcoming-tasks", upcomingTasksRoutes);
 app.use("/course-import", courseImportRoutes);
+app.use("/api/ai", courseImportRoutes);
 app.use(
   "/learner-model",
   require("./modules/learner-model/learnerModel.routes")

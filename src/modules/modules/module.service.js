@@ -119,15 +119,63 @@ const updateModule = async (
 const deleteModule = async (
   moduleId
 ) => {
-  const existing = await prisma.module.findUnique({ where: { id: moduleId } });
+  const existing = await prisma.module.findUnique({
+    where: { id: moduleId },
+    include: {
+      lessons: {
+        select: {
+          id: true,
+          topics: { select: { id: true } }
+        }
+      }
+    }
+  });
+
   if (!existing) {
     throw new ApiError(404, "Module not found");
   }
 
-  return await prisma.module.delete({
-    where: {
-      id: moduleId
+  const lessonIds = (existing.lessons || []).map((l) => l.id);
+  const topicIds = (existing.lessons || []).flatMap((l) => (l.topics || []).map((t) => t.id));
+
+  return await prisma.$transaction(async (tx) => {
+    // 1. Delete all topic-level, lesson-level, and module-level quizzes under this module
+    const quizzesToDelete = await tx.quiz.findMany({
+      where: {
+        OR: [
+          { moduleId },
+          ...(lessonIds.length > 0 ? [{ lessonId: { in: lessonIds } }] : []),
+          ...(topicIds.length > 0 ? [{ topicId: { in: topicIds } }] : [])
+        ]
+      },
+      select: { id: true }
+    });
+
+    const quizIds = quizzesToDelete.map((q) => q.id);
+
+    if (quizIds.length > 0) {
+      await tx.quizQuestion.deleteMany({ where: { quizId: { in: quizIds } } });
+      await tx.quizSubmission.deleteMany({ where: { quizId: { in: quizIds } } });
+      await tx.quiz.deleteMany({ where: { id: { in: quizIds } } });
     }
+
+    // 2. Delete topic contents
+    if (topicIds.length > 0) {
+      await tx.content.deleteMany({ where: { topicId: { in: topicIds } } });
+      await tx.topic.deleteMany({ where: { id: { in: topicIds } } });
+    }
+
+    // 3. Delete lessons
+    if (lessonIds.length > 0) {
+      await tx.lesson.deleteMany({ where: { id: { in: lessonIds } } });
+    }
+
+    // 4. Delete module
+    return await tx.module.delete({
+      where: {
+        id: moduleId
+      }
+    });
   });
 };
 

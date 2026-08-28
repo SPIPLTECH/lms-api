@@ -2,6 +2,29 @@ const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
 const ApiError = require("../../utils/ApiError");
 const { buildLessonLockMap, getPublishedLessonIds } = require("../../utils/dripAccess");
+let publishEvent = null;
+let EVENT_TYPES = {
+  LESSON_COMPLETED: "LESSON_COMPLETED",
+  COURSE_COMPLETED: "COURSE_COMPLETED",
+};
+
+try {
+  const obs = require("../observation");
+  if (obs.publishEvent) publishEvent = obs.publishEvent;
+  if (obs.EVENT_TYPES) EVENT_TYPES = obs.EVENT_TYPES;
+} catch (e) {
+  // Observation agent is optional or removed
+}
+
+// Fire-and-forget observation call, mirroring auth.controller.js's
+// observeAuthEvent: progress tracking must never fail because the
+// Observation Agent is slow or down.
+const observeProgressEvent = (studentId, eventType, extra) => {
+  if (!publishEvent || !eventType) return;
+  publishEvent({ studentId, eventType, source: "progress.service", ...extra }).catch((error) => {
+    console.error(`[observation] failed to record ${eventType}:`, error.message);
+  });
+};
 
 const completeLesson = async (
   studentId,
@@ -29,6 +52,16 @@ const completeLesson = async (
     throw new ApiError(403, "Complete the previous lesson first to unlock this one.");
   }
 
+  // Read before the upsert so LESSON_COMPLETED only publishes on a genuine
+  // not-completed -> completed transition. Downstream student-state reducers
+  // increment counters (not idempotent flags) on this event, so re-firing it
+  // on a redundant re-completion would inflate those counts.
+  const existingProgress = await prisma.progress.findUnique({
+    where: { studentId_lessonId: { studentId, lessonId } },
+    select: { completed: true }
+  });
+  const wasAlreadyCompleted = existingProgress?.completed === true;
+
   const progress =
     await prisma.progress.upsert({
       where: {
@@ -48,6 +81,10 @@ const completeLesson = async (
         completedAt: new Date()
       }
     });
+
+  if (!wasAlreadyCompleted) {
+    observeProgressEvent(studentId, EVENT_TYPES.LESSON_COMPLETED, { courseId, lessonId });
+  }
 
   const lessonIds = await getPublishedLessonIds(courseId);
 
@@ -84,6 +121,8 @@ const completeLesson = async (
       });
 
     if (!existingCertificate) {
+      observeProgressEvent(studentId, EVENT_TYPES.COURSE_COMPLETED, { courseId });
+
       const certificate = await prisma.certificate.create({
         data: {
           certificateNo:

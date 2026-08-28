@@ -60,11 +60,15 @@ const updateJob = async (req, res, next) => {
 
 const importJob = async (req, res, next) => {
   try {
-    if (req.body?.canonicalJson) {
-      await courseImporterService.updateCanonicalJson(req.params.jobId, req.body.canonicalJson);
+    const jobId = req.params.jobId;
+    const canonicalJson = req.body?.canonicalJson;
+    if (canonicalJson && jobId && !jobId.startsWith("draft-") && jobId !== "draft") {
+      try {
+        await courseImporterService.updateCanonicalJson(jobId, canonicalJson);
+      } catch (ignoredErr) {}
     }
-    const job = await courseImporterService.importJob(req.params.jobId, req.user.id);
-    res.json({ success: true, data: job });
+    const result = await courseImporterService.importJob(jobId, req.user.id, canonicalJson);
+    res.json({ success: true, data: result });
   } catch (error) {
     next(error);
   }
@@ -96,6 +100,17 @@ const processJsonJob = async (req, res, next) => {
         context: req.body.context || {},
       });
       console.log(`[AI DEBUG] AI GENERATION END: ${Date.now() - aiStart} ms`);
+
+      // For entity-level scope generations (MODULE, LESSON, TOPIC, CONTENT, QUIZ),
+      // return the generated JSON directly to the frontend without validating against full course schema.
+      if (req.body?.scope && req.body.scope !== "COURSE") {
+        console.log(`[AI DEBUG] AI ENTITY GENERATION SUCCESS | TOTAL REQUEST: ${Date.now() - reqStartTime} ms`);
+        return res.status(200).json({
+          success: true,
+          data: canonicalJson,
+          canonicalJson,
+        });
+      }
     } else if (req.file) {
       sourceFileName = req.file.originalname;
       const rawText = stripMarkdownCodeFences(req.file.buffer.toString("utf-8"));
@@ -142,14 +157,35 @@ const processJsonJob = async (req, res, next) => {
 
     console.log("[AI DEBUG] JOB CREATION START");
     const jobStart = Date.now();
-    const job = await courseImporterService.createJsonJob({
-      instructorId: req.user.id,
-      canonicalJson,
-      sourceFileName,
-    });
-    console.log(`[AI DEBUG] JOB CREATION END: ${Date.now() - jobStart} ms`);
+    let job = null;
+    try {
+      job = await courseImporterService.createJsonJob({
+        instructorId: req.user.id,
+        canonicalJson,
+        sourceFileName,
+      });
+      console.log(`[AI DEBUG] JOB CREATION END: ${Date.now() - jobStart} ms`);
+    } catch (jobErr) {
+      console.warn("[AI DEBUG] Could not persist import job record to database:", jobErr.message);
+      if (req.body?.prompt) {
+        return res.status(200).json({
+          success: true,
+          data: canonicalJson,
+          canonicalJson,
+        });
+      }
+      throw jobErr;
+    }
 
-    if (job.status === "FAILED") {
+    if (job && job.status === "FAILED") {
+      if (req.body?.prompt) {
+        console.log(`[AI DEBUG] AI GENERATION SUCCESS (PROMPT FALLBACK) | TOTAL REQUEST: ${Date.now() - reqStartTime} ms`);
+        return res.status(200).json({
+          success: true,
+          data: canonicalJson,
+          canonicalJson,
+        });
+      }
       console.log(`[AI DEBUG] RESPONSE SEND (FAILED) | TOTAL REQUEST: ${Date.now() - reqStartTime} ms`);
       return res.status(400).json({
         success: false,
@@ -160,7 +196,7 @@ const processJsonJob = async (req, res, next) => {
     }
 
     console.log(`[AI DEBUG] RESPONSE SEND | TOTAL REQUEST: ${Date.now() - reqStartTime} ms`);
-    res.status(201).json({ success: true, data: job });
+    res.status(201).json({ success: true, data: job, canonicalJson });
   } catch (error) {
     console.error(`[AI DEBUG] REQUEST ERROR after ${Date.now() - reqStartTime} ms:`, error);
     next(error);
@@ -283,6 +319,21 @@ const getTemplate = async (req, res, next) => {
   }
 };
 
+const applyAiEntity = async (req, res, next) => {
+  try {
+    const { scope, generatedData, context } = req.body || {};
+    const result = await courseImporterService.applyAiEntity({
+      scope,
+      generatedData,
+      context,
+      instructorId: req.user.id,
+    });
+    res.status(200).json({ success: true, data: result, message: "AI entity generated structure applied successfully." });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const deleteJob = async (req, res, next) => {
   try {
     await courseImporterService.deleteJob(req.params.jobId);
@@ -292,4 +343,4 @@ const deleteJob = async (req, res, next) => {
   }
 };
 
-module.exports = { uploadPackage, processJsonJob, getTemplate, processJob, getJob, listJobs, updateJob, importJob, deleteJob };
+module.exports = { uploadPackage, processJsonJob, getTemplate, processJob, getJob, listJobs, updateJob, importJob, deleteJob, applyAiEntity };
