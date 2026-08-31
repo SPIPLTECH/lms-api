@@ -14,11 +14,34 @@ const checkRole = require(
   "../../middleware/role.middleware"
 );
 
+const validate = require("../../middleware/joiValidation.middleware");
+const {
+  updateUserSchema,
+  updateUserStatusSchema,
+  updateUserRoleSchema,
+} = require("./user.validation");
+
 router.get(
   "/",
   verifyToken,
   checkRole(["ADMIN"]),
   userController.getUsers
+);
+
+// Registered before the /:userId routes below — otherwise Express would
+// match "/profile/me" as "/:userId" with userId="profile" and gate it
+// behind ADMIN-only access, making these self-profile routes unreachable.
+router.get(
+  "/profile/me",
+  verifyToken,
+  userController.getMyProfile
+);
+
+router.put(
+  "/profile/me",
+  verifyToken,
+  validate(updateUserSchema),
+  userController.updateMyProfile
 );
 
 router.get(
@@ -32,6 +55,7 @@ router.put(
   "/:userId",
   verifyToken,
   checkRole(["ADMIN"]),
+  validate(updateUserSchema),
   userController.updateUser
 );
 
@@ -41,10 +65,12 @@ router.delete(
   checkRole(["ADMIN"]),
   userController.deleteUser
 );
+
 router.patch(
   "/:userId/status",
   verifyToken,
   checkRole(["ADMIN"]),
+  validate(updateUserStatusSchema),
   userController.updateUserStatus
 );
 
@@ -52,6 +78,7 @@ router.patch(
   "/:userId/role",
   verifyToken,
   checkRole(["ADMIN"]),
+  validate(updateUserRoleSchema),
   userController.updateUserRole
 );
 

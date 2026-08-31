@@ -111,14 +111,93 @@ const deleteUser = async (
   next
 ) => {
   try {
+    const targetUserId =
+      req.params.userId;
+
+    // Prevent self-delete
+    if (
+      req.user.id === targetUserId
+    ) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "You cannot delete your own account"
+      });
+    }
+
     await userService.deleteUser(
-      req.params.userId
+      targetUserId
     );
 
     res.json({
       success: true,
       message:
         "User deleted successfully"
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+const getMyProfile = async (req, res, next) => {
+  try {
+    const user = await userService.getUserById(req.user.id);
+
+    res.json({
+      success: true,
+      data: user
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const updateMyProfile = async (req, res, next) => {
+  try {
+    const user = await userService.updateMyProfile(req.user.id, req.body);
+
+    res.json({
+      success: true,
+      message: "Profile updated successfully",
+      data: user,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const uploadAvatar = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "No avatar image uploaded",
+      });
+    }
+
+    const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+    const user = await userService.updateMyProfile(req.user.id, { avatar: avatarUrl });
+
+    res.json({
+      success: true,
+      message: "Profile photo uploaded successfully",
+      data: {
+        avatarUrl,
+        user,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const deleteAvatar = async (req, res, next) => {
+  try {
+    const user = await userService.updateMyProfile(req.user.id, { avatar: null });
+
+    res.json({
+      success: true,
+      message: "Profile photo removed successfully",
+      data: user,
     });
   } catch (error) {
     next(error);
@@ -131,5 +210,9 @@ module.exports = {
   updateUser,
   deleteUser,
   updateUserRole,
-  updateUserStatus
-};
+  updateUserStatus,
+  getMyProfile,
+  updateMyProfile,
+  uploadAvatar,
+  deleteAvatar,
+};

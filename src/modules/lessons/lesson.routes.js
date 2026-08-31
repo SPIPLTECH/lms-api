@@ -1,4 +1,4 @@
-const express = require("express");
+ const express = require("express");
 
 const router = express.Router();
 
@@ -18,15 +18,35 @@ const verifyLessonOwnership =
   require(
     "../../middleware/lessonOwnership.middleware"
   );
+const verifyModuleOwnership =
+  require(
+    "../../middleware/moduleOwnership.middleware"
+  );
+const validate = require("../../middleware/joiValidation.middleware");
+const {
+  createLessonSchema,
+  updateLessonSchema,
+  reorderLessonsSchema
+} = require("./lesson.validation");
 
 router.get(
   "/",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
   lessonController.getLessons
 );
 
 router.get(
   "/:lessonId",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
   lessonController.getLessonById
+);
+
+router.get(
+  "/:lessonId/transcript",
+  verifyToken,
+  lessonController.getLessonTranscript
 );
 
 router.post(
@@ -36,6 +56,8 @@ router.post(
     "ADMIN",
     "INSTRUCTOR"
   ]),
+  validate(createLessonSchema),
+  verifyModuleOwnership.fromBody,
   lessonController.createLesson
 );
 
@@ -47,6 +69,7 @@ router.put(
     "INSTRUCTOR"
   ]),
   verifyLessonOwnership,
+  validate(updateLessonSchema),
   lessonController.updateLesson
 );
 
@@ -68,6 +91,8 @@ router.patch(
     "ADMIN",
     "INSTRUCTOR"
   ]),
+  validate(reorderLessonsSchema),
+  verifyModuleOwnership.fromBody,
   lessonController.reorderLessons
 );
 

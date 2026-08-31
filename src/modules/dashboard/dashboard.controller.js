@@ -26,7 +26,8 @@ const getInstructorDashboard = async (
   try {
     const data =
       await dashboardService.getInstructorDashboard(
-        req.user.id
+        req.user.id,
+        req.query.courseId
       );
 
     res.json({
@@ -58,8 +59,29 @@ const getStudentDashboard = async (
   }
 };
 
+const getUpcomingTasks = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const data =
+      await dashboardService.getUpcomingTasks(
+        req.user.id
+      );
+
+    res.json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getAdminDashboard,
   getInstructorDashboard,
-  getStudentDashboard
+  getStudentDashboard,
+  getUpcomingTasks
 };

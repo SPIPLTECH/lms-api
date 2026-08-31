@@ -29,4 +29,12 @@ router.get(
   dashboardController.getStudentDashboard
 );
 
+// Student upcoming tasks
+router.get(
+  "/student/upcoming-tasks",
+  authMiddleware,
+  checkRole(["STUDENT"]),
+  dashboardController.getUpcomingTasks
+);
+
 module.exports = router;

@@ -9,6 +9,8 @@ const controller = require(
 const verifyToken = require(
   "../../middleware/auth.middleware"
 );
+const validate = require("../../middleware/joiValidation.middleware");
+const { completeLessonSchema, markContentVisitedSchema } = require("./progress.validation");
 
 router.get(
   "/",
@@ -19,7 +21,15 @@ router.get(
 router.post(
   "/complete",
   verifyToken,
+  validate(completeLessonSchema),
   controller.completeLesson
+);
+
+router.post(
+  "/content-visited",
+  verifyToken,
+  validate(markContentVisitedSchema),
+  controller.markContentVisited
 );
 
 module.exports = router;

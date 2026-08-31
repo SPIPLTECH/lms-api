@@ -3,43 +3,72 @@ const express = require("express");
 const router = express.Router();
 
 const authController = require("./auth.controller");
-//const verifyOtp = require ("./auth.controller");
 const verifyToken = require(
   "../../middleware/auth.middleware"
 );
-const { verifyOtp } = require("./auth.service");
+
+const { authRateLimiter, passwordResetRateLimiter } = require("../../middleware/rateLimit.middleware");
+
+const validate = require("../../middleware/joiValidation.middleware");
+const {
+  registerSchema,
+  loginSchema,
+  verifyOtpSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  changePasswordSchema,
+  resendVerificationSchema,
+} = require("./auth.validation");
 
 /**
  * Public Routes
  */
 router.post(
   "/register",
+  authRateLimiter,
+  validate(registerSchema),
   authController.register
 );
 
 router.post(
   "/login",
+  authRateLimiter,
+  validate(loginSchema),
   authController.login
 );
 
-// router.get(
-//   "/verify-email",
-//   authController.verifyEmail
-// );
+router.post(
+  "/verify-otp",
+  authRateLimiter,
+  validate(verifyOtpSchema),
+  authController.verifyOtp
+);
 
-router.post("/verify-otp", verifyOtp);
+router.post(
+  "/resend-verification",
+  passwordResetRateLimiter,
+  validate(resendVerificationSchema),
+  authController.resendVerification
+);
 
 router.post(
   "/forgot-password",
+  passwordResetRateLimiter,
+  validate(forgotPasswordSchema),
   authController.forgotPassword
 );
+
 router.post(
   "/change-password",
   verifyToken,
+  validate(changePasswordSchema),
   authController.changePassword
 );
+
 router.post(
   "/reset-password",
+  passwordResetRateLimiter,
+  validate(resetPasswordSchema),
   authController.resetPassword
 );
 
@@ -63,4 +92,4 @@ router.post(
   authController.logout
 );
 
-module.exports = router;
+module.exports = router;

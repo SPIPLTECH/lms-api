@@ -1,0 +1,76 @@
+{
+  "metadata": {
+    "title": "Physics: Fundamentals of Wave Motion",
+    "description": "Comprehensive course covering mechanical and electromagnetic wave properties, wave equations, superposition, and harmonic resonance.",
+    "category": "Physics",
+    "level": "INTERMEDIATE",
+    "thumbnail": "https://images.unsplash.com/photo-1507668077129-56e32842fceb",
+    "language": "English",
+    "tags": ["physics", "waves", "harmonic-motion", "science"],
+    "estimatedLearningHours": 12,
+    "price": 0
+  },
+  "settings": {
+    "visibility": "PUBLIC",
+    "certificatesEnabled": true,
+    "discussionEnabled": true,
+    "dripContentEnabled": false
+  },
+  "modules": [
+    {
+      "title": "Module 1: Wave Motion & Mechanics",
+      "description": "Introduction to mechanical wave propagation, wave types, and mathematical representations.",
+      "order": 1,
+      "isPublished": true,
+      "lessons": [
+        {
+          "title": "Lesson 1: Introduction to Waves",
+          "description": "Fundamental concepts of transverse and longitudinal wave motion.",
+          "order": 1,
+          "isPublished": true,
+          "topics": [
+            {
+              "title": "Topic 1: What is a Wave?",
+              "description": "Core concepts of energy transfer without net matter movement.",
+              "order": 1,
+              "isPublished": true,
+              "contents": [
+                {
+                  "type": "HTML",
+                  "title": "Definition & Wave Characteristics",
+                  "order": 1,
+                  "htmlContent": "<h2>What is a Wave?</h2><p>A wave is a disturbance that travels through a medium, transferring energy from one point to another without permanently displacing the matter of the medium.</p><ul><li><strong>Amplitude (A):</strong> Maximum displacement from equilibrium.</li><li><strong>Wavelength (λ):</strong> Distance between consecutive crests or troughs.</li><li><strong>Frequency (f):</strong> Number of oscillations per second (Hz).</li><li><strong>Wave Speed (v):</strong> <code>v = f × λ</code></li></ul>"
+                },
+                {
+                  "type": "VIDEO",
+                  "title": "Visualizing Mechanical Waves",
+                  "order": 2,
+                  "duration": 480,
+                  "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+                },
+                {
+                  "type": "PRESENTATION",
+                  "title": "Wave Properties Lecture Deck.pptx",
+                  "order": 3,
+                  "htmlContent": "<h1>Slide 1: Transverse vs Longitudinal</h1><p>Transverse: Displacement perpendicular to wave direction.<br/>Longitudinal: Displacement parallel to wave direction (compressions and rarefactions).</p>---<h1>Slide 2: Mathematical Representation</h1><p>Wave equation: y(x,t) = A sin(kx - ωt + φ)</p>",
+                  "data": {
+                    "kind": "slideshow",
+                    "attributes": {
+                      "slideCount": 2
+                    }
+                  }
+                },
+                {
+                  "type": "DOCUMENT",
+                  "title": "Wave Mechanics Formula Sheet (PDF)",
+                  "order": 4,
+                  "externalUrl": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -6,7 +6,9 @@ const getLessons = async (req, res, next) => {
 
     const lessons =
       await lessonService.getLessons(
-        moduleId
+        moduleId,
+        req.user.role,
+        req.user.id
       );
 
     res.json(lessons);
@@ -23,7 +25,8 @@ const getLessonById = async (
   try {
     const lesson =
       await lessonService.getLessonById(
-        req.params.lessonId
+        req.params.lessonId,
+        req.user.role
       );
 
     if (!lesson) {
@@ -33,6 +36,27 @@ const getLessonById = async (
     }
 
     res.json(lesson);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getLessonTranscript = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const transcript =
+      await lessonService.getLessonTranscript(
+        req.params.lessonId,
+        req.user.role
+      );
+
+    res.json({
+      success: true,
+      data: transcript
+    });
   } catch (error) {
     next(error);
   }
@@ -97,6 +121,7 @@ const reorderLessons = async (
   try {
     const result =
       await lessonService.reorderLessons(
+        req.body.moduleId,
         req.body.lessons
       );
 
@@ -109,6 +134,7 @@ const reorderLessons = async (
 module.exports = {
   getLessons,
   getLessonById,
+  getLessonTranscript,
   createLesson,
   updateLesson,
   deleteLesson,

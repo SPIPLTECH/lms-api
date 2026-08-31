@@ -10,7 +10,9 @@ const getContents = async (
   try {
     const contents =
       await contentService.getContents(
-        req.query.lessonId
+        req.query.topicId,
+        req.user.role,
+        req.user.id
       );
 
     res.json(contents);
@@ -93,10 +95,28 @@ const deleteContent = async (
   }
 };
 
+const reorderContents = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const result =
+      await contentService.reorderContents(
+        req.body.contents
+      );
+
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getContents,
   getContentById,
   createContent,
   updateContent,
-  deleteContent
+  deleteContent,
+  reorderContents
 };
