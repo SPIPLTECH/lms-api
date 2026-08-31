@@ -13,6 +13,7 @@ model User {
   email                   String                    @unique
   phoneNumber             String?                   @unique
   address                 String?
+  avatar                  String?
   password                String
   role                    Role                      @default(STUDENT)
   refreshToken            String?
@@ -79,25 +80,29 @@ model StudentProfile {
   preferredStudyTime     PreferredStudyTime?
   technicalSkills        String[]                @default([])
 
-  updatedAt                   DateTime                      @updatedAt
-  certificates                Certificate[]
-  enrollments                 Enrollment[]
-  progress                    Progress[]
-  contentProgress             ContentProgress[]
-  quizSubmissions             QuizSubmission[]
-  reviews                     Review[]
-  stickyNotes                 StickyNote[]
-  notes                       Note[]
-  bookmarks                   Bookmark[]
-  achievements                StudentAchievement[]
-  assignmentSubmissions       AssignmentSubmission[]
-  batches                     Batch[]                       @relation("BatchToStudentProfile")
-  lessonQueries               LessonQuery[]
-  videoAnalytics              VideoAnalytics[]
-  studentState                StudentState[]
-  conceptMasteries            ConceptMastery[]
-  knowledgeGaps               KnowledgeGap[]
-  user                        User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  updatedAt             DateTime               @updatedAt
+  certificates          Certificate[]
+  enrollments           Enrollment[]
+  progress              Progress[]
+  quizSubmissions       QuizSubmission[]
+  reviews               Review[]
+  stickyNotes           StickyNote[]
+  notes                 Note[]
+  bookmarks             Bookmark[]
+  achievements          StudentAchievement[]
+  assignmentSubmissions AssignmentSubmission[]
+  batches               Batch[]                @relation("BatchToStudentProfile")
+  lessonQueries         LessonQuery[]
+  videoAnalytics        VideoAnalytics[]
+  studentState          StudentState[]
+  learningEvents        LearningEvent[]
+  activityState         StudentActivityState?
+  conceptMasteries      ConceptMastery[]
+  knowledgeGaps         KnowledgeGap[]
+  entryAssessments      EntryAssessment[]
+  courseStates          StudentCourseState[]
+  contentProgress       ContentProgress[]
+  user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model TeacherProfile {
@@ -154,15 +159,18 @@ model Course {
   exams                  Exam[]
   batches                Batch[]          @relation("BatchToCourse")
 
-  batchesByCourseId       Batch[]                  @relation("Batch_courseIdToCourse")
-  batchSessions           BatchSession[]
-  studentStates           StudentState[]
-  videoAnalytics          VideoAnalytics[]
-  announcements           Announcement[]
-  discussions             Discussion[]
-  store                   Store?
-  questions               Question[]
-  paymentOrders           PaymentOrder[]
+  batchesByCourseId   Batch[]              @relation("Batch_courseIdToCourse")
+  batchSessions       BatchSession[]
+  studentStates       StudentState[]
+  learningEvents      LearningEvent[]
+  videoAnalytics      VideoAnalytics[]
+  announcements       Announcement[]
+  discussions         Discussion[]
+  entryAssessments    EntryAssessment[]
+  studentCourseStates StudentCourseState[]
+  store               Store?
+  questions           Question[]
+  paymentOrders       PaymentOrder[]
 }
 
 model Store {
@@ -781,6 +789,64 @@ model Notification {
   @@index([userId])
 }
 
+model StudentState {
+  id String @id @default(cuid())
+
+  studentId String
+  courseId  String
+  moduleId  String?
+  lessonId  String?
+  contentId String?
+  timestamp Int?           @default(0)
+  updatedAt DateTime       @updatedAt
+  course    Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, courseId])
+  @@index([courseId])
+}
+
+// Kept: used by ConceptMastery.status/KnowledgeGap.status, both of which
+// were kept for modules/learner-model's direct dependency (see
+// backup/ai-agents/DATABASE.md). These are NOT part of the removed
+// Assessment agent despite living in the same enum block originally.
+enum MasteryStatus {
+  UNASSESSED
+  WEAK
+  DEVELOPING
+  MASTERED
+}
+
+enum GapStatus {
+  OPEN
+  CLOSED
+}
+
+model KnowledgeGap {
+  id        String @id @default(cuid())
+  studentId String
+  concept   String
+
+  kc String?
+
+  type       String?
+  severity   Float     @default(0)
+  status     GapStatus @default(OPEN)
+  detectedAt DateTime  @default(now())
+  closedAt   DateTime?
+
+  description String?
+
+  confidence Float?
+
+  evidence String?
+  student  StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, status])
+  @@index([concept])
+  @@index([studentId, kc, status])
+}
+
 model VideoAnalytics {
   id        String         @id @default(cuid())
   studentId String
@@ -1006,16 +1072,178 @@ enum QuestionType {
   LONG_ANSWER
 }
 
-enum MasteryStatus {
-  UNASSESSED
-  WEAK
-  DEVELOPING
-  MASTERED
+enum EventCategory {
+  AUTHENTICATION
+  COURSE
+  MODULE
+  LESSON
+  VIDEO
+  READING
+  QUIZ
+  ASSIGNMENT
+  DISCUSSION
+  AI_CHAT
+  NAVIGATION
 }
 
-enum GapStatus {
-  OPEN
-  CLOSED
+enum EventType {
+  USER_REGISTERED
+  USER_LOGIN
+  USER_LOGOUT
+  SESSION_STARTED
+  SESSION_EXPIRED
+  TOKEN_REFRESHED
+
+  COURSE_VIEWED
+  COURSE_ENROLLED
+  COURSE_UNENROLLED
+  COURSE_STARTED
+  COURSE_COMPLETED
+  COURSE_RATED
+
+  MODULE_VIEWED
+  MODULE_STARTED
+  MODULE_COMPLETED
+
+  LESSON_VIEWED
+  LESSON_STARTED
+  LESSON_COMPLETED
+  LESSON_BOOKMARKED
+  LESSON_NOTE_ADDED
+
+  VIDEO_PLAYED
+  VIDEO_PAUSED
+  VIDEO_SEEKED
+  VIDEO_PROGRESS
+  VIDEO_COMPLETED
+  VIDEO_SPEED_CHANGED
+  VIDEO_QUALITY_CHANGED
+
+  READING_STARTED
+  READING_PROGRESS
+  READING_COMPLETED
+
+  QUIZ_STARTED
+  QUIZ_QUESTION_ANSWERED
+  QUIZ_SUBMITTED
+  QUIZ_COMPLETED
+  QUIZ_ABANDONED
+
+  ASSIGNMENT_STARTED
+  ASSIGNMENT_SUBMITTED
+  ASSIGNMENT_RESUBMITTED
+  ASSIGNMENT_GRADE_VIEWED
+
+  DISCUSSION_POST_CREATED
+  DISCUSSION_REPLY_CREATED
+  DISCUSSION_POST_LIKED
+  DISCUSSION_VIEWED
+
+  AI_CHAT_SESSION_STARTED
+  AI_CHAT_MESSAGE_SENT
+  AI_CHAT_RESPONSE_RECEIVED
+  AI_CHAT_SESSION_ENDED
+  AI_CHAT_FEEDBACK_GIVEN
+  AI_HINT_REQUESTED
+
+  PAGE_VIEWED
+  ROUTE_CHANGED
+  SEARCH_PERFORMED
+  FILTER_APPLIED
+  BUTTON_CLICKED
+}
+
+model LearningEvent {
+  id String @id @default(cuid())
+
+  studentId String
+  courseId  String?
+
+  moduleId     String?
+  lessonId     String?
+  contentId    String?
+  quizId       String?
+  assignmentId String?
+  sessionId    String
+
+  eventType     EventType
+  eventCategory EventCategory
+
+  payload  Json?
+  metadata Json?
+
+  source    String?
+  ipAddress String?
+  userAgent String?
+
+  clientTimestamp DateTime?
+  createdAt       DateTime  @default(now())
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course  Course?        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, createdAt])
+  @@index([courseId, createdAt])
+  @@index([sessionId])
+  @@index([eventType, createdAt])
+  @@index([eventCategory, createdAt])
+  @@index([createdAt])
+}
+
+model StudentActivityState {
+  id        String @id @default(cuid())
+  studentId String @unique
+
+  totalEventsCount   Int @default(0)
+  totalSessionsCount Int @default(0)
+
+  lastEventType     EventType?
+  lastEventCategory EventCategory?
+  lastSessionId     String?
+  lastCourseId      String?
+  lastModuleId      String?
+  lastLessonId      String?
+  lastActiveAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([lastActiveAt])
+}
+
+enum LearningMode {
+  SMART_REVISION
+  STANDARD_LEARNING
+  DEEP_LEARNING
+}
+
+model StudentCourseState {
+  id        String @id @default(cuid())
+  studentId String
+  courseId  String
+
+  knowledgeLevel       EntryKnowledgeLevel @default(INTERMEDIATE)
+  entryAssessmentScore Float               @default(0)
+  confidenceScore      Float               @default(0)
+
+  conceptMastery Json
+  strongConcepts Json
+  weakConcepts   Json
+
+  originalTotalMinutes     Int @default(0)
+  personalizedTotalMinutes Int @default(0)
+  timeSavedMinutes         Int @default(0)
+
+  initializedAt DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course  Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, courseId])
+  @@index([studentId])
 }
 
 model ConceptMastery {
@@ -1043,6 +1271,56 @@ model ConceptMastery {
   @@unique([studentId, concept])
   @@index([studentId, status])
   @@index([nextReassessmentAt])
+}
+
+enum EntryAssessmentStatus {
+  PENDING
+  GENERATING
+  READY
+  SUBMITTED
+  EVALUATED
+  FAILED
+}
+
+enum EntryKnowledgeLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+model EntryAssessment {
+  id        String @id @default(cuid())
+  studentId String
+  courseId  String
+
+  status           EntryAssessmentStatus @default(PENDING)
+  model            String?
+  questions        Json?
+  syllabusSnapshot Json?
+  failureReason    String?
+
+  answers Json?
+
+  overallScore    Float?
+  knowledgeLevel  EntryKnowledgeLevel?
+  confidenceScore Float?
+  conceptScores   Json?
+  strongConcepts  Json?
+  weakConcepts    Json?
+
+  generatedAt DateTime?
+  submittedAt DateTime?
+  evaluatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course  Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, courseId])
+  @@index([studentId])
+  @@index([courseId])
 }
 
 model CourseImportJob {

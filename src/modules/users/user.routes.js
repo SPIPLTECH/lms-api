@@ -20,6 +20,7 @@ const {
   updateUserStatusSchema,
   updateUserRoleSchema,
 } = require("./user.validation");
+const { avatarUpload } = require("../../middleware/upload.middleware");
 
 router.get(
   "/",
@@ -42,6 +43,20 @@ router.put(
   verifyToken,
   validate(updateUserSchema),
   userController.updateMyProfile
+);
+
+// Also registered ahead of "/:userId" — see the comment above "/profile/me".
+router.post(
+  "/profile/avatar",
+  verifyToken,
+  avatarUpload.single("avatar"),
+  userController.uploadAvatar
+);
+
+router.delete(
+  "/profile/avatar",
+  verifyToken,
+  userController.deleteAvatar
 );
 
 router.get(
