@@ -168,7 +168,8 @@ const uploadAttachment = async (req, res, next) => {
 
         const { getAttachmentType } = require("../../middleware/upload.middleware");
         const type = getAttachmentType(req.file.mimetype, req.file.originalname);
-        const fileUrl = `/uploads/attachments/${req.file.filename}`;
+        const baseUrl = `${req.protocol}://${req.get("host")}`;
+        const fileUrl = `${baseUrl}/uploads/attachments/${req.file.filename}`;
 
         return res.status(200).json({
             success: true,
