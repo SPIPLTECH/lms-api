@@ -1338,3 +1338,15 @@ enum CourseImportStatus {
   COMPLETED
   FAILED
 }
+
+enum MasteryStatus {
+  UNASSESSED
+  WEAK
+  DEVELOPING
+  MASTERED
+}
+
+enum GapStatus {
+  OPEN
+  CLOSED
+}
