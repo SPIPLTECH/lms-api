@@ -122,6 +122,185 @@ STRICT DOWNWARD HIERARCHICAL GENERATION RULES:
 5. Supported ContentType values: "HTML", "VIDEO", "TEXT", "CODE", "DOCUMENT", "PDF", "IMAGE", "AUDIO", "LINK", "PRESENTATION".
 6. Do NOT include database IDs (id, courseId, etc.). Keep string values clean and valid JSON.`;
 
+// --- Scope-aware prompt building (used for MODULE/LESSON/TOPIC/CONTENT/QUIZ
+// entity generation — the only scopes actually reachable from the Course
+// Composer's "Ask OTree AI" widget). COURSE-scope generation (full package
+// import) keeps using the full SYSTEM_PROMPT above, unchanged, since its
+// format isn't one of the branches below and this function was not asked to
+// touch that path. ---
+
+const HIERARCHY_RULES = `You are an expert LMS course content generator for Orange Tree LMS.
+Generate complete, valid entity structures for ANY subject area (Computer Science, Mathematics, Physics, Business, Marketing, Cybersecurity, History, Agriculture, Finance, Languages, Professional Training, etc.).
+
+STRICT DOWNWARD HIERARCHICAL GENERATION RULES:
+1. Output raw JSON only. Do NOT output markdown fences (\`\`\`json), thinking tags, reasoning text, or preamble.
+2. Generation may ONLY move DOWN the hierarchy from the selected entity root. NEVER generate an entity above the selected entity.`;
+
+// Only "HTML" and "CODE" are offered: they are the only two ContentType
+// values this generator persists AND the student renderer (VideoPlayer.jsx)
+// actually displays for AI-authored prose/code. "TEXT" has no student
+// rendering branch (silently renders nothing); "VIDEO"/"IMAGE"/"AUDIO"/
+// "PRESENTATION" all require a real uploaded media asset or a JSON slide
+// document this text-only generator has no way to produce reliably — see the
+// Phase 9-11 content-architecture findings.
+const CONTENT_GUIDANCE = `CONTENT BLOCK SELECTION RULES:
+- Each content block's "type" must be either "HTML" or "CODE" — the only two types this generator persists and the student app renders today.
+- Use "CODE" only for an actual code example the learner should read as code, and include a "language" field (e.g. "python", "javascript", "sql") so it renders with correct syntax highlighting. Never use "CODE" for prose that merely mentions code.
+- Use "HTML" for everything else. Structure it with real semantic HTML so it reads as more than one flat paragraph:
+  - "<h3>"/"<h4>" for sub-headings when a block covers more than one idea.
+  - "<table>" (with "<thead>"/"<tbody>") for side-by-side comparisons, instead of describing differences in prose.
+  - "<ul>"/"<ol>" for steps or lists, instead of comma-separated prose.
+  - "<blockquote>" for a single key takeaway, warning, or definition callout.
+  - Do NOT invent CSS classes or non-standard tags — only the plain HTML tags listed above.
+- Choose block types and structure based on what is actually being taught, not at random: a programming concept should include an explanation block plus a CODE example with "language" set; a conceptual comparison should use a "<table>"; a step-by-step process should use an ordered list. Do not force every topic to include every representation — only generate blocks that genuinely help teach this specific content.`;
+
+// "MCQ_MULTI" is the only additional question type offered beyond the
+// pre-existing "MCQ_SINGLE" — it is graded by a dedicated order-independent
+// array-match branch (quiz.service.js evaluateAnswer) and rendered by a
+// dedicated component (MCQMultiOptionList.jsx), so it is confirmed safe
+// end-to-end. The other three QuestionType values that exist in the schema
+// (ARRANGE_TOKENS, MATCH_PAIRS, SELF_ASSESSMENT) need richer generated data
+// shapes (ordered token lists, key/value pairs) this prompt does not yet
+// constrain strictly enough to trust unattended.
+const QUESTION_SCHEMA = `QUIZ SCHEMA & QUESTIONS:
+- Question Object Schema:
+  {
+    "question": "Question text?",
+    "questionType": "MCQ_SINGLE" | "MCQ_MULTI",
+    "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+    "correctAnswer": "Option 1",
+    "explanation": "Brief explanation.",
+    "marks": 1,
+    "negativeMarks": 0,
+    "difficulty": "EASY"
+  }
+- Use "MCQ_SINGLE" (the default) when exactly one option is correct. "correctAnswer" MUST then be a single option string, exactly matching one entry in "options".
+- Use "MCQ_MULTI" only when the question genuinely has more than one correct option. "correctAnswer" MUST then be an array of the correct option strings (2 or more), each exactly matching an entry in "options". Do not use "MCQ_MULTI" for a question with only one correct option.
+- Prefer "MCQ_SINGLE" unless the question clearly requires multiple correct selections.`;
+
+const GENERAL_RULES = `GENERAL RULES:
+Do NOT include database IDs (id, courseId, etc.). Keep string values clean and valid JSON.`;
+
+const SCOPE_SCHEMAS = {
+  MODULE: `SCOPE: MODULE (GENERATION DEPTH: FULL_MODULE)
+Generate 1 Module containing Lessons, Topics per lesson, Content blocks for each topic, and Quizzes for the generated hierarchy.
+Output JSON Schema:
+{
+  "title": "Module Title",
+  "description": "Module Description",
+  "quizzes": [{ "title": "Module Quiz Title", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [...] }],
+  "lessons": [
+    {
+      "title": "Lesson Title",
+      "description": "Lesson Description",
+      "quizzes": [{ "title": "Lesson Quiz Title", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [...] }],
+      "topics": [
+        {
+          "title": "Topic Title",
+          "description": "Topic Description",
+          "quiz": { "title": "Topic Quiz Title", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [...] },
+          "contents": [
+            { "type": "HTML"|"CODE", "title": "Content Title", "htmlContent": "...", "language": "python (CODE blocks only)" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+*CRITICAL*: Do NOT generate Course metadata or Course wrapper above Module.`,
+
+  LESSON: `SCOPE: LESSON (GENERATION DEPTH: FULL_LESSON)
+Generate 1 Lesson containing Topics, Content blocks, and Quizzes.
+Output JSON Schema:
+{
+  "title": "Lesson Title",
+  "description": "Lesson Description",
+  "quizzes": [{ "title": "Lesson Quiz Title", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [...] }],
+  "topics": [
+    {
+      "title": "Topic Title",
+      "description": "Topic Description",
+      "quiz": { "title": "Topic Quiz Title", "description": "...", "passingScore": 70, "timeLimit": 15, "questions": [...] },
+      "contents": [
+        { "type": "HTML"|"CODE", "title": "Content Title", "htmlContent": "...", "language": "python (CODE blocks only)" }
+      ]
+    }
+  ]
+}
+*CRITICAL*: Do NOT generate a Module above Lesson.`,
+
+  TOPIC: `SCOPE: TOPIC (GENERATION DEPTH: FULL_TOPIC)
+Generate 1 Topic containing Content blocks and a Quiz.
+Output JSON Schema:
+{
+  "title": "Topic Title",
+  "description": "Topic Description",
+  "contents": [
+    { "type": "HTML"|"CODE", "title": "Content Title", "htmlContent": "...", "language": "python (CODE blocks only)" }
+  ],
+  "quiz": {
+    "title": "Topic Quiz Title",
+    "description": "...",
+    "passingScore": 70,
+    "timeLimit": 15,
+    "questions": [...]
+  }
+}
+*CRITICAL*: Do NOT generate a Module or Lesson above Topic.`,
+
+  CONTENT: `SCOPE: CONTENT (GENERATION DEPTH: CONTENT_ONLY)
+Generate Content blocks only under the selected existing topic.
+Output JSON Schema:
+{
+  "contents": [
+    { "type": "HTML"|"CODE", "title": "Content Title", "htmlContent": "...", "language": "python (CODE blocks only)" }
+  ]
+}
+*CRITICAL*: Do NOT generate a Module, Lesson, Topic, or Quiz.`,
+
+  QUIZ: `SCOPE: QUIZ (GENERATION DEPTH: QUIZ_ONLY)
+Generate 1 Quiz only.
+Output JSON Schema:
+{
+  "title": "Quiz Title",
+  "description": "Quiz Description",
+  "passingScore": 70,
+  "timeLimit": 15,
+  "questions": [
+    {
+      "question": "Question text?",
+      "questionType": "MCQ_SINGLE",
+      "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+      "correctAnswer": "Option 1",
+      "explanation": "Brief explanation."
+    }
+  ]
+}
+*CRITICAL*: Do NOT generate a Module, Lesson, Topic, or Content.`,
+};
+
+const SCOPES_WITH_QUIZ = new Set(["MODULE", "LESSON", "TOPIC", "QUIZ"]);
+const SCOPES_WITH_CONTENT = new Set(["MODULE", "LESSON", "TOPIC", "CONTENT"]);
+
+/**
+ * Builds a scope-specific system prompt containing only the JSON schema (and
+ * related quiz/content rules) relevant to the requested entity scope, instead
+ * of the full SYSTEM_PROMPT (which enumerates all 5 non-course schemas on
+ * every request regardless of which one is actually needed). Falls back to
+ * the unabridged SYSTEM_PROMPT for COURSE scope or any unrecognized scope.
+ */
+function buildScopedSystemPrompt(scopeUpper) {
+  const scopeSchema = SCOPE_SCHEMAS[scopeUpper];
+  if (!scopeSchema) return SYSTEM_PROMPT;
+
+  const sections = [HIERARCHY_RULES, scopeSchema];
+  if (SCOPES_WITH_CONTENT.has(scopeUpper)) sections.push(CONTENT_GUIDANCE);
+  if (SCOPES_WITH_QUIZ.has(scopeUpper)) sections.push(QUESTION_SCHEMA);
+  sections.push(GENERAL_RULES);
+
+  return sections.join("\n\n");
+}
+
 function stripMarkdownCodeFences(str) {
   if (typeof str !== "string") return str;
   let trimmed = str.trim();
@@ -259,15 +438,19 @@ REQUESTED SIZE: ${courseSize}
 EXISTING CONTEXT & SIBLING DETAILS:
 ${context && Object.keys(context).length > 0 ? JSON.stringify(context, null, 2) : "None"}`;
 
+  const scopedSystemPrompt = buildScopedSystemPrompt(scopeUpper);
+  console.log(`[AI Gen] System prompt size for scope [${scopeUpper}]: ${scopedSystemPrompt.length} chars (full prompt: ${SYSTEM_PROMPT.length} chars)`);
+
   const llmStartTime = Date.now();
 
   let llmResult;
   try {
     llmResult = await llmService.generate({
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt: scopedSystemPrompt,
       prompt: userPrompt,
       context,
       think: false,
+      size: courseSize,
     });
   } catch (err) {
     console.error("LLM Generation call error:", err);

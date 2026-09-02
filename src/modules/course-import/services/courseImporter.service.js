@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const prisma = require("../../../config/database");
 const ApiError = require("../../../utils/ApiError");
 const { extractZip } = require("../utils/zip.util");
@@ -368,57 +369,145 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
       return maxOrd + 1;
     };
 
-    // Helper to process and create Quiz + Questions in transaction
-    const createQuizWithQuestionsInTx = async (quizDef, levelIds) => {
+    // Normalizes an AI-provided content "type" string to a valid ContentType
+    // enum value. "TEXT" is coerced to "HTML" because the student renderer
+    // (VideoPlayer.jsx) has no rendering branch for a literal TEXT type today
+    // — a TEXT-typed row currently renders as nothing for students, while the
+    // identical prose stored as HTML renders correctly via MarkdownRenderer.
+    const normalizeContentType = (rawType) => {
+      let type = (rawType || "HTML").toUpperCase();
+      if (type === "TEXT_BLOCK" || type === "MARKDOWN" || type === "TEXT") type = "HTML";
+      if (type === "CODE_BLOCK" || type === "SNIPPET") type = "CODE";
+      return type;
+    };
+
+    // Builds one Content row's insert data from an AI-generated content
+    // definition — pure JS, no DB call, so many of these can be collected
+    // into one batched createMany() instead of one create() per row.
+    // Populates Content.data.language for CODE blocks — the one place the
+    // student renderer already reads Content.data (VideoPlayer.jsx's
+    // highlightCode call) — which AI-generated content never populated
+    // before, so CODE blocks rendered without syntax highlighting.
+    const buildContentRow = (cDef, topicIdForRow, order, fallbackTitle) => {
+      const type = normalizeContentType(cDef.type);
+      const hasLanguage = type === "CODE" && typeof cDef.language === "string" && cDef.language.trim();
+      return {
+        topicId: topicIdForRow,
+        type,
+        title: cDef.title || fallbackTitle,
+        htmlContent: cDef.htmlContent || cDef.code || cDef.body || cDef.content || "",
+        videoUrl: cDef.videoUrl ?? null,
+        fileUrl: cDef.fileUrl ?? null,
+        externalUrl: cDef.externalUrl ?? null,
+        data: hasLanguage ? { language: cDef.language.trim().toLowerCase() } : undefined,
+        order,
+      };
+    };
+
+    // AI-generated questionType is restricted to the subset that is
+    // confirmed safe end-to-end: rendered by a dedicated student UI
+    // (QuestionCard.jsx -> OptionList/MCQMultiOptionList) AND graded by a
+    // dedicated comparison branch (quiz.service.js evaluateAnswer). The other
+    // three QuestionType enum values (ARRANGE_TOKENS, MATCH_PAIRS,
+    // SELF_ASSESSMENT) need richer generated data shapes (ordered token
+    // lists, key/value pairs) that the AI prompt does not yet constrain
+    // strictly enough to trust unattended — left as future work.
+    const AI_SAFE_QUESTION_TYPES = new Set(["MCQ_SINGLE", "MCQ_MULTI"]);
+    const normalizeQuestionType = (rawType) => {
+      const type = (rawType || "MCQ_SINGLE").toUpperCase().trim();
+      return AI_SAFE_QUESTION_TYPES.has(type) ? type : "MCQ_SINGLE";
+    };
+
+    // MCQ_MULTI is graded by an order-independent array match
+    // (quiz.service.js evaluateAnswer) and therefore needs correctAnswer to
+    // be an array of correct option strings; MCQ_SINGLE needs a single
+    // string. Defensively reshapes whatever the AI returned to match.
+    const normalizeCorrectAnswer = (qDef, questionType, options) => {
+      if (questionType === "MCQ_MULTI") {
+        if (Array.isArray(qDef.correctAnswer) && qDef.correctAnswer.length > 0) return qDef.correctAnswer;
+        if (qDef.correctAnswer) return [qDef.correctAnswer];
+        return [options[0]];
+      }
+      if (Array.isArray(qDef.correctAnswer)) return qDef.correctAnswer[0] ?? options[0];
+      return qDef.correctAnswer || options[0];
+    };
+
+    // Collects one AI-generated quiz + its questions into the flat batch
+    // arrays below using pre-generated IDs (crypto.randomUUID()) instead of
+    // creating each row individually and awaiting its DB-generated ID back.
+    // This is the same batching pattern already used by
+    // v2PackageImporter.service.js's importV2Manifest for bulk course
+    // imports, applied here so the whole nested Quiz/Question/QuizQuestion
+    // subtree for one AI apply persists via a handful of createMany() calls
+    // instead of one round trip per row.
+    const collectQuizForBatch = (quizDef, levelIds, batch) => {
       if (!quizDef || typeof quizDef !== "object") return null;
 
-      const quizRecord = await tx.quiz.create({
-        data: {
-          title: quizDef.title || "AI Generated Quiz",
-          description: quizDef.description ?? null,
-          passingScore: quizDef.passingScore ? Number(quizDef.passingScore) : 70,
-          timeLimit: quizDef.timeLimit ? Number(quizDef.timeLimit) : 15,
-          isPublished: true,
-          status: "ACTIVE",
-          courseId: levelIds.courseId || courseId,
-          moduleId: levelIds.moduleId || null,
-          lessonId: levelIds.lessonId || null,
-          topicId: levelIds.topicId || null,
-          batchId: null,
-        },
-      });
+      const quizId = crypto.randomUUID();
+      const quizRow = {
+        id: quizId,
+        title: quizDef.title || "AI Generated Quiz",
+        description: quizDef.description ?? null,
+        passingScore: quizDef.passingScore ? Number(quizDef.passingScore) : 70,
+        timeLimit: quizDef.timeLimit ? Number(quizDef.timeLimit) : 15,
+        isPublished: true,
+        status: "ACTIVE",
+        courseId: levelIds.courseId || courseId,
+        moduleId: levelIds.moduleId || null,
+        lessonId: levelIds.lessonId || null,
+        topicId: levelIds.topicId || null,
+        batchId: null,
+      };
+      batch.quizRows.push(quizRow);
 
       const questions = Array.isArray(quizDef.questions) ? quizDef.questions : [];
-      for (let qIdx = 0; qIdx < questions.length; qIdx++) {
-        const qDef = questions[qIdx];
-        const questionRecord = await tx.question.create({
-          data: {
-            courseId: levelIds.courseId || courseId,
-            moduleId: levelIds.moduleId || null,
-            question: qDef.question || `Question ${qIdx + 1}`,
-            questionType: (qDef.questionType || "MCQ_SINGLE").toUpperCase(),
-            options: qDef.options || ["Option 1", "Option 2", "Option 3", "Option 4"],
-            correctAnswer: qDef.correctAnswer || (Array.isArray(qDef.options) ? qDef.options[0] : "Option 1"),
-            explanation: qDef.explanation ?? null,
-            marks: qDef.marks ? Number(qDef.marks) : 1,
-            negativeMarks: qDef.negativeMarks ? Number(qDef.negativeMarks) : 0,
-            difficulty: (qDef.difficulty || "MEDIUM").toUpperCase(),
-            createdBy: instructorId,
-          },
+      questions.forEach((qDef, qIdx) => {
+        const questionId = crypto.randomUUID();
+        const questionType = normalizeQuestionType(qDef.questionType);
+        const options = qDef.options || ["Option 1", "Option 2", "Option 3", "Option 4"];
+
+        batch.questionRows.push({
+          id: questionId,
+          courseId: levelIds.courseId || courseId,
+          moduleId: levelIds.moduleId || null,
+          question: qDef.question || `Question ${qIdx + 1}`,
+          questionType,
+          options,
+          correctAnswer: normalizeCorrectAnswer(qDef, questionType, options),
+          explanation: qDef.explanation ?? null,
+          marks: qDef.marks ? Number(qDef.marks) : 1,
+          negativeMarks: qDef.negativeMarks ? Number(qDef.negativeMarks) : 0,
+          difficulty: (qDef.difficulty || "MEDIUM").toUpperCase(),
+          createdBy: instructorId,
         });
 
-        await tx.quizQuestion.create({
-          data: {
-            quizId: quizRecord.id,
-            questionId: questionRecord.id,
-            order: qIdx + 1,
-            marks: qDef.marks ? Number(qDef.marks) : 1,
-            isMandatory: true,
-          },
+        batch.quizQuestionRows.push({
+          id: crypto.randomUUID(),
+          quizId,
+          questionId,
+          order: qIdx + 1,
+          marks: qDef.marks ? Number(qDef.marks) : 1,
+          isMandatory: true,
         });
-      }
+      });
 
-      return quizRecord;
+      return quizRow;
+    };
+
+    const newBatch = () => ({ contentRows: [], quizRows: [], questionRows: [], quizQuestionRows: [] });
+
+    // Persists everything collected in `batch` with the minimum number of
+    // round trips, in FK-safe order: Content only needs its topic to already
+    // exist (guaranteed by the caller, which always flushes topics first);
+    // Quiz only needs course/module/lesson/topic to already exist (same
+    // guarantee); Question only needs course/module; QuizQuestion needs both
+    // Quiz and Question, so it runs last, after both of those createMany()
+    // calls above it in this same function.
+    const flushBatch = async (batch) => {
+      if (batch.contentRows.length > 0) await tx.content.createMany({ data: batch.contentRows });
+      if (batch.quizRows.length > 0) await tx.quiz.createMany({ data: batch.quizRows });
+      if (batch.questionRows.length > 0) await tx.question.createMany({ data: batch.questionRows });
+      if (batch.quizQuestionRows.length > 0) await tx.quizQuestion.createMany({ data: batch.quizQuestionRows });
     };
 
     if (scopeUpper === "MODULE") {
@@ -436,70 +525,62 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
         },
       });
 
+      const batch = newBatch();
+
       // Module-level quizzes
       const modQuizzes = Array.isArray(generatedData.quizzes) ? generatedData.quizzes : [];
       for (const qz of modQuizzes) {
-        await createQuizWithQuestionsInTx(qz, { courseId, moduleId: createdModule.id });
+        collectQuizForBatch(qz, { courseId, moduleId: createdModule.id }, batch);
       }
 
-      // Lessons -> Topics -> Contents + Quizzes
+      // Lessons (batched — one createMany for every lesson in this module)
       const lessons = Array.isArray(generatedData.lessons) ? generatedData.lessons : [];
-      for (let lIdx = 0; lIdx < lessons.length; lIdx++) {
-        const lDef = lessons[lIdx];
-        const createdLesson = await tx.lesson.create({
-          data: {
-            moduleId: createdModule.id,
-            title: lDef.title || `Lesson ${lIdx + 1}`,
-            description: lDef.description ?? "",
-            order: lIdx + 1,
-            isPublished: true,
-          },
-        });
+      const lessonRows = lessons.map((lDef, lIdx) => ({
+        id: crypto.randomUUID(),
+        moduleId: createdModule.id,
+        title: lDef.title || `Lesson ${lIdx + 1}`,
+        description: lDef.description ?? "",
+        order: lIdx + 1,
+        isPublished: true,
+      }));
+      if (lessonRows.length > 0) await tx.lesson.createMany({ data: lessonRows });
+
+      // Topics (batched — one createMany for every topic across every lesson)
+      const topicRows = [];
+      lessons.forEach((lDef, lIdx) => {
+        const createdLessonId = lessonRows[lIdx].id;
 
         const lesQuizzes = Array.isArray(lDef.quizzes) ? lDef.quizzes : [];
         for (const qz of lesQuizzes) {
-          await createQuizWithQuestionsInTx(qz, { courseId, moduleId: createdModule.id, lessonId: createdLesson.id });
+          collectQuizForBatch(qz, { courseId, moduleId: createdModule.id, lessonId: createdLessonId }, batch);
         }
 
         const topics = Array.isArray(lDef.topics) ? lDef.topics : [];
-        for (let tIdx = 0; tIdx < topics.length; tIdx++) {
-          const tDef = topics[tIdx];
-          const createdTopic = await tx.topic.create({
-            data: {
-              lessonId: createdLesson.id,
-              title: tDef.title || `Topic ${tIdx + 1}`,
-              description: tDef.description ?? "",
-              order: tIdx + 1,
-              isPublished: true,
-            },
+        topics.forEach((tDef, tIdx) => {
+          const createdTopicId = crypto.randomUUID();
+          topicRows.push({
+            id: createdTopicId,
+            lessonId: createdLessonId,
+            title: tDef.title || `Topic ${tIdx + 1}`,
+            description: tDef.description ?? "",
+            order: tIdx + 1,
+            isPublished: true,
           });
 
           if (tDef.quiz) {
-            await createQuizWithQuestionsInTx(tDef.quiz, { courseId, moduleId: createdModule.id, lessonId: createdLesson.id, topicId: createdTopic.id });
+            collectQuizForBatch(tDef.quiz, { courseId, moduleId: createdModule.id, lessonId: createdLessonId, topicId: createdTopicId }, batch);
           }
 
           const contents = Array.isArray(tDef.contents) ? tDef.contents : [];
-          for (let cIdx = 0; cIdx < contents.length; cIdx++) {
-            const cDef = contents[cIdx];
-            let type = (cDef.type || "HTML").toUpperCase();
-            if (type === "TEXT_BLOCK" || type === "MARKDOWN") type = "HTML";
-            if (type === "CODE_BLOCK" || type === "SNIPPET") type = "CODE";
+          contents.forEach((cDef, cIdx) => {
+            batch.contentRows.push(buildContentRow(cDef, createdTopicId, cIdx + 1, `Content Block ${cIdx + 1}`));
+          });
+        });
+      });
+      if (topicRows.length > 0) await tx.topic.createMany({ data: topicRows });
 
-            await tx.content.create({
-              data: {
-                topicId: createdTopic.id,
-                type,
-                title: cDef.title || `Content Block ${cIdx + 1}`,
-                htmlContent: cDef.htmlContent || cDef.code || cDef.body || cDef.content || "",
-                videoUrl: cDef.videoUrl ?? null,
-                fileUrl: cDef.fileUrl ?? null,
-                externalUrl: cDef.externalUrl ?? null,
-                order: cIdx + 1,
-              },
-            });
-          }
-        }
-      }
+      // Content + Quiz + Question + QuizQuestion (batched — up to 4 more calls, total)
+      await flushBatch(batch);
 
       return createdModule;
     } else if (scopeUpper === "LESSON") {
@@ -518,49 +599,38 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
         },
       });
 
+      const batch = newBatch();
+
       const lesQuizzes = Array.isArray(generatedData.quizzes) ? generatedData.quizzes : [];
       for (const qz of lesQuizzes) {
-        await createQuizWithQuestionsInTx(qz, { courseId, moduleId: targetModuleId, lessonId: createdLesson.id });
+        collectQuizForBatch(qz, { courseId, moduleId: targetModuleId, lessonId: createdLesson.id }, batch);
       }
 
       const topics = Array.isArray(generatedData.topics) ? generatedData.topics : [];
-      for (let tIdx = 0; tIdx < topics.length; tIdx++) {
-        const tDef = topics[tIdx];
-        const createdTopic = await tx.topic.create({
-          data: {
-            lessonId: createdLesson.id,
-            title: tDef.title || `Topic ${tIdx + 1}`,
-            description: tDef.description ?? "",
-            order: tIdx + 1,
-            isPublished: true,
-          },
-        });
+      const topicRows = topics.map((tDef, tIdx) => ({
+        id: crypto.randomUUID(),
+        lessonId: createdLesson.id,
+        title: tDef.title || `Topic ${tIdx + 1}`,
+        description: tDef.description ?? "",
+        order: tIdx + 1,
+        isPublished: true,
+      }));
+      if (topicRows.length > 0) await tx.topic.createMany({ data: topicRows });
+
+      topics.forEach((tDef, tIdx) => {
+        const createdTopicId = topicRows[tIdx].id;
 
         if (tDef.quiz) {
-          await createQuizWithQuestionsInTx(tDef.quiz, { courseId, moduleId: targetModuleId, lessonId: createdLesson.id, topicId: createdTopic.id });
+          collectQuizForBatch(tDef.quiz, { courseId, moduleId: targetModuleId, lessonId: createdLesson.id, topicId: createdTopicId }, batch);
         }
 
         const contents = Array.isArray(tDef.contents) ? tDef.contents : [];
-        for (let cIdx = 0; cIdx < contents.length; cIdx++) {
-          const cDef = contents[cIdx];
-          let type = (cDef.type || "HTML").toUpperCase();
-          if (type === "TEXT_BLOCK" || type === "MARKDOWN") type = "HTML";
-          if (type === "CODE_BLOCK" || type === "SNIPPET") type = "CODE";
+        contents.forEach((cDef, cIdx) => {
+          batch.contentRows.push(buildContentRow(cDef, createdTopicId, cIdx + 1, `Content Block ${cIdx + 1}`));
+        });
+      });
 
-          await tx.content.create({
-            data: {
-              topicId: createdTopic.id,
-              type,
-              title: cDef.title || `Content Block ${cIdx + 1}`,
-              htmlContent: cDef.htmlContent || cDef.code || cDef.body || cDef.content || "",
-              videoUrl: cDef.videoUrl ?? null,
-              fileUrl: cDef.fileUrl ?? null,
-              externalUrl: cDef.externalUrl ?? null,
-              order: cIdx + 1,
-            },
-          });
-        }
-      }
+      await flushBatch(batch);
 
       return createdLesson;
     } else if (scopeUpper === "TOPIC") {
@@ -579,30 +649,18 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
         },
       });
 
+      const batch = newBatch();
+
       if (generatedData.quiz) {
-        await createQuizWithQuestionsInTx(generatedData.quiz, { courseId, moduleId, lessonId: targetLessonId, topicId: createdTopic.id });
+        collectQuizForBatch(generatedData.quiz, { courseId, moduleId, lessonId: targetLessonId, topicId: createdTopic.id }, batch);
       }
 
       const contents = Array.isArray(generatedData.contents) ? generatedData.contents : [];
-      for (let cIdx = 0; cIdx < contents.length; cIdx++) {
-        const cDef = contents[cIdx];
-        let type = (cDef.type || "HTML").toUpperCase();
-        if (type === "TEXT_BLOCK" || type === "MARKDOWN") type = "HTML";
-        if (type === "CODE_BLOCK" || type === "SNIPPET") type = "CODE";
+      contents.forEach((cDef, cIdx) => {
+        batch.contentRows.push(buildContentRow(cDef, createdTopic.id, cIdx + 1, `Content Block ${cIdx + 1}`));
+      });
 
-        await tx.content.create({
-          data: {
-            topicId: createdTopic.id,
-            type,
-            title: cDef.title || `Content Block ${cIdx + 1}`,
-            htmlContent: cDef.htmlContent || cDef.code || cDef.body || cDef.content || "",
-            videoUrl: cDef.videoUrl ?? null,
-            fileUrl: cDef.fileUrl ?? null,
-            externalUrl: cDef.externalUrl ?? null,
-            order: cIdx + 1,
-          },
-        });
-      }
+      await flushBatch(batch);
 
       return createdTopic;
     } else if (scopeUpper === "CONTENT") {
@@ -617,27 +675,20 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
 
       const startOrder = await getPositionalOrderAndShift("content", { topicId: targetTopicId }, position);
 
-      const createdContents = [];
-      for (let cIdx = 0; cIdx < contents.length; cIdx++) {
-        const cDef = contents[cIdx];
-        let type = (cDef.type || "HTML").toUpperCase();
-        if (type === "TEXT_BLOCK" || type === "MARKDOWN") type = "HTML";
-        if (type === "CODE_BLOCK" || type === "SNIPPET") type = "CODE";
+      const rows = contents.map((cDef, cIdx) => buildContentRow(cDef, targetTopicId, startOrder + cIdx, "Content Block"));
+      if (rows.length === 0) return [];
 
-        const createdCnt = await tx.content.create({
-          data: {
-            topicId: targetTopicId,
-            type,
-            title: cDef.title || "Content Block",
-            htmlContent: cDef.htmlContent || cDef.code || cDef.body || cDef.content || "",
-            videoUrl: cDef.videoUrl ?? null,
-            fileUrl: cDef.fileUrl ?? null,
-            externalUrl: cDef.externalUrl ?? null,
-            order: startOrder + cIdx,
-          },
-        });
-        createdContents.push(createdCnt);
-      }
+      await tx.content.createMany({ data: rows });
+
+      // createMany() does not return the created rows. Fetch them back by
+      // the exact (topicId, order) range just written — safe and
+      // deterministic because startOrder was computed as one past the max
+      // existing order in this topic, so this range can never overlap a
+      // pre-existing row (see getPositionalOrderAndShift above).
+      const createdContents = await tx.content.findMany({
+        where: { topicId: targetTopicId, order: { gte: startOrder, lt: startOrder + rows.length } },
+        orderBy: { order: "asc" },
+      });
 
       return createdContents;
     } else if (scopeUpper === "QUIZ") {
@@ -648,7 +699,13 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
         levelModuleId = moduleId || null;
       }
 
-      return await createQuizWithQuestionsInTx(generatedData, { courseId, moduleId: levelModuleId, lessonId, topicId });
+      const batch = newBatch();
+      const quizRow = collectQuizForBatch(generatedData, { courseId, moduleId: levelModuleId, lessonId, topicId }, batch);
+      if (!quizRow) return null;
+
+      await flushBatch(batch);
+
+      return { ...quizRow, createdAt: new Date(), updatedAt: new Date() };
     } else {
       throw new ApiError(400, `Unsupported scope '${scope}' for AI entity application.`);
     }

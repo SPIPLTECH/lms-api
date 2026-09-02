@@ -18,10 +18,10 @@ const nsToMs = (nanoseconds) =>
 
 // The provider-independent LLM Gateway. This is the only entry point the
 // rest of the application should ever call to reach an LLM.
-const generate = async ({ systemPrompt, prompt, context, think = false } = {}) => {
+const generate = async ({ systemPrompt, prompt, context, think = false, size } = {}) => {
   if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) {
     console.log("[LLM Gateway] Routing request to Gemini Provider (@google/genai)...");
-    const geminiRes = await geminiProvider.generate({ systemPrompt, prompt, context });
+    const geminiRes = await geminiProvider.generate({ systemPrompt, prompt, context, size });
     return {
       response: geminiRes.response,
       usage: geminiRes.usage,
