@@ -17,6 +17,7 @@ const getCourses = async (req, res) => {
         category: req.query.category || undefined,
         level: req.query.level || undefined,
         sortBy: req.query.sortBy || undefined,
+        scope: req.query.scope || undefined,
       }
     );
 

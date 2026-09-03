@@ -314,6 +314,7 @@ const getCourses = async (
     category,
     level,
     sortBy = "newest",
+    scope,
   } = {}
 ) => {
   const where = {};
@@ -361,7 +362,7 @@ const getCourses = async (
   if (role === "ADMIN") {
     query.include = commonInclude;
     if (status) where.status = status;
-  } else if (role === "INSTRUCTOR") {
+  } else if (role === "INSTRUCTOR" && scope !== "all") {
     where.creatorId = userId;
     query.include = commonInclude;
     if (status) where.status = status;
