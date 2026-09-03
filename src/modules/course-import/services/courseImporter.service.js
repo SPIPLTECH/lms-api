@@ -582,7 +582,31 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
       // Content + Quiz + Question + QuizQuestion (batched — up to 4 more calls, total)
       await flushBatch(batch);
 
-      return createdModule;
+      // generatedData's quizzes/questions and topics/contents are now fully
+      // populated (SCOPE_SCHEMAS.MODULE requires complete content and quiz
+      // questions, not a structural shell), so batch.quizRows/contentRows
+      // above already carry the real persisted data. The response below
+      // still returns quiz shells without their questions and topics
+      // without their content, purely because Question/Content rows use
+      // DB-generated ids (unlike Quiz/Lesson/Topic, which pre-generate
+      // theirs) — the caller's background refetch (already unconditional
+      // after every apply) picks up the complete nested data a moment
+      // later, before the "created" success state is shown to the user.
+      return {
+        ...createdModule,
+        lessons: lessonRows.map((l) => ({
+          ...l,
+          quizzes: batch.quizRows.filter((q) => q.lessonId === l.id && !q.topicId),
+          topics: topicRows
+            .filter((t) => t.lessonId === l.id)
+            .map((t) => ({
+              ...t,
+              contents: [],
+              quizzes: batch.quizRows.filter((q) => q.topicId === t.id),
+            })),
+        })),
+        quizzes: batch.quizRows.filter((q) => q.moduleId === createdModule.id && !q.lessonId && !q.topicId),
+      };
     } else if (scopeUpper === "LESSON") {
       const targetModuleId = moduleId;
       if (!targetModuleId) throw new ApiError(400, "moduleId is required to create a Lesson.");
@@ -692,6 +716,49 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
 
       return createdContents;
     } else if (scopeUpper === "QUIZ") {
+      const targetQuizId = context?.quizId || context?.existingQuizId;
+      if (targetQuizId && typeof targetQuizId === "string" && !targetQuizId.startsWith("draft-")) {
+        const existingQuiz = await tx.quiz.findUnique({ where: { id: targetQuizId } });
+        if (existingQuiz) {
+          const batch = newBatch();
+          const questions = Array.isArray(generatedData.questions) ? generatedData.questions : [];
+          const existingCount = await tx.quizQuestion.count({ where: { quizId: targetQuizId } });
+
+          questions.forEach((qDef, qIdx) => {
+            const questionId = crypto.randomUUID();
+            const questionType = normalizeQuestionType(qDef.questionType);
+            const options = qDef.options || ["Option 1", "Option 2", "Option 3", "Option 4"];
+
+            batch.questionRows.push({
+              id: questionId,
+              courseId: existingQuiz.courseId,
+              moduleId: existingQuiz.moduleId,
+              question: qDef.question || `Question ${existingCount + qIdx + 1}`,
+              questionType,
+              options,
+              correctAnswer: normalizeCorrectAnswer(qDef, questionType, options),
+              explanation: qDef.explanation ?? null,
+              marks: qDef.marks ? Number(qDef.marks) : 1,
+              negativeMarks: qDef.negativeMarks ? Number(qDef.negativeMarks) : 0,
+              difficulty: (qDef.difficulty || "MEDIUM").toUpperCase(),
+              createdBy: instructorId,
+            });
+
+            batch.quizQuestionRows.push({
+              id: crypto.randomUUID(),
+              quizId: targetQuizId,
+              questionId,
+              order: existingCount + qIdx + 1,
+              marks: qDef.marks ? Number(qDef.marks) : 1,
+              isMandatory: true,
+            });
+          });
+
+          await flushBatch(batch);
+          return existingQuiz;
+        }
+      }
+
       const level = quizLevel || "COURSE";
       let levelModuleId = null;
 

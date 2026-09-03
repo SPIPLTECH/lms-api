@@ -97,11 +97,26 @@ const generate = async ({ systemPrompt, prompt, context, size } = {}) => {
       });
 
       const duration = Date.now() - startTime;
-      console.log(`[Gemini Provider] Gemini response received in ${duration} ms`);
+      const usage = response.usageMetadata || {};
+      const finishReason = response.candidates?.[0]?.finishReason;
+      const responseText = response.text || "";
+      // Kept permanently (not stripped after testing): one extra log line,
+      // same [Gemini Provider] convention as the rest of this file, and the
+      // only place in the app that ever surfaces token counts/finishReason
+      // — directly answers "is this response close to truncating" and "how
+      // much of maxOutputTokens did this actually use" without needing a
+      // one-off diagnostic script each time it's in question.
+      console.log(
+        `[Gemini Provider] Gemini response received in ${duration} ms | finishReason=${finishReason} | ` +
+          `promptTokens=${usage.promptTokenCount ?? "?"} outputTokens=${usage.candidatesTokenCount ?? "?"} ` +
+          `thoughtsTokens=${usage.thoughtsTokenCount ?? 0} totalTokens=${usage.totalTokenCount ?? "?"} | ` +
+          `responseChars=${responseText.length}`
+      );
 
       return {
-        response: response.text,
-        usage: response.usageMetadata || {},
+        response: responseText,
+        usage,
+        finishReason,
         model,
       };
     } catch (err) {
