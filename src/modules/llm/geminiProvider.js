@@ -54,7 +54,7 @@ const generate = async ({ systemPrompt, prompt, context } = {}) => {
 
     if (errStatus === 401 || errStatus === 403 || errMsg.includes("api key") || errMsg.includes("unauthorized")) {
       message = "AI authorization failed. Check server GEMINI_API_KEY.";
-      statusCode = 401;
+      statusCode = 502;
     } else if (errStatus === 429 || errMsg.includes("quota") || errMsg.includes("rate limit") || errMsg.includes("resource_exhausted")) {
       message = "AI usage limit reached. Please try again later.";
       statusCode = 429;
