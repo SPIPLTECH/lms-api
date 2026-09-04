@@ -58,6 +58,9 @@ const generate = async ({ systemPrompt, prompt, context } = {}) => {
     } else if (errStatus === 429 || errMsg.includes("quota") || errMsg.includes("rate limit") || errMsg.includes("resource_exhausted")) {
       message = "AI usage limit reached. Please try again later.";
       statusCode = 429;
+    } else if (errStatus === 503 || errMsg.includes("unavailable") || errMsg.includes("high demand")) {
+      message = "The AI provider is currently experiencing high demand. Please try again in a few minutes.";
+      statusCode = 503;
     } else if (errMsg.includes("timeout") || errMsg.includes("deadline")) {
       message = "AI request timed out. Please try again.";
       statusCode = 504;
