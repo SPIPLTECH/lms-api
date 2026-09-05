@@ -27,6 +27,13 @@ router.get(
   controller.getMyQueries
 );
 
+router.get(
+  "/my-questions",
+  verifyToken,
+  checkRole(["STUDENT"]),
+  controller.getMyQuestions
+);
+
 router.post(
   "/",
   verifyToken,
