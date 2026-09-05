@@ -2,6 +2,12 @@ const prisma = require("../../config/database");
 
 const getAssignments = async (studentId) => {
     const assignments = await prisma.assignment.findMany({
+        // Only assignments from courses this student is actually enrolled in —
+        // previously unscoped, which returned every assignment in the system
+        // to every student regardless of enrollment.
+        where: {
+            course: { enrollments: { some: { studentId } } }
+        },
         include: {
             course: {
                 select: {
@@ -12,7 +18,8 @@ const getAssignments = async (studentId) => {
             submissions: {
                 where: { studentId },
             }
-        }
+        },
+        orderBy: { createdAt: "desc" }
     });
 
     return assignments.map(a => {
@@ -26,6 +33,8 @@ const getAssignments = async (studentId) => {
             title: a.title,
             description: a.description,
             dueDate: a.dueDate,
+            assessmentType: a.assessmentType,
+            createdAt: a.createdAt,
             totalQuestions: a.totalQuestions,
             estimatedTime: a.estimatedTime,
             resources: a.resources,

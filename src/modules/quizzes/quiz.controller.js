@@ -19,7 +19,8 @@ const getQuizzes = async (req, res, next) => {
       req.query.courseId,
       req.user?.role,
       req.user?.id,
-      req.query.batchId
+      req.query.batchId,
+      studentId
     );
 
     res.json({
