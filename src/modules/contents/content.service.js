@@ -1,5 +1,6 @@
 const prisma = require("../../config/database");
 const { sanitizeContent } = require("../../utils/sanitizer");
+const { getNextOrder } = require("./contentOrder.util");
 
 const PARENT_FIELDS = ["courseId", "moduleId", "lessonId", "topicId"];
 
@@ -45,14 +46,9 @@ const createContent = async (data) => {
 
   // Auto-calculate order if missing or not an integer
   if (contentData.order === undefined || contentData.order === null || isNaN(Number(contentData.order))) {
-    const maxContent = parentField
-      ? await prisma.content.findFirst({
-          where: { [parentField]: contentData[parentField] },
-          orderBy: { order: "desc" },
-          select: { order: true },
-        })
-      : null;
-    contentData.order = maxContent ? maxContent.order + 1 : 1;
+    contentData.order = parentField
+      ? await getNextOrder(parentField, contentData[parentField])
+      : 1;
   } else {
     contentData.order = Number(contentData.order);
   }
