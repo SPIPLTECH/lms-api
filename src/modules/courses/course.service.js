@@ -976,12 +976,15 @@ const duplicateCourse = async (courseId, instructorId) => {
   const source = await prisma.course.findUnique({
     where: { id: courseId },
     include: {
+      contents: { orderBy: { order: "asc" } },
       modules: {
         orderBy: { order: "asc" },
         include: {
+          contents: { orderBy: { order: "asc" } },
           lessons: {
             orderBy: { order: "asc" },
             include: {
+              contents: { orderBy: { order: "asc" } },
               topics: {
                 orderBy: { order: "asc" },
                 include: { contents: { orderBy: { order: "asc" } } }
@@ -1019,6 +1022,22 @@ const duplicateCourse = async (courseId, instructorId) => {
       }
     });
 
+    if (source.contents.length > 0) {
+      await tx.content.createMany({
+        data: source.contents.map((content) => ({
+          order: content.order,
+          courseId: newCourse.id,
+          type: content.type,
+          title: content.title,
+          videoUrl: content.videoUrl,
+          fileUrl: content.fileUrl,
+          htmlContent: content.htmlContent,
+          externalUrl: content.externalUrl,
+          duration: content.duration
+        }))
+      });
+    }
+
     for (const module of source.modules) {
       const newModule = await tx.module.create({
         data: {
@@ -1030,6 +1049,22 @@ const duplicateCourse = async (courseId, instructorId) => {
         }
       });
 
+      if (module.contents.length > 0) {
+        await tx.content.createMany({
+          data: module.contents.map((content) => ({
+            order: content.order,
+            moduleId: newModule.id,
+            type: content.type,
+            title: content.title,
+            videoUrl: content.videoUrl,
+            fileUrl: content.fileUrl,
+            htmlContent: content.htmlContent,
+            externalUrl: content.externalUrl,
+            duration: content.duration
+          }))
+        });
+      }
+
       for (const lesson of module.lessons) {
         const newLesson = await tx.lesson.create({
           data: {
@@ -1040,6 +1075,22 @@ const duplicateCourse = async (courseId, instructorId) => {
             moduleId: newModule.id
           }
         });
+
+        if (lesson.contents.length > 0) {
+          await tx.content.createMany({
+            data: lesson.contents.map((content) => ({
+              order: content.order,
+              lessonId: newLesson.id,
+              type: content.type,
+              title: content.title,
+              videoUrl: content.videoUrl,
+              fileUrl: content.fileUrl,
+              htmlContent: content.htmlContent,
+              externalUrl: content.externalUrl,
+              duration: content.duration
+            }))
+          });
+        }
 
         for (const topic of lesson.topics) {
           const newTopic = await tx.topic.create({
