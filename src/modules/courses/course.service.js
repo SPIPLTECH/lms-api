@@ -451,6 +451,7 @@ const getCourseById = async (courseId, role, userId) => {
         },
         include: {
           quizzes: {
+            orderBy: { order: "asc" },
             include: {
               quizQuestions: {
                 orderBy: { order: "asc" },
@@ -480,6 +481,7 @@ const getCourseById = async (courseId, role, userId) => {
             },
             include: {
               quizzes: {
+                orderBy: { order: "asc" },
                 include: {
                   quizQuestions: {
                     orderBy: { order: "asc" },
@@ -508,6 +510,7 @@ const getCourseById = async (courseId, role, userId) => {
                 },
                 include: {
                   quizzes: {
+                    orderBy: { order: "asc" },
                     include: {
                       quizQuestions: {
                         orderBy: { order: "asc" },
@@ -546,6 +549,7 @@ const getCourseById = async (courseId, role, userId) => {
       },
 
       quizzes: {
+        orderBy: { order: "asc" },
         include: {
           quizQuestions: {
             orderBy: {
