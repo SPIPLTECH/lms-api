@@ -585,6 +585,19 @@ const getCourseById = async (courseId, role, userId) => {
 
   if (role === "STUDENT") {
     const { lockMap, completedSet } = await buildLessonLockMap(courseId, studentProfileId);
+
+    const allTopicIds = course.modules.flatMap((moduleItem) =>
+      moduleItem.lessons.flatMap((lesson) => (lesson.topics || []).map((topic) => topic.id))
+    );
+    const completedTopicSet = new Set();
+    if (studentProfileId && allTopicIds.length > 0) {
+      const completedTopicRows = await prisma.topicProgress.findMany({
+        where: { studentId: studentProfileId, topicId: { in: allTopicIds }, completed: true },
+        select: { topicId: true }
+      });
+      completedTopicRows.forEach((row) => completedTopicSet.add(row.topicId));
+    }
+
     course.modules.forEach((moduleItem) => {
       moduleItem.lessons.forEach((lesson) => {
         const locked = lockMap.get(lesson.id) ?? false;
@@ -592,6 +605,10 @@ const getCourseById = async (courseId, role, userId) => {
         lesson.completed = completedSet.has(lesson.id);
         if (locked) {
           lesson.topics = [];
+        } else {
+          (lesson.topics || []).forEach((topic) => {
+            topic.completed = completedTopicSet.has(topic.id);
+          });
         }
       });
     });
