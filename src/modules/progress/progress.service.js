@@ -178,6 +178,15 @@ const completeTopic = async (
     throw new ApiError(404, "Topic not found");
   }
 
+  if (!topic.isPublished) {
+    // An unpublished Topic shouldn't be individually completable by a
+    // student — treat it as invisible, same as a nonexistent Topic, matching
+    // this repo's existing convention for hiding unpublished content and
+    // keeping this in sync with the cascade below, which only ever counts
+    // published Topics toward lesson completion.
+    throw new ApiError(404, "Topic not found");
+  }
+
   const lessonId = topic.lessonId;
   const courseId = topic.lesson.module.courseId;
 
@@ -286,7 +295,7 @@ const markContentVisited = async (
   // complete without any Topic ever being marked done, contradicting that
   // single source of truth. This path stays the only way a zero-Topic
   // lesson (legacy content with no Topic wrapper) can complete.
-  const topicCount = await prisma.topic.count({ where: { lessonId } });
+  const topicCount = await prisma.topic.count({ where: { lessonId, isPublished: true } });
 
   let lessonCompleted = false;
   if (allContentVisited && topicCount === 0) {

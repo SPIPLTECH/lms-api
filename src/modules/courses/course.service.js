@@ -504,6 +504,7 @@ const getCourseById = async (courseId, role, userId) => {
                 }
               },
               topics: {
+                where: isStudentOrGuest ? { isPublished: true } : undefined,
                 orderBy: {
                   order: "asc"
                 },
