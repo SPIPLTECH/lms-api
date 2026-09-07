@@ -133,26 +133,21 @@ const generate = async ({ systemPrompt, prompt, context, size } = {}) => {
       let message = "AI generation failed. Please try again.";
       let statusCode = 502;
 
-      const errMsg = (err.message || "").toLowerCase();
-      const errStatus = err.status || err.statusCode;
-
-      if (errStatus === 401 || errStatus === 403 || errMsg.includes("api key") || errMsg.includes("unauthorized")) {
-        message = "AI authorization failed. Check server GEMINI_API_KEY.";
-        statusCode = 401;
-      } else if (errStatus === 429 || errMsg.includes("quota") || errMsg.includes("rate limit") || errMsg.includes("resource_exhausted")) {
-        message = "AI usage limit reached. Please try again later.";
-        statusCode = 429;
-      } else if (errMsg.includes("timeout") || errMsg.includes("deadline")) {
-        message = "AI request timed out. Please try again.";
-        statusCode = 504;
-      }
-
-      const apiErr = new Error(message);
-      apiErr.statusCode = statusCode;
-      apiErr.originalError = err;
-      throw apiErr;
+    if (errStatus === 401 || errStatus === 403 || errMsg.includes("api key") || errMsg.includes("unauthorized")) {
+      message = "AI authorization failed. Check server GEMINI_API_KEY.";
+      statusCode = 502;
+    } else if (errStatus === 429 || errMsg.includes("quota") || errMsg.includes("rate limit") || errMsg.includes("resource_exhausted")) {
+      message = "AI usage limit reached. Please try again later.";
+      statusCode = 429;
+    } else if (errStatus === 503 || errMsg.includes("unavailable") || errMsg.includes("high demand")) {
+      message = "The AI provider is currently experiencing high demand. Please try again in a few minutes.";
+      statusCode = 503;
+    } else if (errMsg.includes("timeout") || errMsg.includes("deadline")) {
+      message = "AI request timed out. Please try again.";
+      statusCode = 504;
     }
   }
 };
 
 module.exports = { generate, getApiKey, getModelName };
+}
