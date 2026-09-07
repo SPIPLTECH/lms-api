@@ -312,6 +312,37 @@ function stripMarkdownCodeFences(str) {
   return trimmed;
 }
 
+// Maps an internal AI-generation failure to a client-safe ApiError.
+//
+// `err.code` (set by geminiProvider.js for provider-side failures, or by the
+// callers below for empty-response/malformed-JSON failures found here) says
+// exactly WHY generation failed for logs/debugging — GEMINI_TRANSIENT_ERROR,
+// GEMINI_RECITATION, GEMINI_EMPTY_RESPONSE, GEMINI_INVALID_JSON,
+// GEMINI_AUTH_ERROR, or GEMINI_NON_RETRYABLE_ERROR. The response the client
+// actually receives collapses these to a small, generic set of codes/
+// messages — never the raw provider error, finishReason, or a response
+// excerpt, which could leak model/prompt internals.
+const CLIENT_SAFE_AI_ERRORS = {
+  GEMINI_TRANSIENT_ERROR: { code: "AI_GENERATION_TEMPORARY_FAILURE", message: "AI generation temporarily failed. Please try again." },
+  GEMINI_EMPTY_RESPONSE: { code: "AI_GENERATION_TEMPORARY_FAILURE", message: "AI generation temporarily failed. Please try again." },
+  GEMINI_INVALID_JSON: { code: "AI_GENERATION_TEMPORARY_FAILURE", message: "AI generation temporarily failed. Please try again." },
+  GEMINI_RECITATION: {
+    code: "AI_GENERATION_CONTENT_BLOCKED",
+    message: "The AI could not generate content for this request. Try simplifying the prompt or removing large quoted/reference text, then try again.",
+  },
+  GEMINI_AUTH_ERROR: { code: "AI_GENERATION_UNAVAILABLE", message: "AI generation is temporarily unavailable. Please try again later." },
+};
+
+function toGeminiApiError(err, label) {
+  const code = err.code || "GEMINI_NON_RETRYABLE_ERROR";
+  const statusCode = err.statusCode || 502;
+  const safe = CLIENT_SAFE_AI_ERRORS[code] || { code: "AI_GENERATION_FAILED", message: "AI generation failed. Please try again." };
+
+  console.error(`[AI Gen] ${label} failed [${code}]${err.finishReason ? ` finishReason=${err.finishReason}` : ""}: ${err.message}`);
+
+  return new ApiError(statusCode, safe.message, safe.code);
+}
+
 function normalizeQuizDef(quiz) {
   if (!quiz || typeof quiz !== "object") return;
   if (quiz.passingScore === undefined) quiz.passingScore = 60;
@@ -506,24 +537,40 @@ const generateModuleInParallel = async ({ prompt, context = {} }) => {
 
   const callGemini = async (systemPrompt, userPrompt, label) => {
     const start = Date.now();
+    console.log(`[AI Gen] ${label} started`);
     let llmResult;
     try {
       llmResult = await llmService.generate({ systemPrompt, prompt: userPrompt, context, think: false, size: "MEDIUM" });
     } catch (err) {
-      console.error(`[AI Gen] MODULE ${label} LLM call error:`, err);
-      const status = err.statusCode || 502;
-      throw new ApiError(status, err.message || "AI generation failed.");
+      throw toGeminiApiError(err, label);
     }
     const duration = Date.now() - start;
-    console.log(`[AI Gen] MODULE ${label} LLM response received in ${duration} ms`);
+    console.log(`[AI Gen] MODULE ${label} LLM response received in ${duration} ms (finishReason=${llmResult.finishReason || "?"})`);
 
-    const cleaned = stripMarkdownCodeFences(llmResult.response || "");
+    // Defense in depth: geminiProvider.js already throws (rather than
+    // returning) an empty/blocked response, so this should be unreachable
+    // for the Gemini path — but llm.service.js also has a non-Gemini Ollama
+    // fallback that isn't guaranteed the same guarantee. Either way, an
+    // empty string must never reach JSON.parse below.
+    const rawResponse = llmResult.response || "";
+    if (!rawResponse.trim()) {
+      const emptyErr = new Error(`${label}: response text was empty (finishReason=${llmResult.finishReason || "UNKNOWN"}).`);
+      emptyErr.code = "GEMINI_EMPTY_RESPONSE";
+      emptyErr.statusCode = 502;
+      emptyErr.finishReason = llmResult.finishReason;
+      throw toGeminiApiError(emptyErr, label);
+    }
+
+    const cleaned = stripMarkdownCodeFences(rawResponse);
     let parsed;
     try {
       parsed = JSON.parse(cleaned);
     } catch (parseErr) {
-      console.error(`[AI Gen] MODULE ${label} malformed JSON:`, (llmResult.response || "").slice(0, 300));
-      throw new ApiError(502, `The AI returned an invalid JSON response format for ${label}. Excerpt: ${cleaned.slice(0, 100)}...`);
+      console.error(`[AI Gen] MODULE ${label} malformed JSON (finishReason=${llmResult.finishReason || "?"}):`, rawResponse.slice(0, 300));
+      const invalidJsonErr = new Error(`${label}: AI response was not valid JSON (${parseErr.message}).`);
+      invalidJsonErr.code = "GEMINI_INVALID_JSON";
+      invalidJsonErr.statusCode = 502;
+      throw toGeminiApiError(invalidJsonErr, label);
     }
     return parsed;
   };
@@ -597,7 +644,8 @@ ${context && Object.keys(context).length > 0 ? JSON.stringify(context, null, 2) 
       if (lessons.length !== group.length) {
         throw new ApiError(
           502,
-          `AI generation incomplete: group ${groupIdx + 1} was asked for ${group.length} lesson(s) but returned ${lessons.length}.`
+          `AI generation incomplete: group ${groupIdx + 1} was asked for ${group.length} lesson(s) but returned ${lessons.length}.`,
+          "AI_GENERATION_INCOMPLETE"
         );
       }
 
@@ -608,11 +656,22 @@ ${context && Object.keys(context).length > 0 ? JSON.stringify(context, null, 2) 
 
   const failed = settled.filter((s) => s.status === "rejected");
   if (failed.length > 0) {
-    console.error(`[AI Gen] MODULE phase 2 failed — ${failed.length}/${groups.length} group(s) did not complete after ${phase2Duration} ms`);
+    const succeededLabels = settled.map((s, i) => (s.status === "fulfilled" ? `group${i + 1}` : null)).filter(Boolean);
+    const failedLabels = settled.map((s, i) => (s.status === "rejected" ? `group${i + 1}` : null)).filter(Boolean);
+    console.error(
+      `[AI Gen] MODULE phase 2 failed — ${failed.length}/${groups.length} group(s) did not complete after ${phase2Duration} ms ` +
+        `(failed: ${failedLabels.join(", ")}${succeededLabels.length ? `; succeeded but discarded: ${succeededLabels.join(", ")}` : ""})`
+    );
     // No partial Module is ever persisted here — this function only returns
     // generated JSON, nothing is written to the database yet (that happens
     // later, in applyAiEntity, only once this whole function has returned
-    // successfully) — so failing on the first rejection's error is safe.
+    // successfully). A Module is an atomic unit: committing it with some
+    // lessons silently missing their content is worse than failing the
+    // whole generation, so a successful group's output is intentionally
+    // NOT persisted independently when a sibling group fails — only logged
+    // above so the discard is visible rather than silent. Failing on the
+    // first rejection's (now clearly classified, see toGeminiApiError)
+    // error is safe.
     throw failed[0].reason;
   }
   const groupResults = settled.map((s) => s.value);
@@ -711,24 +770,38 @@ ${context && Object.keys(context).length > 0 ? JSON.stringify(context, null, 2) 
       size: courseSize,
     });
   } catch (err) {
-    console.error("LLM Generation call error:", err);
-    const status = err.statusCode || 502;
-    throw new ApiError(status, err.message || "AI generation failed.");
+    throw toGeminiApiError(err, scopeUpper);
   }
 
   const llmDuration = Date.now() - llmStartTime;
-  console.log(`[AI Gen] LLM response received in ${llmDuration} ms`);
+  console.log(`[AI Gen] LLM response received in ${llmDuration} ms (finishReason=${llmResult.finishReason || "?"})`);
 
   const parseStartTime = Date.now();
   const rawResponse = llmResult.response || "";
+
+  // Defense in depth: geminiProvider.js already throws (rather than
+  // returning) an empty/blocked response — see GEMINI_EMPTY_RESPONSE /
+  // GEMINI_RECITATION in geminiProvider.js — but an empty string must never
+  // reach JSON.parse below regardless of which LLM backend produced it.
+  if (!rawResponse.trim()) {
+    const emptyErr = new Error(`Response text was empty (finishReason=${llmResult.finishReason || "UNKNOWN"}).`);
+    emptyErr.code = "GEMINI_EMPTY_RESPONSE";
+    emptyErr.statusCode = 502;
+    emptyErr.finishReason = llmResult.finishReason;
+    throw toGeminiApiError(emptyErr, scopeUpper);
+  }
+
   const cleanedJsonText = stripMarkdownCodeFences(rawResponse);
 
   let parsedJson;
   try {
     parsedJson = JSON.parse(cleanedJsonText);
   } catch (parseErr) {
-    console.error("Malformed AI JSON Response:", rawResponse.slice(0, 300));
-    throw new ApiError(502, `The AI returned an invalid JSON response format. Excerpt: ${cleanedJsonText.slice(0, 100)}...`);
+    console.error(`Malformed AI JSON Response (finishReason=${llmResult.finishReason || "?"}):`, rawResponse.slice(0, 300));
+    const invalidJsonErr = new Error(`AI response was not valid JSON (${parseErr.message}).`);
+    invalidJsonErr.code = "GEMINI_INVALID_JSON";
+    invalidJsonErr.statusCode = 502;
+    throw toGeminiApiError(invalidJsonErr, scopeUpper);
   }
 
   const parseDuration = Date.now() - parseStartTime;

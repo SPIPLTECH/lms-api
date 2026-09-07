@@ -27,6 +27,7 @@ const generate = async ({ systemPrompt, prompt, context, think = false, size } =
       usage: geminiRes.usage,
       latency: { totalMs: null },
       model: geminiRes.model,
+      finishReason: geminiRes.finishReason,
       thinkingEnabled: false,
     };
   }

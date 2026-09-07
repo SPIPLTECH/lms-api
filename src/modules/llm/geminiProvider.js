@@ -32,7 +32,23 @@ const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 const MAX_RETRIES = Number(process.env.GEMINI_MAX_RETRIES) || 2;
 const RETRY_BASE_DELAY_MS = Number(process.env.GEMINI_RETRY_BASE_DELAY_MS) || 500;
 
+// finishReason values where the SDK's `response.text` getter comes back
+// empty because content was withheld (not because generation legitimately
+// produced nothing) — see @google/genai's FinishReason enum. RECITATION is
+// the one observed in production (Gemini judged the output too close to
+// verbatim source/context text); the rest are included because they cause
+// the exact same "empty text, non-error response" shape.
+const BLOCKED_FINISH_REASONS = new Set(["RECITATION", "SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"]);
+
+// An empty/blocked response isn't a thrown SDK error, so it can't be
+// detected from `err.status`/`err.message` alone — the caller marks it with
+// `isEmptyResponse` before re-throwing it into this same retry path (see
+// `generate()` below). Retrying it reuses the SAME bounded MAX_RETRIES/
+// backoff budget as a transient network error, rather than adding a second,
+// separate retry allowance.
 const isRetryableError = (err) => {
+  if (err?.isEmptyResponse) return true;
+
   const status = Number(err?.status || err?.statusCode);
   if (RETRYABLE_STATUS_CODES.has(status)) return true;
 
@@ -77,6 +93,14 @@ const generate = async ({ systemPrompt, prompt, context, size } = {}) => {
   }
 
   let attempt = 0;
+  // Set only after an empty/blocked (e.g. RECITATION) response, so the next
+  // retry attempt — and only that attempt — asks the model to paraphrase
+  // instead of repeating the exact same prompt verbatim. A plain retry of an
+  // identical prompt has real (if not huge) value here since generation
+  // isn't fully deterministic, but nudging the instructions gives the retry
+  // a genuinely different chance rather than just re-rolling the dice.
+  let lastFinishReason = null;
+
   while (true) {
     try {
       const startTime = Date.now();
@@ -86,11 +110,15 @@ const generate = async ({ systemPrompt, prompt, context, size } = {}) => {
         }`
       );
 
+      const attemptSystemPrompt = BLOCKED_FINISH_REASONS.has(lastFinishReason)
+        ? `${systemPrompt}\n\nIMPORTANT: Your previous response was blocked (finishReason=${lastFinishReason}) for potentially reproducing source/context text verbatim. Paraphrase everything in your own original wording this time — do not copy long passages from the prompt, the provided context, or any reference material.`
+        : systemPrompt;
+
       const response = await ai.models.generateContent({
         model,
         contents: fullPrompt,
         config: {
-          systemInstruction: systemPrompt,
+          systemInstruction: attemptSystemPrompt,
           responseMimeType: "application/json",
           maxOutputTokens,
         },
@@ -113,6 +141,18 @@ const generate = async ({ systemPrompt, prompt, context, size } = {}) => {
           `responseChars=${responseText.length}`
       );
 
+      // The SDK does NOT throw for a blocked/empty candidate — `response.text`
+      // just comes back "". Detect that explicitly here, before any caller
+      // can hand an empty string to JSON.parse, and route it through the
+      // SAME catch/retry/classification path below as a real error instead
+      // of returning a fake "success".
+      if (!responseText || !responseText.trim()) {
+        const emptyErr = new Error(`Gemini returned an empty response (finishReason=${finishReason || "UNKNOWN"}).`);
+        emptyErr.isEmptyResponse = true;
+        emptyErr.finishReason = finishReason;
+        throw emptyErr;
+      }
+
       return {
         response: responseText,
         usage,
@@ -120,34 +160,71 @@ const generate = async ({ systemPrompt, prompt, context, size } = {}) => {
         model,
       };
     } catch (err) {
-      console.error("[Gemini Provider] Gemini API Error:", err.message || err);
+      const isBlocked = err.isEmptyResponse && BLOCKED_FINISH_REASONS.has(err.finishReason);
+      console.error(
+        "[Gemini Provider] Gemini API Error:",
+        err.isEmptyResponse ? err.message : err.message || err
+      );
 
       if (isRetryableError(err) && attempt < MAX_RETRIES) {
         const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
         attempt += 1;
-        console.warn(`[Gemini Provider] Transient error — retrying attempt ${attempt}/${MAX_RETRIES} in ${delayMs}ms...`);
+        if (err.isEmptyResponse) lastFinishReason = err.finishReason;
+        console.warn(
+          `[Gemini Provider] ${
+            err.isEmptyResponse ? `Empty/blocked response (finishReason=${err.finishReason || "UNKNOWN"})` : "Transient error"
+          } — retrying attempt ${attempt}/${MAX_RETRIES} in ${delayMs}ms...`
+        );
         await sleep(delayMs);
         continue;
       }
 
+      const errMsg = (err.message || "").toLowerCase();
+      const errStatus = err.status || err.statusCode;
+
       let message = "AI generation failed. Please try again.";
       let statusCode = 502;
+      let code = "GEMINI_NON_RETRYABLE_ERROR";
 
-    if (errStatus === 401 || errStatus === 403 || errMsg.includes("api key") || errMsg.includes("unauthorized")) {
-      message = "AI authorization failed. Check server GEMINI_API_KEY.";
-      statusCode = 502;
-    } else if (errStatus === 429 || errMsg.includes("quota") || errMsg.includes("rate limit") || errMsg.includes("resource_exhausted")) {
-      message = "AI usage limit reached. Please try again later.";
-      statusCode = 429;
-    } else if (errStatus === 503 || errMsg.includes("unavailable") || errMsg.includes("high demand")) {
-      message = "The AI provider is currently experiencing high demand. Please try again in a few minutes.";
-      statusCode = 503;
-    } else if (errMsg.includes("timeout") || errMsg.includes("deadline")) {
-      message = "AI request timed out. Please try again.";
-      statusCode = 504;
+      if (isBlocked) {
+        message = `Gemini blocked the response (finishReason=${err.finishReason}) after ${MAX_RETRIES} retr${MAX_RETRIES === 1 ? "y" : "ies"}.`;
+        statusCode = 502;
+        code = "GEMINI_RECITATION";
+      } else if (err.isEmptyResponse) {
+        message = `Gemini returned an empty response (finishReason=${err.finishReason || "UNKNOWN"}) after ${MAX_RETRIES} retr${MAX_RETRIES === 1 ? "y" : "ies"}.`;
+        statusCode = 502;
+        code = "GEMINI_EMPTY_RESPONSE";
+      } else if (errStatus === 401 || errStatus === 403 || errMsg.includes("api key") || errMsg.includes("unauthorized")) {
+        message = "AI authorization failed. Check server GEMINI_API_KEY.";
+        statusCode = 502;
+        code = "GEMINI_AUTH_ERROR";
+      } else if (errStatus === 429 || errMsg.includes("quota") || errMsg.includes("rate limit") || errMsg.includes("resource_exhausted")) {
+        message = "AI usage limit reached. Please try again later.";
+        statusCode = 429;
+        code = "GEMINI_TRANSIENT_ERROR";
+      } else if (errStatus === 503 || errMsg.includes("unavailable") || errMsg.includes("high demand")) {
+        message = "The AI provider is currently experiencing high demand. Please try again in a few minutes.";
+        statusCode = 503;
+        code = "GEMINI_TRANSIENT_ERROR";
+      } else if (errMsg.includes("timeout") || errMsg.includes("deadline")) {
+        message = "AI request timed out. Please try again.";
+        statusCode = 504;
+        code = "GEMINI_TRANSIENT_ERROR";
+      } else if (RETRYABLE_STATUS_CODES.has(Number(errStatus))) {
+        // Retryable status that still failed after exhausting MAX_RETRIES.
+        message = "AI generation failed after multiple attempts. Please try again.";
+        statusCode = 502;
+        code = "GEMINI_TRANSIENT_ERROR";
+      }
+
+      const apiErr = new Error(message);
+      apiErr.statusCode = statusCode;
+      apiErr.code = code;
+      apiErr.finishReason = err.finishReason;
+      apiErr.originalError = err;
+      throw apiErr;
     }
   }
 };
 
 module.exports = { generate, getApiKey, getModelName };
-}
