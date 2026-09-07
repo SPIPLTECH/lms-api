@@ -84,6 +84,7 @@ model StudentProfile {
   enrollments                 Enrollment[]
   progress                    Progress[]
   contentProgress             ContentProgress[]
+  topicProgress               TopicProgress[]
   quizSubmissions             QuizSubmission[]
   reviews                     Review[]
   stickyNotes                 StickyNote[]
@@ -227,6 +228,7 @@ model Topic {
   contents    Content[]
   lesson      Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   quizzes     Quiz[]
+  progress    TopicProgress[]
 
   @@unique([lessonId, order])
 }
@@ -341,6 +343,18 @@ model Progress {
   student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, lessonId])
+}
+
+model TopicProgress {
+  id          String         @id @default(cuid())
+  topicId     String
+  completed   Boolean        @default(false)
+  completedAt DateTime?
+  studentId   String
+  topic       Topic          @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, topicId])
 }
 
 model Quiz {
