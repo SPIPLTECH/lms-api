@@ -3,6 +3,7 @@ const notificationService = require("../notifications/notification.service");
 const learnerModelService = require("../learner-model/learnerModel.service");
 const { MISCONCEPTION_TAXONOMY, isKnownMisconceptionType } = require("../learner-model/misconceptionTaxonomy.config");
 const misconceptionClassifier = require("../learner-model/misconceptionClassifier.service");
+const { getNextOrder } = require("../contents/contentOrder.util");
 
 // Tracks classifyAndApply() calls dispatched below fire-and-forget (never
 // awaited by the HTTP response, by design — see the dispatch site). Exists
@@ -408,12 +409,26 @@ const validateQuizScope = async ({ batchId, courseId, moduleId, lessonId, topicI
   }
 };
 
+const QUIZ_PARENT_PRECEDENCE = ["topicId", "lessonId", "moduleId", "courseId"];
+
+/** Most-specific non-null parent field on a quiz payload — courseId is
+ * always present (schema-required), so this always resolves. Matches the
+ * topic > lesson > module > course precedence this codebase already uses
+ * elsewhere (validateQuizScope's nesting checks, the frontend's
+ * isTopicQuiz/isLessonQuiz labeling). */
+const resolveQuizParentField = (data) => QUIZ_PARENT_PRECEDENCE.find((f) => data[f]);
+
 const createQuiz = async (
   data
 ) => {
   await validateQuizScope(data);
 
   const { questions, ...quizData } = data;
+
+  if (quizData.order === undefined || quizData.order === null) {
+    const field = resolveQuizParentField(quizData);
+    quizData.order = await getNextOrder(field, quizData[field]);
+  }
 
   const quiz = await prisma.quiz.create({
     data: {
