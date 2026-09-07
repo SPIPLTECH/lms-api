@@ -38,6 +38,41 @@ const completeLesson = async (
   }
 };
 
+const completeTopic = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const student =
+      await prisma.studentProfile.findUnique({
+        where: {
+          userId: req.user.id
+        }
+      });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found"
+      });
+    }
+
+    const result =
+      await progressService.completeTopic(
+        student.id,
+        req.body.topicId
+      );
+
+    res.status(201).json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const markContentVisited = async (
   req,
   res,
@@ -113,6 +148,7 @@ const getProgress = async (
 
 module.exports = {
   completeLesson,
+  completeTopic,
   markContentVisited,
   getProgress
 };

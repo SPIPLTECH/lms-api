@@ -10,7 +10,7 @@ const verifyToken = require(
   "../../middleware/auth.middleware"
 );
 const validate = require("../../middleware/joiValidation.middleware");
-const { completeLessonSchema, markContentVisitedSchema } = require("./progress.validation");
+const { completeLessonSchema, markContentVisitedSchema, completeTopicSchema } = require("./progress.validation");
 
 router.get(
   "/",
@@ -23,6 +23,13 @@ router.post(
   verifyToken,
   validate(completeLessonSchema),
   controller.completeLesson
+);
+
+router.post(
+  "/complete-topic",
+  verifyToken,
+  validate(completeTopicSchema),
+  controller.completeTopic
 );
 
 router.post(
