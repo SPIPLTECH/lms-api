@@ -46,6 +46,7 @@ test("createQuiz — order computation and explicit override", async (t) => {
   const originalContentFindFirst = prisma.content.findFirst;
   const originalQuizFindFirst = prisma.quiz.findFirst;
   const originalQuizCreate = prisma.quiz.create;
+  const originalQuizFindUnique = prisma.quiz.findUnique;
   const originalModuleFindUnique = prisma.module.findUnique;
   const originalLessonFindUnique = prisma.lesson.findUnique;
   const originalTopicFindUnique = prisma.topic.findUnique;
@@ -56,6 +57,7 @@ test("createQuiz — order computation and explicit override", async (t) => {
     prisma.content.findFirst = originalContentFindFirst;
     prisma.quiz.findFirst = originalQuizFindFirst;
     prisma.quiz.create = originalQuizCreate;
+    prisma.quiz.findUnique = originalQuizFindUnique;
     prisma.module.findUnique = originalModuleFindUnique;
     prisma.lesson.findUnique = originalLessonFindUnique;
     prisma.topic.findUnique = originalTopicFindUnique;
@@ -71,6 +73,7 @@ test("createQuiz — order computation and explicit override", async (t) => {
       capturedData = data;
       return { ...data, id: "new-quiz-id" };
     };
+    prisma.quiz.findUnique = async () => ({ id: "new-quiz-id", quizQuestions: [] });
     prisma.topic.findUnique = async () => ({
       lessonId: "l1",
       lesson: { module: { id: "m1", courseId: "c1" } },
@@ -92,6 +95,7 @@ test("createQuiz — order computation and explicit override", async (t) => {
       capturedData = data;
       return { ...data, id: "new-quiz-id" };
     };
+    prisma.quiz.findUnique = async () => ({ id: "new-quiz-id", quizQuestions: [] });
     prisma.course.findUnique = async () => ({ title: "Some Course" });
 
     await quizService.createQuiz({
