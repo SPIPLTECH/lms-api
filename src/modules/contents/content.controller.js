@@ -10,7 +10,7 @@ const getContents = async (
   try {
     const contents =
       await contentService.getContents(
-        req.query.topicId,
+        req.query,
         req.user.role,
         req.user.id
       );
