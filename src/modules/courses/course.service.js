@@ -631,6 +631,7 @@ const validateCourseForPublish = async (courseId) => {
           lessons: {
             orderBy: { order: "asc" },
             include: {
+              contents: { orderBy: { order: "asc" } },
               topics: {
                 orderBy: { order: "asc" },
                 include: {
@@ -684,20 +685,22 @@ const validateCourseForPublish = async (courseId) => {
       } else {
         for (let lIdx = 0; lIdx < mod.lessons.length; lIdx++) {
           const lesson = mod.lessons[lIdx];
-          const hasContent = (lesson.topics || []).some((t) =>
-            (t.contents || []).some((c) => {
-              if (!c) return false;
-              if (typeof c.htmlContent === "string" && c.htmlContent.trim().length > 0) return true;
-              if (typeof c.videoUrl === "string" && c.videoUrl.trim().length > 0) return true;
-              if (typeof c.fileUrl === "string" && c.fileUrl.trim().length > 0) return true;
-              if (typeof c.externalUrl === "string" && c.externalUrl.trim().length > 0) return true;
-              if (c.data !== null && c.data !== undefined) {
-                if (typeof c.data === "object" && Object.keys(c.data).length > 0) return true;
-                if (typeof c.data === "string" && c.data.trim().length > 0) return true;
-              }
-              return false;
-            })
-          );
+          const candidateContents = [
+            ...(lesson.contents || []),
+            ...(lesson.topics || []).flatMap((t) => t.contents || [])
+          ];
+          const hasContent = candidateContents.some((c) => {
+            if (!c) return false;
+            if (typeof c.htmlContent === "string" && c.htmlContent.trim().length > 0) return true;
+            if (typeof c.videoUrl === "string" && c.videoUrl.trim().length > 0) return true;
+            if (typeof c.fileUrl === "string" && c.fileUrl.trim().length > 0) return true;
+            if (typeof c.externalUrl === "string" && c.externalUrl.trim().length > 0) return true;
+            if (c.data !== null && c.data !== undefined) {
+              if (typeof c.data === "object" && Object.keys(c.data).length > 0) return true;
+              if (typeof c.data === "string" && c.data.trim().length > 0) return true;
+            }
+            return false;
+          });
           if (!hasContent) {
             errors.push({
               code: "EMPTY_LESSON",
