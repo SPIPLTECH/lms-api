@@ -13,7 +13,14 @@ const markContentVisitedSchema = Joi.object({
   }),
 });
 
+const completeTopicSchema = Joi.object({
+  topicId: Joi.string().required().messages({
+    "any.required": "topicId is required"
+  }),
+});
+
 module.exports = {
   completeLessonSchema,
-  markContentVisitedSchema
+  markContentVisitedSchema,
+  completeTopicSchema
 };

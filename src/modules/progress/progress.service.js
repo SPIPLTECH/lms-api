@@ -160,6 +160,80 @@ const completeLesson = async (
   return progress;
 };
 
+// Mirrors completeLesson's shape but for a single Topic. Once every
+// published Topic under the parent Lesson has a completed TopicProgress
+// row for this student, cascades into the existing completeLesson() path
+// so lesson completion, percentage math, and certificate issuance are
+// never duplicated or driven by two independent code paths.
+const completeTopic = async (
+  studentId,
+  topicId
+) => {
+  const topic = await prisma.topic.findUnique({
+    where: { id: topicId },
+    include: { lesson: { include: { module: true } } }
+  });
+
+  if (!topic) {
+    throw new ApiError(404, "Topic not found");
+  }
+
+  const lessonId = topic.lessonId;
+  const courseId = topic.lesson.module.courseId;
+
+  const { lockMap } = await buildLessonLockMap(courseId, studentId);
+  if (lockMap.get(lessonId)) {
+    throw new ApiError(403, "Complete the previous lesson first to unlock this one.");
+  }
+
+  await prisma.topicProgress.upsert({
+    where: {
+      studentId_topicId: { studentId, topicId }
+    },
+    update: {
+      completed: true,
+      completedAt: new Date()
+    },
+    create: {
+      studentId,
+      topicId,
+      completed: true,
+      completedAt: new Date()
+    }
+  });
+
+  const lessonTopics = await prisma.topic.findMany({
+    where: { lessonId, isPublished: true },
+    select: { id: true }
+  });
+  const lessonTopicIds = lessonTopics.map((t) => t.id);
+
+  const completedTopicCount = await prisma.topicProgress.count({
+    where: {
+      studentId,
+      topicId: { in: lessonTopicIds },
+      completed: true
+    }
+  });
+
+  const allTopicsCompleted =
+    lessonTopicIds.length > 0 && completedTopicCount === lessonTopicIds.length;
+
+  let lessonCompleted = false;
+  if (allTopicsCompleted) {
+    await completeLesson(studentId, lessonId);
+    lessonCompleted = true;
+  }
+
+  const topicProgress = await prisma.topicProgress.findUnique({
+    where: {
+      studentId_topicId: { studentId, topicId }
+    }
+  });
+
+  return { topicProgress, lessonCompleted };
+};
+
 // Records that a student has visited one or more Content rows (a video
 // watched to the end, or a document/file/link block scrolled into view on
 // the frontend — see contentDocument.js for why a single displayed block
@@ -207,8 +281,15 @@ const markContentVisited = async (
   const allContentVisited =
     lessonContentIds.length > 0 && visitedCount === lessonContentIds.length;
 
+  // Once a lesson has Topics, completion is derived from TopicProgress via
+  // completeTopic()'s cascade — auto-completing here too would let a lesson
+  // complete without any Topic ever being marked done, contradicting that
+  // single source of truth. This path stays the only way a zero-Topic
+  // lesson (legacy content with no Topic wrapper) can complete.
+  const topicCount = await prisma.topic.count({ where: { lessonId } });
+
   let lessonCompleted = false;
-  if (allContentVisited) {
+  if (allContentVisited && topicCount === 0) {
     try {
       await completeLesson(studentId, lessonId);
       lessonCompleted = true;
@@ -335,6 +416,7 @@ const getCourseProgress = async (
 
 module.exports = {
   completeLesson,
+  completeTopic,
   markContentVisited,
   getAllCoursesProgress,
   getCourseProgress
