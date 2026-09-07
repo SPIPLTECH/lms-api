@@ -7,16 +7,18 @@ const getStudents = async (user) => {
     },
   };
 
+  let instructorCourseIds = null;
+
   if (user && user.role === "INSTRUCTOR") {
     const instructorCourses = await prisma.course.findMany({
       where: { creatorId: user.id },
       select: { id: true },
     });
-    const courseIds = instructorCourses.map((c) => c.id);
+    instructorCourseIds = instructorCourses.map((c) => c.id);
 
     whereClause.enrollments = {
       some: {
-        courseId: { in: courseIds },
+        courseId: { in: instructorCourseIds },
       },
     };
   }
@@ -77,7 +79,22 @@ const getStudents = async (user) => {
   });
 
   return students.map((student) => {
-    const firstEnrollment = student.enrollments[0];
+    // Scope this student's per-course data (enrollments, assignments,
+    // certificates) to the requesting instructor's own courses, since a
+    // student may also be enrolled in other instructors' courses and the
+    // whereClause.enrollments filter only guarantees SOME overlap, not that
+    // every relation below belongs to this instructor.
+    const relevantEnrollments = instructorCourseIds
+      ? student.enrollments.filter((e) => instructorCourseIds.includes(e.courseId))
+      : student.enrollments;
+    const relevantAssignmentSubmissions = instructorCourseIds
+      ? student.assignmentSubmissions.filter((a) => instructorCourseIds.includes(a.assignment?.courseId))
+      : student.assignmentSubmissions;
+    const relevantCertificates = instructorCourseIds
+      ? student.certificates.filter((c) => instructorCourseIds.includes(c.courseId))
+      : student.certificates;
+
+    const firstEnrollment = relevantEnrollments[0];
     const courseTitle = firstEnrollment?.course?.title || "General Course";
 
     const completedLessonIds = new Set(
@@ -85,7 +102,7 @@ const getStudents = async (user) => {
     );
 
     let totalLessonsCount = 0;
-    student.enrollments.forEach((e) => {
+    relevantEnrollments.forEach((e) => {
       e.course?.modules?.forEach((m) => {
         totalLessonsCount += m.lessons?.length || 0;
       });
@@ -96,8 +113,8 @@ const getStudents = async (user) => {
       ? Math.round((completedLessonsCount / totalLessonsCount) * 100)
       : (student.progress.length > 0 ? 50 : 0);
 
-    const totalSubmissions = student.assignmentSubmissions.length;
-    const gradedSubmissions = student.assignmentSubmissions.filter((a) => a.status === "Graded" || a.grade).length;
+    const totalSubmissions = relevantAssignmentSubmissions.length;
+    const gradedSubmissions = relevantAssignmentSubmissions.filter((a) => a.status === "Graded" || a.grade).length;
     const assignmentRate = totalSubmissions > 0
       ? Math.round((gradedSubmissions / totalSubmissions) * 100)
       : 0;
@@ -128,7 +145,7 @@ const getStudents = async (user) => {
       // null rather than a fabricated number - frontend should render "N/A".
       attendanceRate: null,
       joinedDate: joinedDateStr,
-      assignments: student.assignmentSubmissions.map((as) => ({
+      assignments: relevantAssignmentSubmissions.map((as) => ({
         id: as.id,
         title: as.assignment?.title || "Assignment",
         status: as.status || "Submitted",
@@ -153,7 +170,7 @@ const getStudents = async (user) => {
           status: moduleProgress === 100 ? "Completed" : moduleProgress > 0 ? "In Progress" : "Not Started",
         };
       }),
-      certificates: student.certificates.map((c) => ({
+      certificates: relevantCertificates.map((c) => ({
         id: c.id,
         title: c.course?.title || "Certificate of Completion",
         date: new Date(c.issuedAt).toLocaleDateString("en-US", {
