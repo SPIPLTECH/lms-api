@@ -365,6 +365,7 @@ model Progress {
 
 model Quiz {
   id               String           @id @default(cuid())
+  order            Int?
   title            String
   description      String?
   passingScore     Int
