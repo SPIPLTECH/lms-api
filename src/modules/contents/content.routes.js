@@ -19,8 +19,8 @@ const verifyContentOwnership = require(
   "../../middleware/contentOwnership.middleware"
 );
 
-const verifyTopicOwnership = require(
-  "../../middleware/topicOwnership.middleware"
+const verifyContentParentOwnership = require(
+  "../../middleware/contentParentOwnership.middleware"
 );
 
 const { upload, sanitizeSvgUpload } = require(
@@ -95,7 +95,7 @@ router.post(
     "INSTRUCTOR"
   ]),
   validate(createContentSchema),
-  verifyTopicOwnership.fromBody,
+  verifyContentParentOwnership.fromBody,
   controller.createContent
 );
 

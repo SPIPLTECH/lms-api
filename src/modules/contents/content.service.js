@@ -1,13 +1,21 @@
 const prisma = require("../../config/database");
 const { sanitizeContent } = require("../../utils/sanitizer");
 
-const getContents = async (topicId, role, userId) => {
-  const where = {};
+const PARENT_FIELDS = ["courseId", "moduleId", "lessonId", "topicId"];
 
-  if (topicId) {
-    where.topicId = topicId;
+const getContents = async (query = {}, role, userId) => {
+  const where = {};
+  const parentField = PARENT_FIELDS.find((field) => query[field]);
+
+  if (parentField) {
+    where[parentField] = query[parentField];
   } else if (role === "INSTRUCTOR") {
-    where.topic = { lesson: { module: { course: { creatorId: userId } } } };
+    where.OR = [
+      { course: { creatorId: userId } },
+      { module: { course: { creatorId: userId } } },
+      { lesson: { module: { course: { creatorId: userId } } } },
+      { topic: { lesson: { module: { course: { creatorId: userId } } } } },
+    ];
   }
 
   return prisma.content.findMany({
@@ -27,19 +35,23 @@ const getContentById = async (contentId) => {
 };
 
 const createContent = async (data) => {
-  const { lessonId, parentContentId, ...contentData } = data;
+  const { parentContentId, ...contentData } = data;
 
   if (contentData.htmlContent) {
     contentData.htmlContent = sanitizeContent(contentData.htmlContent);
   }
 
+  const parentField = PARENT_FIELDS.find((field) => contentData[field]);
+
   // Auto-calculate order if missing or not an integer
   if (contentData.order === undefined || contentData.order === null || isNaN(Number(contentData.order))) {
-    const maxContent = await prisma.content.findFirst({
-      where: { topicId: contentData.topicId },
-      orderBy: { order: "desc" },
-      select: { order: true },
-    });
+    const maxContent = parentField
+      ? await prisma.content.findFirst({
+          where: { [parentField]: contentData[parentField] },
+          orderBy: { order: "desc" },
+          select: { order: true },
+        })
+      : null;
     contentData.order = maxContent ? maxContent.order + 1 : 1;
   } else {
     contentData.order = Number(contentData.order);

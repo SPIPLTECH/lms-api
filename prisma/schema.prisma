@@ -130,34 +130,35 @@ model AdminProfile {
 }
 
 model Course {
-  id                      String                   @id @default(cuid())
-  title                   String
-  description             String?
-  category                String?
-  level                   String?
-  thumbnailUrl            String?
-  status                  CourseStatus             @default(DRAFT)
-  visibility              CourseVisibility         @default(PUBLIC)
-  language                String?                  @default("English")
-  tags                    String[]                 @default([])
-  estimatedLearningHours  Float?
-  certificatesEnabled     Boolean                  @default(false)
-  discussionEnabled       Boolean                  @default(true)
-  dripContentEnabled      Boolean                  @default(false)
-  publishedAt             DateTime?
-  creatorId               String
-  createdAt               DateTime                 @default(now())
-  updatedAt               DateTime                 @updatedAt
-  certificates            Certificate[]
-  creator                 User                     @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-  enrollments             Enrollment[]
-  modules                 Module[]
-  quizzes                 Quiz[]
-  reviews                 Review[]
-  liveClasses             LiveClass[]
-  assignments             Assignment[]
-  exams                   Exam[]
-  batches                 Batch[]                  @relation("BatchToCourse")
+  id                     String           @id @default(cuid())
+  title                  String
+  description            String?
+  category               String?
+  level                  String?
+  thumbnailUrl           String?
+  status                 CourseStatus     @default(DRAFT)
+  visibility             CourseVisibility @default(PUBLIC)
+  language               String?          @default("English")
+  tags                   String[]         @default([])
+  estimatedLearningHours Float?
+  certificatesEnabled    Boolean          @default(false)
+  discussionEnabled      Boolean          @default(true)
+  dripContentEnabled     Boolean          @default(false)
+  publishedAt            DateTime?
+  creatorId              String
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+  certificates           Certificate[]
+  creator                User             @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  enrollments            Enrollment[]
+  modules                Module[]
+  contents               Content[]
+  quizzes                Quiz[]
+  reviews                Review[]
+  liveClasses            LiveClass[]
+  assignments            Assignment[]
+  exams                  Exam[]
+  batches                Batch[]          @relation("BatchToCourse")
 
   batchesByCourseId   Batch[]              @relation("Batch_courseIdToCourse")
   batchSessions       BatchSession[]
@@ -195,6 +196,7 @@ model Module {
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   lessons     Lesson[]
+  contents    Content[]
   course      Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
   questions   Question[]
   quizzes     Quiz[]
@@ -212,6 +214,7 @@ model Lesson {
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
   topics          Topic[]
+  contents        Content[]
   instructorNotes InstructorLessonNote[]
   module          Module                 @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   queries         LessonQuery[]
@@ -242,7 +245,10 @@ model Topic {
 model Content {
   id          String            @id @default(cuid())
   order       Int
-  topicId     String
+  courseId    String?
+  moduleId    String?
+  lessonId    String?
+  topicId     String?
   type        ContentType
   title       String?
   videoUrl    String?
@@ -251,11 +257,17 @@ model Content {
   externalUrl String?
   duration    Int?
   data        Json?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  topic       Topic       @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  course      Course?           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  module      Module?           @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  lesson      Lesson?           @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  topic       Topic?            @relation(fields: [topicId], references: [id], onDelete: Cascade)
   visits      ContentProgress[]
 
+  @@unique([courseId, order])
+  @@unique([moduleId, order])
+  @@unique([lessonId, order])
   @@unique([topicId, order])
 }
 
@@ -353,6 +365,7 @@ model Progress {
 
 model Quiz {
   id               String           @id @default(cuid())
+  order            Int?
   title            String
   description      String?
   passingScore     Int
