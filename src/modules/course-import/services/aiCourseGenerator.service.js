@@ -710,6 +710,7 @@ ${context && Object.keys(context).length > 0 ? JSON.stringify(context, null, 2) 
 };
 
 const generateCourseFromPrompt = async ({ prompt, scope = "COURSE", context = {} }) => {
+  const requestStartTime = Date.now();
   if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
     throw new ApiError(400, "Please provide a valid text prompt for course generation.");
   }

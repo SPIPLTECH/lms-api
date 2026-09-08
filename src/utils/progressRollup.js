@@ -36,7 +36,7 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
         select: { id: true, passingScore: true }
       },
       assignments: {
-        where: { isPublished: true },
+        where: { isPublished: true, moduleId: null, lessonId: null, topicId: null },
         select: { id: true }
       },
       modules: {
@@ -52,6 +52,10 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
             where: { isPublished: true, lessonId: null, topicId: null },
             select: { id: true, passingScore: true }
           },
+          assignments: {
+            where: { isPublished: true, lessonId: null, topicId: null },
+            select: { id: true }
+          },
           lessons: {
             where: { isPublished: true },
             orderBy: { order: 'asc' },
@@ -65,6 +69,10 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
                 where: { isPublished: true, topicId: null },
                 select: { id: true, passingScore: true }
               },
+              assignments: {
+                where: { isPublished: true, topicId: null },
+                select: { id: true }
+              },
               topics: {
                 where: { isPublished: true },
                 orderBy: { order: 'asc' },
@@ -76,6 +84,10 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
                   quizzes: {
                     where: { isPublished: true },
                     select: { id: true, passingScore: true }
+                  },
+                  assignments: {
+                    where: { isPublished: true },
+                    select: { id: true }
                   }
                 }
               }
@@ -104,14 +116,17 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
   for (const mod of course.modules) {
     mod.contents.forEach((c) => allContentIds.add(c.id));
     mod.quizzes.forEach((q) => allQuizMap.set(q.id, q.passingScore));
+    mod.assignments.forEach((a) => allAssignmentIds.add(a.id));
 
     for (const lesson of mod.lessons) {
       lesson.contents.forEach((c) => allContentIds.add(c.id));
       lesson.quizzes.forEach((q) => allQuizMap.set(q.id, q.passingScore));
+      lesson.assignments.forEach((a) => allAssignmentIds.add(a.id));
 
       for (const topic of lesson.topics) {
         topic.contents.forEach((c) => allContentIds.add(c.id));
         topic.quizzes.forEach((q) => allQuizMap.set(q.id, q.passingScore));
+        topic.assignments.forEach((a) => allAssignmentIds.add(a.id));
       }
     }
   }
@@ -191,13 +206,15 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
       for (const topic of lesson.topics) {
         const topicContents = topic.contents;
         const topicQuizzes = topic.quizzes;
-        const hasItems = (topicContents.length + topicQuizzes.length) > 0;
+        const topicAssignments = topic.assignments;
+        const hasItems = (topicContents.length + topicQuizzes.length + topicAssignments.length) > 0;
         topicHasApplicableItemsMap.set(topic.id, hasItems);
 
         const contentsCompleted = topicContents.every((c) => completedContentSet.has(c.id));
         const quizzesCompleted = topicQuizzes.every((q) => completedQuizSet.has(q.id));
+        const assignmentsCompleted = topicAssignments.every((a) => completedAssignmentSet.has(a.id));
 
-        const isCompleted = hasItems && contentsCompleted && quizzesCompleted;
+        const isCompleted = hasItems && contentsCompleted && quizzesCompleted && assignmentsCompleted;
         topicCompletionStatus.set(topic.id, isCompleted);
 
         const existing = topicProgressMap.get(topic.id);
@@ -217,16 +234,18 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
     for (const lesson of mod.lessons) {
       const lessonContents = lesson.contents;
       const lessonQuizzes = lesson.quizzes;
+      const lessonAssignments = lesson.assignments;
       const applicableTopics = lesson.topics.filter((t) => topicHasApplicableItemsMap.get(t.id) === true);
 
-      const hasDirectItemsOrTopics = (lessonContents.length + lessonQuizzes.length + applicableTopics.length) > 0;
+      const hasDirectItemsOrTopics = (lessonContents.length + lessonQuizzes.length + lessonAssignments.length + applicableTopics.length) > 0;
       lessonHasApplicableItemsMap.set(lesson.id, hasDirectItemsOrTopics);
 
       const directContentsCompleted = lessonContents.every((c) => completedContentSet.has(c.id));
       const directQuizzesCompleted = lessonQuizzes.every((q) => completedQuizSet.has(q.id));
+      const directAssignmentsCompleted = lessonAssignments.every((a) => completedAssignmentSet.has(a.id));
       const topicsCompleted = applicableTopics.every((t) => topicCompletionStatus.get(t.id) === true);
 
-      const isCompleted = hasDirectItemsOrTopics && directContentsCompleted && directQuizzesCompleted && topicsCompleted;
+      const isCompleted = hasDirectItemsOrTopics && directContentsCompleted && directQuizzesCompleted && directAssignmentsCompleted && topicsCompleted;
       lessonCompletionStatus.set(lesson.id, isCompleted);
 
       const existing = lessonProgressMap.get(lesson.id);
@@ -244,16 +263,18 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
   for (const mod of course.modules) {
     const moduleContents = mod.contents;
     const moduleQuizzes = mod.quizzes;
+    const moduleAssignments = mod.assignments;
     const applicableLessons = mod.lessons.filter((l) => lessonHasApplicableItemsMap.get(l.id) === true);
 
-    const hasDirectItemsOrLessons = (moduleContents.length + moduleQuizzes.length + applicableLessons.length) > 0;
+    const hasDirectItemsOrLessons = (moduleContents.length + moduleQuizzes.length + moduleAssignments.length + applicableLessons.length) > 0;
     moduleHasApplicableItemsMap.set(mod.id, hasDirectItemsOrLessons);
 
     const directContentsCompleted = moduleContents.every((c) => completedContentSet.has(c.id));
     const directQuizzesCompleted = moduleQuizzes.every((q) => completedQuizSet.has(q.id));
+    const directAssignmentsCompleted = moduleAssignments.every((a) => completedAssignmentSet.has(a.id));
     const lessonsCompleted = applicableLessons.every((l) => lessonCompletionStatus.get(l.id) === true);
 
-    const isCompleted = hasDirectItemsOrLessons && directContentsCompleted && directQuizzesCompleted && lessonsCompleted;
+    const isCompleted = hasDirectItemsOrLessons && directContentsCompleted && directQuizzesCompleted && directAssignmentsCompleted && lessonsCompleted;
     moduleCompletionStatus.set(mod.id, isCompleted);
 
     const existing = moduleProgressMap.get(mod.id);

@@ -395,7 +395,12 @@ const getCourseById = async (courseId, role, userId) => {
         }
       },
       assignments: {
-        where: isStudentOrGuest ? { isPublished: true } : undefined
+        where: {
+          moduleId: null,
+          lessonId: null,
+          topicId: null,
+          ...(isStudentOrGuest ? { isPublished: true } : {})
+        }
       },
       modules: {
         where: isStudentOrGuest ? { isPublished: true } : undefined,
@@ -435,6 +440,13 @@ const getCourseById = async (courseId, role, userId) => {
               }
             }
           },
+          assignments: {
+            where: {
+              lessonId: null,
+              topicId: null,
+              ...(isStudentOrGuest ? { isPublished: true } : {})
+            }
+          },
           lessons: {
             where: isStudentOrGuest ? { isPublished: true } : undefined,
             orderBy: {
@@ -472,6 +484,12 @@ const getCourseById = async (courseId, role, userId) => {
                   }
                 }
               },
+              assignments: {
+                where: {
+                  topicId: null,
+                  ...(isStudentOrGuest ? { isPublished: true } : {})
+                }
+              },
               topics: {
                 where: isStudentOrGuest ? { isPublished: true } : undefined,
                 orderBy: {
@@ -501,6 +519,9 @@ const getCourseById = async (courseId, role, userId) => {
                         }
                       }
                     }
+                  },
+                  assignments: {
+                    where: isStudentOrGuest ? { isPublished: true } : undefined
                   },
                   contents: {
                     orderBy: {

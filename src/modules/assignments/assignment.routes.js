@@ -5,7 +5,7 @@ const controller = require("./assignment.controller");
 const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
 const verifyAssignmentOwnership = require("../../middleware/assignmentOwnership.middleware");
-const verifyCourseOwnership = require("../../middleware/courseOwnership.middleware");
+const verifyAssignmentParentOwnership = require("../../middleware/assignmentParentOwnership.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
 const {
   createAssignmentSchema,
@@ -32,7 +32,7 @@ router.post(
     verifyToken,
     checkRole(["INSTRUCTOR", "ADMIN"]),
     validate(createAssignmentSchema),
-    verifyCourseOwnership.fromBody,
+    verifyAssignmentParentOwnership.fromBody,
     controller.createAssignment
 );
 

@@ -201,6 +201,7 @@ model Module {
   course      Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
   questions   Question[]
   quizzes     Quiz[]
+  assignments Assignment[]
   progresses  ModuleProgress[]
 
   @@unique([courseId, order])
@@ -223,6 +224,7 @@ model Lesson {
   stickyNotes     StickyNote[]
   videoAnalytics  VideoAnalytics[]
   quizzes         Quiz[]
+  assignments     Assignment[]
   progresses      LessonProgress[]
 
   @@unique([moduleId, order])
@@ -240,6 +242,7 @@ model Topic {
   contents    Content[]
   lesson      Lesson          @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   quizzes     Quiz[]
+  assignments Assignment[]
   progresses  TopicProgress[]
 
   @@unique([lessonId, order])
@@ -715,13 +718,22 @@ model Assignment {
   attachments    Json?
   isPublished    Boolean                @default(true)
   status         String?                @default("ACTIVE")
-  courseId       String
+  courseId       String?
+  moduleId       String?
+  lessonId       String?
+  topicId        String?
   createdAt      DateTime               @default(now())
   updatedAt      DateTime               @updatedAt
-  course         Course                 @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  course         Course?                @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  module         Module?                @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  lesson         Lesson?                @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  topic          Topic?                 @relation(fields: [topicId], references: [id], onDelete: Cascade)
   submissions    AssignmentSubmission[]
 
   @@index([courseId])
+  @@index([moduleId])
+  @@index([lessonId])
+  @@index([topicId])
 }
 
 model AssignmentSubmission {
