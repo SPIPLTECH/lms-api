@@ -2,19 +2,27 @@ const prisma = require('../../config/database');
 const progressService = require('./progress.service');
 
 async function resolveStudentId(req) {
-  if (req.user?.studentProfile?.id) {
+  let targetId = null;
+  if ((req.user?.role === 'INSTRUCTOR' || req.user?.role === 'ADMIN') && (req.query?.studentId || req.params?.studentId)) {
+    targetId = req.query.studentId || req.params.studentId;
+  } else if (req.user?.studentProfile?.id) {
     return req.user.studentProfile.id;
+  } else if (req.user?.id) {
+    targetId = req.user.id;
   }
-  if (req.user?.id) {
-    const profile = await prisma.studentProfile.findUnique({
-      where: { userId: req.user.id }
-    });
-    if (profile) return profile.id;
+
+  if (targetId) {
     const profileById = await prisma.studentProfile.findUnique({
-      where: { id: req.user.id }
+      where: { id: targetId }
     });
     if (profileById) return profileById.id;
+
+    const profileByUserId = await prisma.studentProfile.findUnique({
+      where: { userId: targetId }
+    });
+    if (profileByUserId) return profileByUserId.id;
   }
+
   const error = new Error('Student profile not found');
   error.statusCode = 404;
   throw error;

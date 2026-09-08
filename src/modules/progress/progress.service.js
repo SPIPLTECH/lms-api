@@ -168,24 +168,27 @@ async function getStudentOverallProgress(studentId) {
     }
   });
 
-  const results = [];
-  for (const enc of enrollments) {
-    const rollup = await recomputeCourseProgress(studentId, enc.courseId);
-    results.push({
-      courseId: enc.courseId,
-      courseTitle: enc.course.title,
-      thumbnailUrl: enc.course.thumbnailUrl,
-      category: enc.course.category,
-      level: enc.course.level,
-      progressPercent: rollup.progressPercent,
-      completed: rollup.completed,
-      completedAt: enc.completedAt,
-      lastAccessedAt: enc.lastAccessedAt,
-      enrolledAt: enc.enrolledAt,
-      totalItems: rollup.totalItems,
-      completedItems: rollup.completedItems
-    });
-  }
+  const validEnrollments = enrollments.filter((enc) => enc.course);
+
+  const results = await Promise.all(
+    validEnrollments.map(async (enc) => {
+      const rollup = await recomputeCourseProgress(studentId, enc.courseId);
+      return {
+        courseId: enc.courseId,
+        courseTitle: enc.course.title,
+        thumbnailUrl: enc.course.thumbnailUrl,
+        category: enc.course.category,
+        level: enc.course.level,
+        progressPercent: rollup.progressPercent,
+        completed: rollup.completed,
+        completedAt: enc.completedAt,
+        lastAccessedAt: enc.lastAccessedAt,
+        enrolledAt: enc.enrolledAt,
+        totalItems: rollup.totalItems,
+        completedItems: rollup.completedItems
+      };
+    })
+  );
 
   return results;
 }
