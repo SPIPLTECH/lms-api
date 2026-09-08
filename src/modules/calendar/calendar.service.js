@@ -41,12 +41,7 @@ const getEvents = async (user) => {
 
     if (user.role === "INSTRUCTOR") {
         return await prisma.calendarEvent.findMany({
-            where: {
-                OR: [
-                    { instructorId: user.id },
-                    { instructorId: "inst-current" }
-                ]
-            },
+            where: { instructorId: user.id },
             orderBy: { date: "asc" },
             take: CALENDAR_EVENTS_LIMIT,
         });

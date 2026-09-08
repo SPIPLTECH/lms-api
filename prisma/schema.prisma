@@ -39,6 +39,8 @@ model User {
   teachingGoals           TeachingGoal[]
   courseImportJobs        CourseImportJob[]
   paymentOrders           PaymentOrder[]
+
+  @@index([role])
 }
 
 model StudentProfile {
@@ -172,6 +174,8 @@ model Course {
   store               Store?
   questions           Question[]
   paymentOrders       PaymentOrder[]
+
+  @@index([creatorId])
 }
 
 model Store {
@@ -707,6 +711,10 @@ model CalendarEvent {
   courseName     String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+
+  @@index([courseId])
+  @@index([instructorId])
+  @@index([date])
 }
 
 model Exam {
