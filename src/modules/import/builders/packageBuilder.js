@@ -62,6 +62,19 @@ function validateCanonicalJsonContract(courseJson) {
 }
 
 /**
+ * Whether a JSON asset reference points at an external URL rather than a
+ * bundled package-relative path. External references are collected as
+ * `externalUrls` (not physical assets) and must not be validated against
+ * packagePathsSet.
+ *
+ * @param {string|null} ref Reference value from courseJson (thumbnail or mediaFile)
+ * @returns {boolean}
+ */
+function isExternalReference(ref) {
+  return typeof ref === "string" && (ref.startsWith("http://") || ref.startsWith("https://"));
+}
+
+/**
  * Extracts all local package asset references from a Canonical Course JSON object.
  * 
  * @param {Object} courseJson Canonical Course JSON object
@@ -155,7 +168,7 @@ function buildCoursePackage({ courseJson, assetCollection }, options = {}) {
 
   // 4. Cross-verify JSON references against collected assets
   const jsonRefs = extractJsonAssetReferences(courseJson);
-  if (jsonRefs.thumbnail) {
+  if (jsonRefs.thumbnail && !isExternalReference(jsonRefs.thumbnail)) {
     if (!packagePathsSet.has(jsonRefs.thumbnail)) {
       errors.push(`Reference Error: course.json metadata.thumbnail '${jsonRefs.thumbnail}' not found in collected assets.`);
     }

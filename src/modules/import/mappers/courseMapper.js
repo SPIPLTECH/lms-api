@@ -190,7 +190,8 @@ function mapCourseSettings(course) {
   return {
     visibility: course.visibility ?? "PUBLIC",
     certificatesEnabled: Boolean(course.certificatesEnabled),
-    discussionEnabled: Boolean(course.discussionEnabled)
+    discussionEnabled: Boolean(course.discussionEnabled),
+    
   };
 }
 

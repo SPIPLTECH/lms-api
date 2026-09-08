@@ -57,6 +57,12 @@ const markAllAsRead = async (userId) => {
   });
 };
 
+const clearAll = async (userId) => {
+  return prisma.notification.deleteMany({
+    where: { userId },
+  });
+};
+
 const notifyEnrolledStudents = async (courseId, notificationData, batchId = null) => {
   try {
     // When a batchId is given, only notify that batch's roster instead of
@@ -95,5 +101,6 @@ module.exports = {
   getNotifications,
   markAsRead,
   markAllAsRead,
+  clearAll,
   notifyEnrolledStudents,
 };

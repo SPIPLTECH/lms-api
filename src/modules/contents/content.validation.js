@@ -22,7 +22,10 @@ const VALID_CONTENT_TYPES = [
 ];
 
 const createContentSchema = Joi.object({
-  topicId: Joi.string().required(),
+  courseId: Joi.string().optional(),
+  moduleId: Joi.string().optional(),
+  lessonId: Joi.string().optional(),
+  topicId: Joi.string().optional(),
   type: Joi.string()
     .valid(...VALID_CONTENT_TYPES)
     .required()
@@ -37,9 +40,13 @@ const createContentSchema = Joi.object({
   externalUrl: Joi.string().optional().allow(null, ""),
   duration: Joi.number().integer().min(0).optional().allow(null),
   data: Joi.object().optional().allow(null),
-  lessonId: Joi.string().optional().allow(null, ""),
   parentContentId: Joi.string().optional().allow(null, ""),
-});
+})
+  .xor("courseId", "moduleId", "lessonId", "topicId")
+  .messages({
+    "object.missing": "Content must be attached to exactly one of course, module, lesson, or topic.",
+    "object.xor": "Content must be attached to exactly one of course, module, lesson, or topic.",
+  });
 
 const updateContentSchema = Joi.object({
   type: Joi.string().valid(...VALID_CONTENT_TYPES).optional(),

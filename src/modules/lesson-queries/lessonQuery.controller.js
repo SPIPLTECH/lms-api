@@ -32,6 +32,20 @@ const getMyQueries = async (req, res, next) => {
   }
 };
 
+const getMyQuestions = async (req, res, next) => {
+  try {
+    const { courseId } = req.query;
+    const queries = await lessonQueryService.getQueriesForStudent(req.user.id, { courseId });
+
+    res.json({
+      success: true,
+      data: queries
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const createQuery = async (req, res, next) => {
   try {
     const query = await lessonQueryService.createQuery(req.user.id, req.body);
@@ -82,6 +96,7 @@ const updateStatus = async (req, res, next) => {
 module.exports = {
   getQueries,
   getMyQueries,
+  getMyQuestions,
   createQuery,
   replyToQuery,
   updateStatus

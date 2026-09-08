@@ -136,6 +136,15 @@ app.use("/lesson-notes", lessonNoteRoutes);
 app.use("/teaching-goals", teachingGoalRoutes);
 app.use("/calendar", calendarRoutes);
 app.use("/upcoming-tasks", upcomingTasksRoutes);
+// The 12 AI agent modules (observation, student-state, assessment,
+// recommendation, motivation, teacher-insights, analytics, career,
+// learning-path, placement, admin-intelligence, mentor) were removed from
+// here — full backup + restoration package at backup/ai-agents/.
+// The AI Student Entry Phase feature (not one of the 12) was extracted
+// from inside assessment/student-state into its own module and kept live,
+// remounted at the exact same URLs the frontend already calls:
+// app.use("/assessment/entry", entryAssessment.entryAssessmentRouter);
+// app.use("/student-state", entryAssessment.courseStateRouter);
 app.use("/course-import", courseImportRoutes);
 app.use("/api/ai", courseImportRoutes);
 app.use(

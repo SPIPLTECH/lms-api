@@ -320,19 +320,60 @@ const getCourses = async (
   return { courses: await attachCourseStats(courses), total };
 };
 
-/** Real status-breakdown counts for the instructor's own courses (used by the My Courses summary cards). */
+/**
+ * Summary counts for the instructor's own courses.
+ *
+ * Backs both the My Courses summary cards and the instructor dashboard's KPI
+ * strip. Every value here is computed by the database and returns a single
+ * number — nothing loads a list in order to take its `.length`.
+ *
+ * `students` is a COUNT(DISTINCT) rather than a groupBy/findMany, because a
+ * groupBy would still return one row per student (248 rows to display "248").
+ * Prisma has no first-class distinct-count, so this is the one place raw SQL
+ * is the right tool; the instructor id is parameterised, never interpolated.
+ */
 const getCourseStatusCounts = async (instructorId) => {
-  const [total, published, draft, archived] = await Promise.all([
-    prisma.course.count({ where: { creatorId: instructorId } }),
-    prisma.course.count({ where: { creatorId: instructorId, status: "PUBLISHED" } }),
-    prisma.course.count({ where: { creatorId: instructorId, status: "DRAFT" } }),
-    prisma.course.count({ where: { creatorId: instructorId, status: "ARCHIVED" } }),
-  ]);
+  const [total, published, draft, archived, activeQuizzes, studentRows] =
+    await Promise.all([
+      prisma.course.count({ where: { creatorId: instructorId } }),
+      prisma.course.count({ where: { creatorId: instructorId, status: "PUBLISHED" } }),
+      prisma.course.count({ where: { creatorId: instructorId, status: "DRAFT" } }),
+      prisma.course.count({ where: { creatorId: instructorId, status: "ARCHIVED" } }),
+      prisma.quiz.count({
+        where: { isPublished: true, course: { creatorId: instructorId } },
+      }),
+      prisma.$queryRaw`
+        SELECT COUNT(DISTINCT e."studentId")::int AS count
+        FROM "Enrollment" e
+        JOIN "Course" c ON c."id" = e."courseId"
+        WHERE c."creatorId" = ${instructorId}
+      `,
+    ]);
 
-  return { total, published, draft, archived };
+  return {
+    total,
+    published,
+    draft,
+    archived,
+    activeQuizzes,
+    students: Number(studentRows?.[0]?.count ?? 0),
+  };
 };
 
-const getCourseById = async (courseId, role, userId) => {
+/**
+ * @param {object}  [options]
+ * @param {boolean} [options.includeModules=true]
+ *   When false, the `modules` relation (modules -> lessons -> topics ->
+ *   contents, plus quizzes -> quizQuestions -> question at four levels) is
+ *   omitted and only course-level data is returned.
+ *
+ *   Defaults to true so every existing caller keeps its current payload.
+ *   Callers that only render course metadata — the breadcrumb in
+ *   DashboardNavbar, the course-overview header, the edit form — opt out and
+ *   avoid transferring every content cell body and every quiz answer key.
+ */
+const getCourseById = async (courseId, role, userId, options = {}) => {
+  const { includeModules = true } = options;
   const isStudentOrGuest = role === "STUDENT" || role === "GUEST";
 
   // If role is STUDENT, check if student holds an active enrollment
@@ -383,6 +424,9 @@ const getCourseById = async (courseId, role, userId) => {
         },
       },
 
+      // The deep tree. Omitted entirely when includeModules is false so
+      // metadata-only callers don't transfer every content cell and quiz answer.
+      ...(includeModules ? {
       modules: {
         where: isStudentOrGuest ? { isPublished: true } : undefined,
         orderBy: {
@@ -390,6 +434,7 @@ const getCourseById = async (courseId, role, userId) => {
         },
         include: {
           quizzes: {
+            orderBy: { order: "asc" },
             include: {
               quizQuestions: {
                 orderBy: { order: "asc" },
@@ -419,6 +464,7 @@ const getCourseById = async (courseId, role, userId) => {
             },
             include: {
               quizzes: {
+                orderBy: { order: "asc" },
                 include: {
                   quizQuestions: {
                     orderBy: { order: "asc" },
@@ -448,6 +494,7 @@ const getCourseById = async (courseId, role, userId) => {
                 },
                 include: {
                   quizzes: {
+                    orderBy: { order: "asc" },
                     include: {
                       quizQuestions: {
                         orderBy: { order: "asc" },
@@ -484,8 +531,10 @@ const getCourseById = async (courseId, role, userId) => {
           }
         }
       },
+      } : {}),
 
       quizzes: {
+        orderBy: { order: "asc" },
         include: {
           quizQuestions: {
             orderBy: {
@@ -557,6 +606,7 @@ const validateCourseForPublish = async (courseId) => {
           lessons: {
             orderBy: { order: "asc" },
             include: {
+              contents: { orderBy: { order: "asc" } },
               topics: {
                 orderBy: { order: "asc" },
                 include: {
@@ -610,20 +660,22 @@ const validateCourseForPublish = async (courseId) => {
       } else {
         for (let lIdx = 0; lIdx < mod.lessons.length; lIdx++) {
           const lesson = mod.lessons[lIdx];
-          const hasContent = (lesson.topics || []).some((t) =>
-            (t.contents || []).some((c) => {
-              if (!c) return false;
-              if (typeof c.htmlContent === "string" && c.htmlContent.trim().length > 0) return true;
-              if (typeof c.videoUrl === "string" && c.videoUrl.trim().length > 0) return true;
-              if (typeof c.fileUrl === "string" && c.fileUrl.trim().length > 0) return true;
-              if (typeof c.externalUrl === "string" && c.externalUrl.trim().length > 0) return true;
-              if (c.data !== null && c.data !== undefined) {
-                if (typeof c.data === "object" && Object.keys(c.data).length > 0) return true;
-                if (typeof c.data === "string" && c.data.trim().length > 0) return true;
-              }
-              return false;
-            })
-          );
+          const candidateContents = [
+            ...(lesson.contents || []),
+            ...(lesson.topics || []).flatMap((t) => t.contents || [])
+          ];
+          const hasContent = candidateContents.some((c) => {
+            if (!c) return false;
+            if (typeof c.htmlContent === "string" && c.htmlContent.trim().length > 0) return true;
+            if (typeof c.videoUrl === "string" && c.videoUrl.trim().length > 0) return true;
+            if (typeof c.fileUrl === "string" && c.fileUrl.trim().length > 0) return true;
+            if (typeof c.externalUrl === "string" && c.externalUrl.trim().length > 0) return true;
+            if (c.data !== null && c.data !== undefined) {
+              if (typeof c.data === "object" && Object.keys(c.data).length > 0) return true;
+              if (typeof c.data === "string" && c.data.trim().length > 0) return true;
+            }
+            return false;
+          });
           if (!hasContent) {
             errors.push({
               code: "EMPTY_LESSON",
@@ -899,12 +951,15 @@ const duplicateCourse = async (courseId, instructorId) => {
   const source = await prisma.course.findUnique({
     where: { id: courseId },
     include: {
+      contents: { orderBy: { order: "asc" } },
       modules: {
         orderBy: { order: "asc" },
         include: {
+          contents: { orderBy: { order: "asc" } },
           lessons: {
             orderBy: { order: "asc" },
             include: {
+              contents: { orderBy: { order: "asc" } },
               topics: {
                 orderBy: { order: "asc" },
                 include: { contents: { orderBy: { order: "asc" } } }
@@ -937,9 +992,26 @@ const duplicateCourse = async (courseId, instructorId) => {
         tags: source.tags,
         certificatesEnabled: source.certificatesEnabled,
         discussionEnabled: source.discussionEnabled,
+        
         estimatedLearningHours: source.estimatedLearningHours
       }
     });
+
+    if (source.contents.length > 0) {
+      await tx.content.createMany({
+        data: source.contents.map((content) => ({
+          order: content.order,
+          courseId: newCourse.id,
+          type: content.type,
+          title: content.title,
+          videoUrl: content.videoUrl,
+          fileUrl: content.fileUrl,
+          htmlContent: content.htmlContent,
+          externalUrl: content.externalUrl,
+          duration: content.duration
+        }))
+      });
+    }
 
     for (const module of source.modules) {
       const newModule = await tx.module.create({
@@ -952,6 +1024,22 @@ const duplicateCourse = async (courseId, instructorId) => {
         }
       });
 
+      if (module.contents.length > 0) {
+        await tx.content.createMany({
+          data: module.contents.map((content) => ({
+            order: content.order,
+            moduleId: newModule.id,
+            type: content.type,
+            title: content.title,
+            videoUrl: content.videoUrl,
+            fileUrl: content.fileUrl,
+            htmlContent: content.htmlContent,
+            externalUrl: content.externalUrl,
+            duration: content.duration
+          }))
+        });
+      }
+
       for (const lesson of module.lessons) {
         const newLesson = await tx.lesson.create({
           data: {
@@ -962,6 +1050,22 @@ const duplicateCourse = async (courseId, instructorId) => {
             moduleId: newModule.id
           }
         });
+
+        if (lesson.contents.length > 0) {
+          await tx.content.createMany({
+            data: lesson.contents.map((content) => ({
+              order: content.order,
+              lessonId: newLesson.id,
+              type: content.type,
+              title: content.title,
+              videoUrl: content.videoUrl,
+              fileUrl: content.fileUrl,
+              htmlContent: content.htmlContent,
+              externalUrl: content.externalUrl,
+              duration: content.duration
+            }))
+          });
+        }
 
         for (const topic of lesson.topics) {
           const newTopic = await tx.topic.create({
@@ -1169,4 +1273,4 @@ module.exports = {
   getCourseStudents,
   getCourseStatusCounts,
   exportCourse
-};
+};

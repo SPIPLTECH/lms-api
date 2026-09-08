@@ -90,6 +90,40 @@ const getQueriesForInstructor = async (instructorId, filters = {}) => {
   });
 };
 
+/** A student's own questions across every lesson they've asked about. */
+const getQueriesForStudent = async (userId, filters = {}) => {
+  const student = await prisma.studentProfile.findUnique({ where: { userId } });
+
+  if (!student) {
+    throw new ApiError(404, "Student profile not found");
+  }
+
+  const where = { studentId: student.id };
+  if (filters.courseId) {
+    where.lesson = { module: { courseId: filters.courseId } };
+  }
+
+  return prisma.lessonQuery.findMany({
+    where,
+    include: {
+      lesson: {
+        select: {
+          id: true,
+          title: true,
+          module: {
+            select: {
+              id: true,
+              title: true,
+              course: { select: { id: true, title: true } }
+            }
+          }
+        }
+      }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+};
+
 /** Loads a query plus enough of the relation chain to verify course ownership. */
 const findQueryWithCourseOwner = async (queryId) => {
   const query = await prisma.lessonQuery.findUnique({
@@ -141,6 +175,7 @@ const updateStatus = async (queryId, user, status) => {
 module.exports = {
   getQueriesForLesson,
   getQueriesForInstructor,
+  getQueriesForStudent,
   createQuery,
   replyToQuery,
   updateStatus

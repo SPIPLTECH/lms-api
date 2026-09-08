@@ -10,7 +10,8 @@ const createQuizSchema = Joi.object({
   topicId: Joi.string().optional().allow(null, ""),
   passingScore: Joi.number().integer().min(0).max(100).optional(),
   timeLimit: Joi.number().integer().min(0).optional().allow(null),
-  isPublished: Joi.boolean().optional()
+  isPublished: Joi.boolean().optional(),
+  order: Joi.number().integer().min(1).optional()
 });
 
 const updateQuizSchema = Joi.object({
@@ -18,7 +19,8 @@ const updateQuizSchema = Joi.object({
   description: Joi.string().optional().allow(null, ""),
   passingScore: Joi.number().integer().min(0).max(100).optional(),
   timeLimit: Joi.number().integer().min(0).optional().allow(null),
-  isPublished: Joi.boolean().optional()
+  isPublished: Joi.boolean().optional(),
+  order: Joi.number().integer().min(1).optional()
 });
 
 // evaluateAnswer() (quiz.service.js) expects a plain string for MCQ_SINGLE /

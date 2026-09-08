@@ -241,6 +241,15 @@ const generateSelfAssessmentQuiz = async (req, res, next) => {
   }
 };
 
+const reorderQuizzes = async (req, res, next) => {
+  try {
+    const result = await quizService.reorderQuizzes(req.body.quizzes);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getQuizzes,
   getQuizById,
@@ -254,4 +263,5 @@ module.exports = {
   removeQuestionFromQuiz,
   reorderQuizQuestions,
   updateQuizQuestionMarks,
+  reorderQuizzes,
 };
