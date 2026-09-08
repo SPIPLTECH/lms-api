@@ -33,7 +33,14 @@ const getEnrollments = async (
         select: {
           id: true,
           title: true,
-          description: true
+          description: true,
+          thumbnailUrl: true,
+          creator: { select: { name: true } },
+          modules: {
+            select: {
+              lessons: { select: { id: true } }
+            }
+          }
         }
       }
     }
