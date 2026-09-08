@@ -6,7 +6,6 @@ const courseExtraFields = {
   tags: Joi.array().items(Joi.string().max(50)).optional(),
   certificatesEnabled: Joi.boolean().optional(),
   discussionEnabled: Joi.boolean().optional(),
-  dripContentEnabled: Joi.boolean().optional(),
   estimatedLearningHours: Joi.number().min(0).max(10000).optional().allow(null)
 };
 

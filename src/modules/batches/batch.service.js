@@ -89,10 +89,12 @@ const buildWeeklyBuckets = (weeks = 6) => {
 
 /**
  * Batch Performance Overview — instructor Home dashboard widget. Every
- * metric is computed from real rows (Progress/QuizSubmission/
- * AssignmentSubmission), pooled across all of a batch's linked courses.
- * There is no attendance-tracking feature anywhere in this schema, so
- * attendanceRate is intentionally null rather than a fabricated number.
+ * metric is computed from real rows (QuizSubmission/AssignmentSubmission),
+ * pooled across all of a batch's linked courses. There is no
+ * attendance-tracking feature anywhere in this schema, so attendanceRate is
+ * intentionally null rather than a fabricated number. Lesson-completion is
+ * no longer tracked anywhere in this schema, so this widget no longer
+ * reports a completion percentage or at-risk-by-completion signal.
  */
 const getBatchPerformanceOverview = async (user, filters = {}) => {
   const courseFilter = {};
@@ -127,7 +129,6 @@ const getBatchPerformanceOverview = async (user, filters = {}) => {
         select: {
           id: true,
           title: true,
-          modules: { select: { lessons: { select: { id: true } } } },
           quizzes: { select: { id: true } },
           assignments: { select: { id: true } },
         },
@@ -144,39 +145,11 @@ const getBatchPerformanceOverview = async (user, filters = {}) => {
     batches.map(async (batch) => {
       const studentIds = batch.students.map((s) => s.id);
       const studentsCount = studentIds.length;
-      const lessonIds = batch.courses.flatMap((c) => c.modules.flatMap((m) => m.lessons.map((l) => l.id)));
       const quizIds = batch.courses.flatMap((c) => c.quizzes.map((q) => q.id));
       const assignmentIds = batch.courses.flatMap((c) => c.assignments.map((a) => a.id));
 
-      let completion = 0;
       let avgQuizScore = null;
       let assignmentSubmissionRate = null;
-      let atRiskStudentIds = [];
-
-      if (studentsCount > 0 && lessonIds.length > 0) {
-        const completedCount = await prisma.progress.count({
-          where: {
-            studentId: { in: studentIds },
-            lessonId: { in: lessonIds },
-            completed: true,
-          },
-        });
-        completion = Math.round((completedCount / (lessonIds.length * studentsCount)) * 100);
-
-        const perStudentCompleted = await prisma.progress.groupBy({
-          by: ["studentId"],
-          where: { studentId: { in: studentIds }, lessonId: { in: lessonIds }, completed: true },
-          _count: { _all: true },
-        });
-        const completedByStudent = new Map(perStudentCompleted.map((r) => [r.studentId, r._count._all]));
-        atRiskStudentIds = studentIds.filter((id) => {
-          const pct = ((completedByStudent.get(id) || 0) / lessonIds.length) * 100;
-          return pct < 45;
-        });
-      } else if (studentsCount > 0) {
-        // No lessons at all in these courses yet — every student is at risk by definition.
-        atRiskStudentIds = [...studentIds];
-      }
 
       if (studentsCount > 0 && quizIds.length > 0) {
         const submissions = await prisma.quizSubmission.findMany({
@@ -199,32 +172,13 @@ const getBatchPerformanceOverview = async (user, filters = {}) => {
         );
       }
 
-      // Weekly trend: cumulative completion snapshot per week-end, and the
-      // average quiz score of submissions that landed within each week.
-      // Expensive (12 extra queries per batch) and only ever rendered on the
-      // single-batch detail page's sparklines — skipped entirely on list
-      // views (no batchId filter) where it would just be discarded unused.
-      let completionTrend = [];
+      // Weekly trend: average quiz score of submissions that landed within
+      // each week. Expensive (6 extra queries per batch) and only ever
+      // rendered on the single-batch detail page's sparklines — skipped
+      // entirely on list views (no batchId filter) where it would just be
+      // discarded unused.
       let quizTrend = [];
       const computeTrends = Boolean(filters.batchId);
-      if (computeTrends && studentsCount > 0 && lessonIds.length > 0) {
-        completionTrend = await Promise.all(
-          weeklyBuckets.map(async ({ label, end }) => {
-            const countByEnd = await prisma.progress.count({
-              where: {
-                studentId: { in: studentIds },
-                lessonId: { in: lessonIds },
-                completed: true,
-                completedAt: { lte: end },
-              },
-            });
-            return {
-              week: label,
-              value: Math.round((countByEnd / (lessonIds.length * studentsCount)) * 100),
-            };
-          })
-        );
-      }
       if (computeTrends && studentsCount > 0 && quizIds.length > 0) {
         quizTrend = await Promise.all(
           weeklyBuckets.map(async ({ label, start, end }) => {
@@ -247,7 +201,7 @@ const getBatchPerformanceOverview = async (user, filters = {}) => {
         );
       }
 
-      const signals = [completion, avgQuizScore, assignmentSubmissionRate].filter((v) => v !== null);
+      const signals = [avgQuizScore, assignmentSubmissionRate].filter((v) => v !== null);
       const engagementScore = signals.length > 0 ? Math.round(signals.reduce((a, b) => a + b, 0) / signals.length) : 0;
 
       let engagementStatus = "No Data";
@@ -266,30 +220,26 @@ const getBatchPerformanceOverview = async (user, filters = {}) => {
         createdAt: batch.createdAt,
         status: batch.status || "ACTIVE",
         studentsCount,
-        completion,
-        lessonsCompletedPercent: completion,
         avgQuizScore,
         assignmentSubmissionRate,
         attendanceRate: null,
         engagementScore,
         engagementStatus,
-        trend: { completion: completionTrend, quiz: quizTrend, attendance: null },
-        atRiskStudentIds,
+        trend: { quiz: quizTrend, attendance: null },
       };
     })
   );
 
   const ranked = batchCards.filter((b) => b.studentsCount > 0);
-  const bestBatch = ranked.length > 0 ? [...ranked].sort((a, b) => b.completion - a.completion)[0] : null;
+  const bestBatch = ranked.length > 0 ? [...ranked].sort((a, b) => b.engagementScore - a.engagementScore)[0] : null;
   const needsAttentionBatch =
-    ranked.length > 1 ? [...ranked].sort((a, b) => a.completion - b.completion)[0] : null;
+    ranked.length > 1 ? [...ranked].sort((a, b) => a.engagementScore - b.engagementScore)[0] : null;
 
   const totalBatches = batchCards.length;
   const totalStudents = batchCards.reduce((sum, b) => sum + b.studentsCount, 0);
-  const avgCompletion =
-    totalBatches > 0 ? Math.round(batchCards.reduce((sum, b) => sum + b.completion, 0) / totalBatches) : 0;
+  const avgEngagement =
+    totalBatches > 0 ? Math.round(batchCards.reduce((sum, b) => sum + b.engagementScore, 0) / totalBatches) : 0;
   const newBatchesThisMonth = batchCards.filter((b) => new Date(b.createdAt) >= monthStart).length;
-  const atRiskStudentsCount = new Set(batchCards.flatMap((b) => b.atRiskStudentIds)).size;
 
   const allStudentIds = [...new Set(batches.flatMap((b) => b.students.map((s) => s.id)))];
   const allAssignmentIds = [
@@ -303,13 +253,13 @@ const getBatchPerformanceOverview = async (user, filters = {}) => {
       : 0;
 
   return {
-    batches: batchCards.map(({ atRiskStudentIds, createdAt, ...card }) => card),
+    batches: batchCards.map(({ createdAt, ...card }) => card),
     comparison: {
       bestBatch: bestBatch
         ? {
             id: bestBatch.id,
             name: bestBatch.name,
-            completion: bestBatch.completion,
+            engagementScore: bestBatch.engagementScore,
             avgQuizScore: bestBatch.avgQuizScore,
             attendanceRate: bestBatch.attendanceRate,
           }
@@ -318,7 +268,7 @@ const getBatchPerformanceOverview = async (user, filters = {}) => {
         ? {
             id: needsAttentionBatch.id,
             name: needsAttentionBatch.name,
-            completion: needsAttentionBatch.completion,
+            engagementScore: needsAttentionBatch.engagementScore,
             attendanceRate: needsAttentionBatch.attendanceRate,
           }
         : null,
@@ -326,11 +276,10 @@ const getBatchPerformanceOverview = async (user, filters = {}) => {
     stats: {
       totalBatches,
       totalStudents,
-      avgCompletion,
+      avgEngagement,
       avgAttendance: null,
       newBatchesThisMonth,
       pendingAssignmentReviews,
-      atRiskStudentsCount,
     },
   };
 };
@@ -507,15 +456,6 @@ const removeStudentFromBatch = async (batchId, studentId) => {
   });
 };
 
-const AT_RISK_THRESHOLD = 45;
-
-const classifyStudentStatus = (progress) => {
-  if (progress >= 85) return "Top Performer";
-  if (progress >= 60) return "On Track";
-  if (progress >= 40) return "Struggling";
-  return "Not Started";
-};
-
 /**
  * Full batch detail dashboard — overview stats, activity feed, upcoming
  * schedule, student roster, and announcements, pooled across every course
@@ -565,36 +505,15 @@ const getBatchDetailDashboard = async (batchId) => {
   fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
 
   const [
-    completedProgress,
     quizSubmissions,
-    recentProgress,
     recentAssignmentSubmissions,
     recentQuizSubmissions,
     courseContents,
   ] = await Promise.all([
-    studentIds.length > 0 && lessonIds.length > 0
-      ? prisma.progress.findMany({
-          where: { studentId: { in: studentIds }, lessonId: { in: lessonIds }, completed: true },
-          select: { studentId: true, lessonId: true, completedAt: true },
-        })
-      : [],
     studentIds.length > 0 && quizIds.length > 0
       ? prisma.quizSubmission.findMany({
           where: { studentId: { in: studentIds }, quizId: { in: quizIds } },
           select: { studentId: true, percentage: true },
-        })
-      : [],
-    studentIds.length > 0 && lessonIds.length > 0
-      ? prisma.progress.findMany({
-          where: {
-            studentId: { in: studentIds },
-            lessonId: { in: lessonIds },
-            completed: true,
-            completedAt: { not: null },
-          },
-          include: { student: { select: { user: { select: { name: true } } } } },
-          orderBy: { completedAt: "desc" },
-          take: 15,
         })
       : [],
     studentIds.length > 0 && assignmentIds.length > 0
@@ -637,12 +556,8 @@ const getBatchDetailDashboard = async (batchId) => {
       : [],
   ]);
 
-  // Per-student progress% and quiz average — same shape as course.service's
+  // Per-student quiz average — same shape as course.service's
   // getCourseStudents, scoped to this batch's roster instead of one course.
-  const completedCountByStudent = {};
-  completedProgress.forEach((p) => {
-    completedCountByStudent[p.studentId] = (completedCountByStudent[p.studentId] || 0) + 1;
-  });
   const scoresByStudent = {};
   quizSubmissions.forEach((s) => {
     if (!scoresByStudent[s.studentId]) scoresByStudent[s.studentId] = [];
@@ -650,8 +565,6 @@ const getBatchDetailDashboard = async (batchId) => {
   });
 
   const studentList = batch.students.map((s) => {
-    const completed = completedCountByStudent[s.id] || 0;
-    const progress = lessonIds.length > 0 ? Math.round((completed / lessonIds.length) * 100) : 0;
     const scores = scoresByStudent[s.id] || [];
     const quizAverage =
       scores.length > 0 ? Math.round(scores.reduce((sum, sc) => sum + sc, 0) / scores.length) : null;
@@ -661,15 +574,12 @@ const getBatchDetailDashboard = async (batchId) => {
       userId: s.user.id,
       name: s.user.name,
       email: s.user.email,
-      progress,
       quizAverage,
       attendanceRate: null,
-      status: classifyStudentStatus(progress),
     };
   });
 
   const activeStudentIds = new Set([
-    ...recentProgress.filter((p) => p.completedAt >= fourteenDaysAgo).map((p) => p.studentId),
     ...(
       await prisma.assignmentSubmission.findMany({
         where: {
@@ -695,18 +605,9 @@ const getBatchDetailDashboard = async (batchId) => {
   const studentSummary = {
     total: studentList.length,
     active: activeStudentIds.size,
-    completed: studentList.filter((s) => lessonIds.length > 0 && s.progress === 100).length,
-    needHelp: studentList.filter((s) => s.progress < AT_RISK_THRESHOLD).length,
   };
 
   const recentActivity = [
-    ...recentProgress.map((p) => ({
-      type: "LESSON_COMPLETED",
-      studentName: p.student.user.name,
-      title: lessonById.get(p.lessonId)?.title || "a lesson",
-      subtitle: lessonById.get(p.lessonId)?.moduleTitle,
-      date: p.completedAt,
-    })),
     ...recentAssignmentSubmissions.map((a) => ({
       type: "ASSIGNMENT_SUBMITTED",
       studentName: a.student.user.name,

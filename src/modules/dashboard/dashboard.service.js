@@ -83,9 +83,7 @@ const getAdminDashboard = async () => {
     prisma.certificate.count({ where: { issuedAt: { gte: startOfToday } } })
   ]);
 
-  // Course Performance — top 6 courses by enrollment, with real rating +
-  // completion rate (mirrors the per-course completion math used on the
-  // instructor side, scoped down to just these courses for cost).
+  // Course Performance — top 6 courses by enrollment, with real rating.
   const topCourses = await prisma.course.findMany({
     orderBy: { enrollments: { _count: "desc" } },
     take: 6,
@@ -101,69 +99,19 @@ const getAdminDashboard = async () => {
 
   const topCourseIds = topCourses.map((c) => c.id);
 
-  const [ratingGroups, courseModules, courseEnrollments] = await Promise.all([
-    topCourseIds.length
-      ? prisma.review.groupBy({
-          by: ["courseId"],
-          where: { courseId: { in: topCourseIds } },
-          _avg: { rating: true }
-        })
-      : [],
-    topCourseIds.length
-      ? prisma.module.findMany({
-          where: { courseId: { in: topCourseIds } },
-          select: { courseId: true, lessons: { select: { id: true } } }
-        })
-      : [],
-    topCourseIds.length
-      ? prisma.enrollment.findMany({
-          where: { courseId: { in: topCourseIds } },
-          select: { courseId: true, studentId: true }
-        })
-      : []
-  ]);
+  const ratingGroups = topCourseIds.length
+    ? await prisma.review.groupBy({
+        by: ["courseId"],
+        where: { courseId: { in: topCourseIds } },
+        _avg: { rating: true }
+      })
+    : [];
 
   const ratingByCourse = new Map(
     ratingGroups.map((r) => [r.courseId, r._avg.rating ? parseFloat(r._avg.rating.toFixed(1)) : 0])
   );
 
-  const lessonIdsByCourse = new Map(topCourseIds.map((id) => [id, []]));
-  courseModules.forEach((m) => {
-    lessonIdsByCourse.get(m.courseId)?.push(...m.lessons.map((l) => l.id));
-  });
-
-  const allLessonIds = [...lessonIdsByCourse.values()].flat();
-  const allEnrolledStudentIds = [...new Set(courseEnrollments.map((e) => e.studentId))];
-
-  const progressRows =
-    allLessonIds.length && allEnrolledStudentIds.length
-      ? await prisma.progress.findMany({
-          where: {
-            lessonId: { in: allLessonIds },
-            studentId: { in: allEnrolledStudentIds },
-            completed: true
-          },
-          select: { lessonId: true, studentId: true }
-        })
-      : [];
-
-  const completedSet = new Set(progressRows.map((p) => `${p.lessonId}:${p.studentId}`));
-
   const coursePerformance = topCourses.map((course) => {
-    const lessonIds = lessonIdsByCourse.get(course.id) || [];
-    const enrollmentsForCourse = courseEnrollments.filter((e) => e.courseId === course.id);
-
-    let completionRate = 0;
-    if (lessonIds.length > 0 && enrollmentsForCourse.length > 0) {
-      const perStudentRates = enrollmentsForCourse.map((e) => {
-        const completedCount = lessonIds.filter((lessonId) => completedSet.has(`${lessonId}:${e.studentId}`)).length;
-        return completedCount / lessonIds.length;
-      });
-      completionRate = Math.round(
-        (perStudentRates.reduce((sum, r) => sum + r, 0) / perStudentRates.length) * 100
-      );
-    }
-
     return {
       id: course.id,
       title: course.title,
@@ -171,8 +119,7 @@ const getAdminDashboard = async () => {
       level: course.level || "—",
       status: course.status,
       students: course._count.enrollments,
-      avgRating: ratingByCourse.get(course.id) ?? 0,
-      completionRate
+      avgRating: ratingByCourse.get(course.id) ?? 0
     };
   });
 
@@ -306,7 +253,6 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     enrollments,
     moduleGroups,
     lessons,
-    completedProgress,
     quizzes,
     quizSubmissionGroups,
     quizSubmissionsThisWeek,
@@ -325,20 +271,10 @@ const getInstructorDashboard = async (instructorId, courseId) => {
       where: { courseId: { in: courseIds } },
       _count: { _all: true }
     }),
-    // Lesson id/title + course id (via module), for lesson counts and concept mastery labels
+    // Lesson id/title + course id (via module), for lesson counts
     prisma.lesson.findMany({
       where: { module: { courseId: { in: courseIds } } },
       select: { id: true, title: true, module: { select: { courseId: true } } }
-    }),
-    // Completed progress rows only, minimal fields, courseId resolved through the relation
-    prisma.progress.findMany({
-      where: { completed: true, lesson: { module: { courseId: { in: courseIds } } } },
-      select: {
-        studentId: true,
-        lessonId: true,
-        completedAt: true,
-        lesson: { select: { module: { select: { courseId: true } } } }
-      }
     }),
     prisma.quiz.findMany({
       where: { courseId: { in: courseIds } },
@@ -364,19 +300,16 @@ const getInstructorDashboard = async (instructorId, courseId) => {
       _avg: { rating: true },
       _count: { rating: true }
     }),
-    // 5. Inactive Students Count (no progress or login activity for 5+ days)
+    // 5. Inactive Students Count (no course access recorded in 5+ days)
     prisma.studentProfile.count({
       where: {
         enrollments: {
           some: {
-            courseId: { in: targetCourseIds }
-          }
-        },
-        NOT: {
-          progress: {
-            some: {
-              completedAt: { gte: fiveDaysAgo }
-            }
+            courseId: { in: targetCourseIds },
+            OR: [
+              { lastAccessedAt: null },
+              { lastAccessedAt: { lt: fiveDaysAgo } }
+            ]
           }
         }
       }
@@ -420,16 +353,6 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     courseEnrollments.get(e.courseId).push(e);
   }
 
-  // Per (studentId, courseId) and per-lesson completed counts, from one pass
-  const completedByStudentCourse = new Map();
-  const completedByLesson = new Map();
-  for (const p of completedProgress) {
-    const cid = p.lesson.module.courseId;
-    const key = `${p.studentId}:${cid}`;
-    completedByStudentCourse.set(key, (completedByStudentCourse.get(key) || 0) + 1);
-    completedByLesson.set(p.lessonId, (completedByLesson.get(p.lessonId) || 0) + 1);
-  }
-
   const quizCourseMap = new Map(quizzes.map(q => [q.id, q.courseId]));
   const courseQuizAgg = new Map(); // courseId -> { totalSubs, sumPercentage }
   for (const g of quizSubmissionGroups) {
@@ -446,27 +369,6 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     reviewGroups.map(g => [g.courseId, { avg: g._avg.rating || 0, count: g._count.rating }])
   );
 
-  // Per-enrollment completion %, matching the original formula exactly
-  // (rounded per-enrollment, then averaged) -- reused for both the per-course
-  // table and the target-scope flat KPI average.
-  const enrollmentCompletionPercent = (studentId, cid) => {
-    const totalLessons = courseLessonCount.get(cid) || 0;
-    if (totalLessons === 0) return 0;
-    const completed = completedByStudentCourse.get(`${studentId}:${cid}`) || 0;
-    return Math.round((completed / totalLessons) * 100);
-  };
-
-  const courseCompletionRate = (cid) => {
-    const courseEnrolls = courseEnrollments.get(cid) || [];
-    const totalLessons = courseLessonCount.get(cid) || 0;
-    if (courseEnrolls.length === 0 || totalLessons === 0) return 0;
-    let sumPercent = 0;
-    for (const e of courseEnrolls) {
-      sumPercent += enrollmentCompletionPercent(e.studentId, cid);
-    }
-    return Math.round(sumPercent / courseEnrolls.length);
-  };
-
   // 1. Calculate Enrollments / Active Learners (target scope)
   const targetEnrollmentRows = targetCourseIds.flatMap(cid => courseEnrollments.get(cid) || []);
   const totalEnrollments = targetEnrollmentRows.length;
@@ -476,20 +378,6 @@ const getInstructorDashboard = async (instructorId, courseId) => {
   const oldEnrollments = totalEnrollments - newEnrollmentsThisWeek;
   const enrollmentTrend = oldEnrollments > 0
     ? parseFloat(((newEnrollmentsThisWeek / oldEnrollments) * 100).toFixed(1))
-    : 0;
-
-  // 2. Average Course Completion Rate (flat average across target enrollments,
-  // matching the original's flat-array-then-average semantics exactly)
-  let enrollmentCompletionPercentages = [];
-  for (const cid of targetCourseIds) {
-    const courseEnrolls = courseEnrollments.get(cid) || [];
-    if (courseEnrolls.length === 0 || (courseLessonCount.get(cid) || 0) === 0) continue;
-    for (const e of courseEnrolls) {
-      enrollmentCompletionPercentages.push(enrollmentCompletionPercent(e.studentId, cid));
-    }
-  }
-  const averageCompletion = enrollmentCompletionPercentages.length > 0
-    ? Math.round(enrollmentCompletionPercentages.reduce((sum, p) => sum + p, 0) / enrollmentCompletionPercentages.length)
     : 0;
 
   // 3. Quiz average score (flat/weighted average across target courses --
@@ -544,17 +432,6 @@ const getInstructorDashboard = async (instructorId, courseId) => {
       icon: 'Users',
       iconBg: 'bg-emerald-500/10',
       iconColor: 'text-emerald-400'
-    },
-    {
-      id: 3,
-      title: 'Course Completion',
-      value: `${averageCompletion}%`,
-      trend: 4.1,
-      trendLabel: 'vs last month',
-      status: averageCompletion >= 70 ? 'On Track' : 'Needs Focus',
-      icon: 'GraduationCap',
-      iconBg: 'bg-sky-500/10',
-      iconColor: 'text-sky-400'
     },
     {
       id: 4,
@@ -635,7 +512,7 @@ const getInstructorDashboard = async (instructorId, courseId) => {
       color: 'orange',
       value: String(inactiveStudentsCount),
       title: 'Inactive Students',
-      description: 'Students with no progress updates in 5+ days.',
+      description: 'Students with no course activity in 5+ days.',
       action: 'View Roster'
     });
   } else {
@@ -661,36 +538,21 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     action: draftCoursesCount > 0 ? 'Open Courses' : 'Manage Content'
   });
 
-  // 9. Performance Analytics
-  let performanceAnalytics = [];
-  if (!activeCourseId) {
-    const maxEnrolls = Math.max(
-      ...instructorCourses.map(c => (courseEnrollments.get(c.id) || []).length),
-      1
-    );
-    performanceAnalytics = instructorCourses.map(course => {
-      const enrolledCount = (courseEnrollments.get(course.id) || []).length;
-      const popularityScore = Math.round((enrolledCount / maxEnrolls) * 100);
-      return {
-        course: course.title,
-        popularity: popularityScore,
-        enrollments: enrolledCount
-      };
-    });
-  } else {
-    const selectedCourseId = targetCourseIds[0];
-    const selectedLessons = lessonsByCourse.get(selectedCourseId) || [];
-    const enrolledCount = (courseEnrollments.get(selectedCourseId) || []).length;
-    performanceAnalytics = selectedLessons.map(lesson => {
-      const completedCount = completedByLesson.get(lesson.id) || 0;
-      const masteryPercent = enrolledCount > 0 ? Math.round((completedCount / enrolledCount) * 100) : 0;
-      return {
-        course: lesson.title,
-        popularity: masteryPercent,
-        enrollments: completedCount
-      };
-    });
-  }
+  // 9. Performance Analytics -- course popularity by enrollment share,
+  // regardless of whether a single course filter is active.
+  const maxEnrolls = Math.max(
+    ...instructorCourses.map(c => (courseEnrollments.get(c.id) || []).length),
+    1
+  );
+  const performanceAnalytics = targetCourses.map(course => {
+    const enrolledCount = (courseEnrollments.get(course.id) || []).length;
+    const popularityScore = Math.round((enrolledCount / maxEnrolls) * 100);
+    return {
+      course: course.title,
+      popularity: popularityScore,
+      enrollments: enrolledCount
+    };
+  });
 
   // 10. Student Engagement daily statistics for past 7 days.
   // Pre-filter to target-course, last-7-days rows ONCE (O(n)) instead of
@@ -698,9 +560,6 @@ const getInstructorDashboard = async (instructorId, courseId) => {
   const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const targetEnrollmentsRecent = enrollments.filter(
     e => targetCourseSet.has(e.courseId) && e.enrolledAt >= sevenDayWindowStart
-  );
-  const targetProgressRecent = completedProgress.filter(
-    p => targetCourseSet.has(p.lesson.module.courseId) && p.completedAt && p.completedAt >= sevenDayWindowStart
   );
   // quizSubmissionsThisWeek is already scoped to target courses + the 7-day window by its query.
 
@@ -716,18 +575,11 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     endOfDay.setHours(23, 59, 59, 999);
 
     const dailyActiveStudents = new Set();
-    let dailyCompletions = 0;
     let dailyQuizAttempts = 0;
 
     for (const e of targetEnrollmentsRecent) {
       if (e.enrolledAt >= startOfDay && e.enrolledAt <= endOfDay) {
         dailyActiveStudents.add(e.studentId);
-      }
-    }
-    for (const p of targetProgressRecent) {
-      if (p.completedAt >= startOfDay && p.completedAt <= endOfDay) {
-        dailyActiveStudents.add(p.studentId);
-        dailyCompletions++;
       }
     }
     for (const qs of quizSubmissionsThisWeek) {
@@ -740,7 +592,6 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     studentEngagement.push({
       day: dayLabel,
       activeStudents: dailyActiveStudents.size,
-      lessonsCompleted: dailyCompletions,
       quizAttempts: dailyQuizAttempts
     });
   }
@@ -750,7 +601,6 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     const cid = course.id;
     const enrolledCount = (courseEnrollments.get(cid) || []).length;
     const totalLessons = courseLessonCount.get(cid) || 0;
-    const completionRate = courseCompletionRate(cid);
 
     const quizAgg = courseQuizAgg.get(cid);
     const hasQuizData = !!(quizAgg && quizAgg.totalSubs > 0);
@@ -760,16 +610,11 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     const courseRating = reviewAgg ? parseFloat(reviewAgg.avg.toFixed(1)) : 0;
 
     let health = 'No Data';
-    if (enrolledCount > 0) {
-      const signals = [completionRate];
-      if (hasQuizData) signals.push(courseQuizAverage);
-      const worstSignal = Math.min(...signals);
-      const bestSignal = Math.min(completionRate, hasQuizData ? courseQuizAverage : 100);
-
+    if (enrolledCount > 0 && hasQuizData) {
       health = 'Good';
-      if (worstSignal < 60) health = 'Critical';
-      else if (worstSignal < 75) health = 'Needs Review';
-      else if (completionRate >= 85 && bestSignal >= 80) health = 'Excellent';
+      if (courseQuizAverage < 60) health = 'Critical';
+      else if (courseQuizAverage < 75) health = 'Needs Review';
+      else if (courseQuizAverage >= 85) health = 'Excellent';
     }
 
     return {
@@ -777,48 +622,13 @@ const getInstructorDashboard = async (instructorId, courseId) => {
       course: course.title,
       meta: `${courseModuleCount.get(cid) || 0} Modules • ${totalLessons} Lessons`,
       enrollments: enrolledCount,
-      completion: completionRate,
       quizAverage: courseQuizAverage,
       rating: courseRating,
       health: health,
-      trend: completionRate >= 75 ? 'up' : 'down',
+      trend: hasQuizData && courseQuizAverage >= 75 ? 'up' : 'down',
       createdBy: 'current-user'
     };
   });
-
-  // 12. Concept Mastery
-  const conceptMastery = [];
-  let conceptId = 1;
-  for (const course of targetCourses) {
-    const courseLessons = lessonsByCourse.get(course.id) || [];
-    const enrolledCount = (courseEnrollments.get(course.id) || []).length;
-
-    for (const lesson of courseLessons) {
-      const completedCount = completedByLesson.get(lesson.id) || 0;
-      const masteryPercent = enrolledCount > 0 ? Math.round((completedCount / enrolledCount) * 100) : 0;
-
-      let status = 'Good';
-      if (masteryPercent < 60) status = 'Critical';
-      else if (masteryPercent < 75) status = 'Needs Review';
-      else if (masteryPercent >= 85) status = 'Excellent';
-
-      conceptMastery.push({
-        id: lesson.id || String(conceptId++),
-        concept: lesson.title,
-        students: enrolledCount,
-        mastery: masteryPercent,
-        context: `Part of ${course.title}`,
-        status: status,
-        trend: masteryPercent >= 70 ? 'up' : 'down'
-      });
-    }
-  }
-  
-  if (conceptMastery.length === 0) {
-    conceptMastery.push(
-      { id: '1', concept: 'Getting Started', students: totalEnrollments, mastery: 85, context: 'Onboarding & setup', status: 'Good', trend: 'up' }
-    );
-  }
 
   // 13. Recommended Actions
   const recommendedActions = [
@@ -859,7 +669,7 @@ const getInstructorDashboard = async (instructorId, courseId) => {
   const summary = [
     `Overall Quiz Average stands at ${avgQuizScore}%`,
     `Managing ${instructorCourses.length} active courses and cohorts`,
-    `${inactiveStudentsCount} student(s) currently need progress remediation`,
+    `${inactiveStudentsCount} student(s) have had no recent course activity`,
   ];
 
   return {
@@ -869,7 +679,6 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     performanceAnalytics,
     studentEngagement,
     coursePerformance,
-    conceptMastery,
     recommendedActions,
     courses
   };
@@ -978,112 +787,46 @@ const getStudentDashboard = async (userId) => {
 
   const tStep2Start = Date.now();
   let tEnrollmentsMs = 0;
-  let tProgressMs = 0;
 
-  const [enrollments, progress] = await Promise.all([
-    (async () => {
-      const tStart = Date.now();
-      const res = await prisma.enrollment.findMany({
-        where: { studentId },
-        select: {
-          id: true,
-          courseId: true,
-          enrolledAt: true,
-          studentId: true,
-          course: {
-            select: {
-              id: true,
-              title: true,
-              description: true,
-              category: true,
-              level: true,
-              thumbnailUrl: true,
-              creator: {
-                select: {
-                  name: true,
-                },
-              },
-              modules: {
-                select: {
-                  _count: { select: { lessons: true } },
-                },
-              },
-              _count: { select: { quizzes: true } },
-            },
-          },
-        },
-      });
-      tEnrollmentsMs = Date.now() - tStart;
-      return res;
-    })(),
-    (async () => {
-      const tStart = Date.now();
-      const res = await prisma.progress.findMany({
-        where: { studentId, completed: true },
-        select: {
-          completed: true,
-          completedAt: true,
-          lesson: {
-            select: {
-              module: {
-                select: {
-                  courseId: true,
-                },
-              },
-              topics: {
-                select: {
-                  contents: {
-                    select: {
-                      duration: true,
-                    },
-                  },
-                },
+  const enrollments = await (async () => {
+    const tStart = Date.now();
+    const res = await prisma.enrollment.findMany({
+      where: { studentId },
+      select: {
+        id: true,
+        courseId: true,
+        enrolledAt: true,
+        studentId: true,
+        course: {
+          select: {
+            id: true,
+            title: true,
+            description: true,
+            category: true,
+            level: true,
+            thumbnailUrl: true,
+            creator: {
+              select: {
+                name: true,
               },
             },
+            modules: {
+              select: {
+                _count: { select: { lessons: true } },
+              },
+            },
+            _count: { select: { quizzes: true } },
           },
         },
-      });
-      tProgressMs = Date.now() - tStart;
-      return res;
-    })(),
-  ]);
+      },
+    });
+    tEnrollmentsMs = Date.now() - tStart;
+    return res;
+  })();
   console.log(`Step 2a enrollments query: ${tEnrollmentsMs} ms (count: ${enrollments.length})`);
-  console.log(`Step 2b progress query: ${tProgressMs} ms (count: ${progress.length})`);
-  console.log(`Step 2 enrollments + progress parallel total: ${Date.now() - tStep2Start} ms`);
+  console.log(`Step 2 enrollments total: ${Date.now() - tStep2Start} ms`);
 
   const tStep3Start = Date.now();
-  // Calculate study time metrics
-  const now = new Date();
-  const startOfWeek = new Date(now);
-  const day = startOfWeek.getDay();
-  const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
-  startOfWeek.setDate(diff);
-  startOfWeek.setHours(0, 0, 0, 0);
-
-  let totalLearningTime = 0;
-  let totalLearningTimeThisWeek = 0;
-
-  progress.forEach((p) => {
-    if (p.completed) {
-      let lessonTime = 0;
-      const lessonContents = (p.lesson.topics || []).flatMap((t) => t.contents || []);
-      if (lessonContents.length > 0) {
-        lessonContents.forEach((c) => {
-          lessonTime += (c.duration && c.duration > 0) ? c.duration : 10;
-        });
-      } else {
-        lessonTime = 10;
-      }
-      totalLearningTime += lessonTime;
-
-      if (p.completedAt) {
-        const completedDate = new Date(p.completedAt);
-        if (completedDate >= startOfWeek) {
-          totalLearningTimeThisWeek += lessonTime;
-        }
-      }
-    }
-  });
 
   // Total lessons from all enrolled courses
   const totalLessons = enrollments.reduce(
@@ -1096,17 +839,6 @@ const getStudentDashboard = async (userId) => {
       ),
     0
   );
-
-  const completedLessons = progress.filter(
-    (p) => p.completed
-  ).length;
-
-  const completionRate =
-    totalLessons === 0
-      ? 0
-      : Math.round(
-          (completedLessons / totalLessons) * 100
-        );
 
   // Quizzes stats
   const totalQuizzes = enrollments.reduce(
@@ -1136,23 +868,6 @@ const getStudentDashboard = async (userId) => {
           0
         );
 
-      const completedCourseLessons =
-        progress.filter(
-          (p) =>
-            p.completed &&
-            p.lesson.module.courseId ===
-              enrollment.course.id
-        ).length;
-
-      const progressPercent =
-        totalCourseLessons === 0
-          ? 0
-          : Math.round(
-              (completedCourseLessons /
-                totalCourseLessons) *
-                100
-            );
-
       return {
         id: enrollment.id,
         courseId: enrollment.courseId,
@@ -1174,85 +889,15 @@ const getStudentDashboard = async (userId) => {
             "Unknown",
           lessons: totalCourseLessons,
         },
-
-        completedLessons:
-          completedCourseLessons,
-        progress: progressPercent,
       };
     }
   );
 
-  // Calculate learning streak
-  const completionDates = progress
-    .filter(p => p.completed && p.completedAt)
-    .map(p => new Date(p.completedAt).toISOString().split("T")[0]);
-
-  const uniqueDates = [...new Set(completionDates)].sort((a, b) => new Date(b) - new Date(a));
-
-  let streak = 0;
-  if (uniqueDates.length > 0) {
-    const todayStr = new Date().toISOString().split("T")[0];
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split("T")[0];
-
-    let currentCheckDate = uniqueDates[0];
-    if (currentCheckDate === todayStr || currentCheckDate === yesterdayStr) {
-      streak = 1;
-      let checkDate = new Date(currentCheckDate);
-      for (let i = 1; i < uniqueDates.length; i++) {
-        checkDate.setDate(checkDate.getDate() - 1);
-        const expectedStr = checkDate.toISOString().split("T")[0];
-        if (uniqueDates[i] === expectedStr) {
-          streak++;
-        } else {
-          break;
-        }
-      }
-    }
-  }
-
-  // Student percentile rank: Unused by frontend components. Default to 0 to
-  // eliminate heavy platform-wide $queryRaw PERCENT_RANK table scan over the Progress table.
+  // Student percentile rank: Unused by frontend components. Default to 0 --
+  // wiring up a real one would need a platform-wide completion metric, which
+  // this schema no longer tracks.
   const rankPercentile = 0;
 
-  // Group course progress by category for dynamic Skills Progress
-  const categoryProgress = {};
-  enrolledCoursesList.forEach(c => {
-    const cat = c.course.category || "General";
-    if (!categoryProgress[cat]) {
-      categoryProgress[cat] = [];
-    }
-    categoryProgress[cat].push(c.progress);
-  });
-
-  const skills = Object.keys(categoryProgress).map(cat => {
-    const avg = Math.round(categoryProgress[cat].reduce((sum, val) => sum + val, 0) / categoryProgress[cat].length);
-    return {
-      name: cat,
-      percentage: avg || 0
-    };
-  });
-
-  // Fallbacks if skills list is empty
-  if (skills.length === 0) {
-    skills.push({ name: "Problem Solving", percentage: 80 });
-    skills.push({ name: "Coding", percentage: 70 });
-    skills.push({ name: "Database", percentage: 60 });
-    skills.push({ name: "Web Development", percentage: 50 });
-  } else {
-    // Add default placeholders to complete lists if necessary
-    const defaults = [
-      { name: "Problem Solving", percentage: 80 },
-      { name: "Coding", percentage: 70 },
-      { name: "Database", percentage: 60 },
-      { name: "Web Development", percentage: 50 }
-    ];
-    while (skills.length < 4) {
-      const needed = defaults[skills.length];
-      skills.push(needed);
-    }
-  }
   console.log(`Step 3 JS processing: ${Date.now() - tStep3Start} ms`);
 
   const tStep4Start = Date.now();
@@ -1314,26 +959,19 @@ const getStudentDashboard = async (userId) => {
   return {
     stats: {
       enrolledCourses: enrollments.length,
-      completedLessons,
       certificates: student.certificates.length,
       reviews: student.reviews.length,
-      completionRate,
-      totalLearningTime,
-      totalLearningTimeThisWeek,
       totalLessons,
       totalQuizzes,
       completedQuizzes,
       avgQuizScore,
       passingRate,
-      streak,
       rankPercentile,
       activeBatchName: student.batches[0]?.name || null,
     },
     enrolledCoursesList,
     certificatesList: student.certificates,
     reviewsList: student.reviews,
-    progressList: progress,
-    skills,
     recommendations: formattedRecommendations,
   };
 };

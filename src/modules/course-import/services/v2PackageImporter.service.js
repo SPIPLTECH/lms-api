@@ -377,7 +377,6 @@ async function importV2Manifest(canonicalJson, instructorId) {
           tags: Array.isArray(metadata.tags) ? metadata.tags : [],
           certificatesEnabled: Boolean(settings?.certificatesEnabled),
           discussionEnabled: Boolean(settings?.discussionEnabled),
-          dripContentEnabled: Boolean(settings?.dripContentEnabled),
           estimatedLearningHours: metadata.estimatedLearningHours ?? null,
           creatorId: instructorId
         }

@@ -1,7 +1,6 @@
 const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
 const ApiError = require("../../utils/ApiError");
-const { buildLessonLockMap } = require("../../utils/dripAccess");
 // const verifyToken = require(
 //   "../../middleware/auth.middleware"
 // );
@@ -26,14 +25,10 @@ const buildCourseStatsMap = async (courseIds) => {
         upcomingLiveClassesCount: 0,
         pendingSubmissionsCount: 0,
         pendingDoubtsCount: 0,
-        completionRate: 0,
         videosCount: 0,
         pdfsCount: 0,
         notesCount: 0,
-        activeStudents: 0,
-        inactiveStudents: 0,
         contentHealth: "Needs Work",
-        engagementHealth: "Needs Work",
         recentActivity: []
       }
     ])
@@ -169,63 +164,6 @@ const buildCourseStatsMap = async (courseIds) => {
   for (const doubt of pendingDoubts) {
     const stats = statsMap.get(doubt.lesson.module.courseId);
     if (stats) stats.pendingDoubtsCount += 1;
-  }
-
-  // Course-level completion rate: average, across enrolled students, of
-  // (lessons that student completed / total lessons in the course).
-  const lessonIdsByCourse = new Map();
-  for (const module of modules) {
-    if (!lessonIdsByCourse.has(module.courseId)) lessonIdsByCourse.set(module.courseId, []);
-    lessonIdsByCourse.get(module.courseId).push(...module.lessons.map((l) => l.id));
-  }
-
-  const allLessonIds = modules.flatMap((m) => m.lessons.map((l) => l.id));
-  const allStudentIds = [...new Set(enrollments.map((e) => e.studentId))];
-
-  const progressRows =
-    allLessonIds.length > 0 && allStudentIds.length > 0
-      ? await prisma.progress.findMany({
-          where: { lessonId: { in: allLessonIds }, studentId: { in: allStudentIds }, completed: true },
-          select: { lessonId: true, studentId: true }
-        })
-      : [];
-
-  const lessonToCourseId = new Map();
-  for (const module of modules) {
-    for (const lesson of module.lessons) lessonToCourseId.set(lesson.id, module.courseId);
-  }
-
-  const completedCountByStudentCourse = new Map();
-  for (const row of progressRows) {
-    const courseId = lessonToCourseId.get(row.lessonId);
-    if (!courseId) continue;
-    const key = `${courseId}::${row.studentId}`;
-    completedCountByStudentCourse.set(key, (completedCountByStudentCourse.get(key) || 0) + 1);
-  }
-
-  const enrollmentsByCourse = new Map();
-  for (const e of enrollments) {
-    if (!enrollmentsByCourse.has(e.courseId)) enrollmentsByCourse.set(e.courseId, []);
-    enrollmentsByCourse.get(e.courseId).push(e.studentId);
-  }
-
-  for (const [courseId, studentIds] of enrollmentsByCourse.entries()) {
-    const totalLessons = (lessonIdsByCourse.get(courseId) || []).length;
-    const stats = statsMap.get(courseId);
-    if (!stats || totalLessons === 0 || studentIds.length === 0) continue;
-
-    const percentages = studentIds.map((studentId) => {
-      const completed = completedCountByStudentCourse.get(`${courseId}::${studentId}`) || 0;
-      return (completed / totalLessons) * 100;
-    });
-    stats.completionRate = Math.round(percentages.reduce((sum, p) => sum + p, 0) / percentages.length);
-    
-    // Rough heuristic for active vs inactive students (if they have >0 completion, active)
-    stats.activeStudents = percentages.filter((p) => p > 0).length;
-    stats.inactiveStudents = percentages.filter((p) => p === 0).length;
-    
-    if (stats.completionRate > 50) stats.engagementHealth = "Healthy";
-    else if (stats.completionRate > 20) stats.engagementHealth = "Average";
   }
 
   // Generate health metrics and recent activity timeline
@@ -584,37 +522,6 @@ const getCourseById = async (courseId, role, userId) => {
     return null;
   }
 
-  if (role === "STUDENT") {
-    const { lockMap, completedSet } = await buildLessonLockMap(courseId, studentProfileId);
-
-    const allTopicIds = course.modules.flatMap((moduleItem) =>
-      moduleItem.lessons.flatMap((lesson) => (lesson.topics || []).map((topic) => topic.id))
-    );
-    const completedTopicSet = new Set();
-    if (studentProfileId && allTopicIds.length > 0) {
-      const completedTopicRows = await prisma.topicProgress.findMany({
-        where: { studentId: studentProfileId, topicId: { in: allTopicIds }, completed: true },
-        select: { topicId: true }
-      });
-      completedTopicRows.forEach((row) => completedTopicSet.add(row.topicId));
-    }
-
-    course.modules.forEach((moduleItem) => {
-      moduleItem.lessons.forEach((lesson) => {
-        const locked = lockMap.get(lesson.id) ?? false;
-        lesson.locked = locked;
-        lesson.completed = completedSet.has(lesson.id);
-        if (locked) {
-          lesson.topics = [];
-        } else {
-          (lesson.topics || []).forEach((topic) => {
-            topic.completed = completedTopicSet.has(topic.id);
-          });
-        }
-      });
-    });
-  }
-
   return attachCourseStats(course);
 };
 
@@ -805,7 +712,7 @@ const publishCourse = async (courseId, userId, userRole) => {
 
 /**
  * Unpublishes a course (PUBLISHED -> DRAFT).
- * Student learning data (enrollments, progress, quiz attempts) is strictly PRESERVED.
+ * Student learning data (enrollments, quiz attempts) is strictly PRESERVED.
  */
 const unpublishCourse = async (courseId, userId, userRole) => {
   const course = await prisma.course.findUnique({ where: { id: courseId } });
@@ -912,7 +819,6 @@ const deleteCourse = async (courseId, userId, userRole) => {
   const [
     quizSubmissionsCount,
     assignmentSubmissionsCount,
-    progressCount,
     lessonQueriesCount,
     stickyNotesCount,
     batchesCount,
@@ -920,7 +826,6 @@ const deleteCourse = async (courseId, userId, userRole) => {
   ] = await Promise.all([
     prisma.quizSubmission.count({ where: { quiz: { courseId } } }),
     prisma.assignmentSubmission.count({ where: { assignment: { courseId } } }),
-    prisma.progress.count({ where: { lesson: { module: { courseId } } } }),
     prisma.lessonQuery.count({ where: { lesson: { module: { courseId } } } }),
     prisma.stickyNote.count({ where: { lesson: { module: { courseId } } } }),
     prisma.batch.count({ where: { courseId } }),
@@ -933,7 +838,6 @@ const deleteCourse = async (courseId, userId, userRole) => {
     course._count.certificates > 0 ||
     quizSubmissionsCount > 0 ||
     assignmentSubmissionsCount > 0 ||
-    progressCount > 0 ||
     lessonQueriesCount > 0 ||
     stickyNotesCount > 0 ||
     batchesCount > 0 ||
@@ -1033,7 +937,6 @@ const duplicateCourse = async (courseId, instructorId) => {
         tags: source.tags,
         certificatesEnabled: source.certificatesEnabled,
         discussionEnabled: source.discussionEnabled,
-        dripContentEnabled: source.dripContentEnabled,
         estimatedLearningHours: source.estimatedLearningHours
       }
     });
@@ -1116,31 +1019,12 @@ const getCourseStudents = async (courseId) => {
 
   const studentIds = enrollments.map((e) => e.studentId);
 
-  const lessons = await prisma.lesson.findMany({
-    where: { module: { courseId } },
-    select: { id: true }
-  });
-  const lessonIds = lessons.map((l) => l.id);
-
-  const [progressRows, submissionRows] = await Promise.all([
-    lessonIds.length > 0 && studentIds.length > 0
-      ? prisma.progress.findMany({
-          where: { studentId: { in: studentIds }, lessonId: { in: lessonIds }, completed: true },
-          select: { studentId: true }
-        })
-      : [],
-    studentIds.length > 0
-      ? prisma.quizSubmission.findMany({
-          where: { studentId: { in: studentIds }, quiz: { courseId } },
-          select: { studentId: true, percentage: true }
-        })
-      : []
-  ]);
-
-  const completedCountByStudent = {};
-  progressRows.forEach((p) => {
-    completedCountByStudent[p.studentId] = (completedCountByStudent[p.studentId] || 0) + 1;
-  });
+  const submissionRows = studentIds.length > 0
+    ? await prisma.quizSubmission.findMany({
+        where: { studentId: { in: studentIds }, quiz: { courseId } },
+        select: { studentId: true, percentage: true }
+      })
+    : [];
 
   const scoresByStudent = {};
   submissionRows.forEach((s) => {
@@ -1150,8 +1034,6 @@ const getCourseStudents = async (courseId) => {
 
   return enrollments.map((enrollment) => {
     const studentId = enrollment.studentId;
-    const completed = completedCountByStudent[studentId] || 0;
-    const progress = lessonIds.length > 0 ? Math.round((completed / lessonIds.length) * 100) : 0;
 
     const scores = scoresByStudent[studentId] || [];
     const avgGrade =
@@ -1163,7 +1045,6 @@ const getCourseStudents = async (courseId) => {
       name: enrollment.student.user.name,
       email: enrollment.student.user.email,
       enrolledAt: enrollment.enrolledAt,
-      progress,
       avgGrade
     };
   });

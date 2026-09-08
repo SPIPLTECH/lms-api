@@ -219,8 +219,7 @@ const getTemplate = async (req, res, next) => {
       settings: {
         visibility: "PUBLIC",
         certificatesEnabled: true,
-        discussionEnabled: true,
-        dripContentEnabled: false
+        discussionEnabled: true
       },
       quizzes: [
         {
