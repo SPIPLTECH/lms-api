@@ -29,7 +29,7 @@ const getPublishedLessonIds = async (courseId) => {
 const buildLessonLockMap = async (courseId, studentId) => {
   const course = await prisma.course.findUnique({
     where: { id: courseId },
-    select: { dripContentEnabled: true },
+    select: { /* dripContentEnabled removed */ },
   });
 
   const lessonIds = await getPublishedLessonIds(courseId);
@@ -49,7 +49,7 @@ const buildLessonLockMap = async (courseId, studentId) => {
 
   const lockMap = new Map();
 
-  if (!course?.dripContentEnabled) {
+  if (true) { // drip content removed
     lessonIds.forEach((lessonId) => lockMap.set(lessonId, false));
     return { lockMap, completedSet };
   }

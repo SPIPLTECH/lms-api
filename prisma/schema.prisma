@@ -85,7 +85,7 @@ model StudentProfile {
   updatedAt             DateTime               @updatedAt
   certificates          Certificate[]
   enrollments           Enrollment[]
-  progress              Progress[]
+  
   quizSubmissions       QuizSubmission[]
   reviews               Review[]
   stickyNotes           StickyNote[]
@@ -145,7 +145,7 @@ model Course {
   estimatedLearningHours Float?
   certificatesEnabled    Boolean          @default(false)
   discussionEnabled      Boolean          @default(true)
-  dripContentEnabled     Boolean          @default(false)
+  
   publishedAt            DateTime?
   creatorId              String
   createdAt              DateTime         @default(now())
@@ -222,7 +222,7 @@ model Lesson {
   instructorNotes InstructorLessonNote[]
   module          Module                 @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   queries         LessonQuery[]
-  progress        Progress[]
+  
   stickyNotes     StickyNote[]
   videoAnalytics  VideoAnalytics[]
   quizzes         Quiz[]
@@ -355,17 +355,7 @@ model PaymentOrder {
   @@index([status])
 }
 
-model Progress {
-  id          String         @id @default(cuid())
-  lessonId    String
-  completed   Boolean        @default(false)
-  completedAt DateTime?
-  studentId   String
-  lesson      Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
-  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
-  @@unique([studentId, lessonId])
-}
 
 model Quiz {
   id               String           @id @default(cuid())

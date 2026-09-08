@@ -1069,7 +1069,7 @@ const duplicateCourse = async (courseId, instructorId) => {
         tags: source.tags,
         certificatesEnabled: source.certificatesEnabled,
         discussionEnabled: source.discussionEnabled,
-        dripContentEnabled: source.dripContentEnabled,
+        
         estimatedLearningHours: source.estimatedLearningHours
       }
     });

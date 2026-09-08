@@ -220,7 +220,7 @@ const getTemplate = async (req, res, next) => {
         visibility: "PUBLIC",
         certificatesEnabled: true,
         discussionEnabled: true,
-        dripContentEnabled: false
+        /* dripContent removed */
       },
       quizzes: [
         {
