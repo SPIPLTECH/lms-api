@@ -425,9 +425,18 @@ const createQuiz = async (
 
   const { questions, ...quizData } = data;
 
+  const orderField = resolveQuizParentField(quizData);
   if (quizData.order === undefined || quizData.order === null) {
-    const field = resolveQuizParentField(quizData);
-    quizData.order = await getNextOrder(field, quizData[field]);
+    quizData.order = await getNextOrder(orderField, quizData[orderField]);
+  } else {
+    quizData.order = Number(quizData.order);
+    const [collidingContent, collidingQuiz] = await Promise.all([
+      prisma.content.findFirst({ where: { [orderField]: quizData[orderField], order: quizData.order }, select: { id: true } }),
+      prisma.quiz.findFirst({ where: { [orderField]: quizData[orderField], order: quizData.order }, select: { id: true } }),
+    ]);
+    if (collidingContent || collidingQuiz) {
+      quizData.order = await getNextOrder(orderField, quizData[orderField]);
+    }
   }
 
   const quiz = await prisma.quiz.create({
@@ -945,6 +954,29 @@ const generateSelfAssessmentQuiz = async (courseId, questionCount = 5) => {
   });
 };
 
+// Two-phase reorder: the same @@unique([...parentId, order]) partial index
+// that content rows sit under rejects a naive parallel swap (A->2 while B
+// still holds 2), so first move every row to a disjoint negative
+// placeholder, then to its final order. Mirrors content.service.js's
+// reorderContents exactly.
+const reorderQuizzes = async (quizzes) => {
+  const offsetUpdates = quizzes.map((quiz, index) =>
+    prisma.quiz.update({
+      where: { id: quiz.id },
+      data: { order: -1000 - index }
+    })
+  );
+
+  const finalUpdates = quizzes.map((quiz) =>
+    prisma.quiz.update({
+      where: { id: quiz.id },
+      data: { order: quiz.order }
+    })
+  );
+
+  return prisma.$transaction([...offsetUpdates, ...finalUpdates]);
+};
+
 module.exports = {
   evaluateAnswer,
   resolveMisconceptionTag,
@@ -958,5 +990,6 @@ module.exports = {
   getQuizResult,
   getBatchQuizzes,
   generateSelfAssessmentQuiz,
-  flushPendingMisconceptionClassifications
+  flushPendingMisconceptionClassifications,
+  reorderQuizzes
 };

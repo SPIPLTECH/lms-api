@@ -11,7 +11,7 @@ const prisma = require("../../config/database");
 const getNextOrder = async (field, id) => {
   const [maxContent, maxQuiz] = await Promise.all([
     prisma.content.findFirst({ where: { [field]: id }, orderBy: { order: "desc" }, select: { order: true } }),
-    prisma.quiz.findFirst({ where: { [field]: id }, orderBy: { order: "desc" }, select: { order: true } }),
+    prisma.quiz.findFirst({ where: { [field]: id, order: { not: null } }, orderBy: { order: "desc" }, select: { order: true } }),
   ]);
   return Math.max(maxContent?.order ?? 0, maxQuiz?.order ?? 0) + 1;
 };

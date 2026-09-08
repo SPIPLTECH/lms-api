@@ -36,3 +36,6 @@ scratch/
 
 # AI agent removal backup/restoration package (contains raw DB data exports)
 backup/
+
+# Git worktrees for isolated agent work
+.worktrees/
