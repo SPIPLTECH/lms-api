@@ -13,8 +13,7 @@
   "settings": {
     "visibility": "PUBLIC",
     "certificatesEnabled": true,
-    "discussionEnabled": true,
-    "dripContentEnabled": false
+    "discussionEnabled": true
   },
   "modules": [
     {

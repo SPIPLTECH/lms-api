@@ -647,6 +647,14 @@ const submitQuiz = async (studentId, quizId, answers = []) => {
     }
   });
 
+  // Recompute course progress after quiz submission
+  try {
+    const { recomputeCourseProgress } = require("../../utils/progressRollup");
+    await recomputeCourseProgress(studentId, quiz.courseId);
+  } catch (err) {
+    console.error("Progress rollup recalculation failed after quiz submission:", err);
+  }
+
   // Feed each answered question into the existing learner-model evidence
   // pipeline (BKT + misconception detection) as its own observation, so
   // multiple questions on the same KC aren't collapsed into one data point.

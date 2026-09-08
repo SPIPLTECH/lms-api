@@ -381,7 +381,6 @@ function normalizeCourseJson(json) {
       visibility: "PUBLIC",
       certificatesEnabled: true,
       discussionEnabled: true,
-      dripContentEnabled: false,
     };
   }
 

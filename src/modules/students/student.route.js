@@ -31,10 +31,4 @@ router.put(
   studentController.updateStudent
 );
 
-router.get(
-  "/:studentId/progress",
-  verifyToken,
-  studentController.getStudentProgress
-);
-
 module.exports = router;

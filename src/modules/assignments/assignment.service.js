@@ -91,7 +91,7 @@ const submitAssignment = async (assignmentId, studentId, data) => {
         throw err;
     }
 
-    return await prisma.assignmentSubmission.upsert({
+    const submission = await prisma.assignmentSubmission.upsert({
         where: {
             studentId_assignmentId: {
                 studentId,
@@ -108,6 +108,15 @@ const submitAssignment = async (assignmentId, studentId, data) => {
             status: "Submitted",
         }
     });
+
+    try {
+        const { recomputeCourseProgress } = require("../../utils/progressRollup");
+        await recomputeCourseProgress(studentId, assignment.courseId);
+    } catch (err) {
+        console.error("Progress rollup recalculation failed after assignment submission:", err);
+    }
+
+    return submission;
 };
 
 const getInstructorAssignments = async (instructorId, courseId) => {

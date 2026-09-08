@@ -104,7 +104,6 @@ test("Backend Course Export Flow Tests", async (t) => {
       visibility: "PUBLIC",
       certificatesEnabled: true,
       discussionEnabled: true,
-      dripContentEnabled: false,
       store: {
         price: 4999,
         currency: "INR"

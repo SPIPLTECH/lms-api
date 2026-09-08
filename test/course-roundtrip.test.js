@@ -65,7 +65,6 @@ test("Full Course Round-Trip Integration Test (Export -> Import V2)", async (t) 
         estimatedLearningHours: 40,
         certificatesEnabled: true,
         discussionEnabled: true,
-        dripContentEnabled: false,
         creatorId: instructorId,
         modules: {
           create: [
@@ -195,7 +194,6 @@ test("Full Course Round-Trip Integration Test (Export -> Import V2)", async (t) 
       assert.strictEqual(dbImportedCourse.visibility, sourceCourse.visibility);
       assert.strictEqual(dbImportedCourse.certificatesEnabled, sourceCourse.certificatesEnabled);
       assert.strictEqual(dbImportedCourse.discussionEnabled, sourceCourse.discussionEnabled);
-      assert.strictEqual(dbImportedCourse.dripContentEnabled, sourceCourse.dripContentEnabled);
 
       // Status (Imported courses start as DRAFT per LMS convention)
       assert.strictEqual(dbImportedCourse.status, "DRAFT");

@@ -45,24 +45,8 @@ const updateStudent = async (req, res, next) => {
   }
 };
 
-const getStudentProgress = async (req, res, next) => {
-  try {
-    const progress = await studentService.getStudentProgress(
-      req.params.studentId
-    );
-
-    res.json({
-      success: true,
-      data: progress
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 module.exports = {
   getStudents,
   getStudentById,
-  updateStudent,
-  getStudentProgress
+  updateStudent
 };

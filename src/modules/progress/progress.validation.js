@@ -1,19 +1,22 @@
 const Joi = require("joi");
 
-const completeLessonSchema = Joi.object({
-  lessonId: Joi.string().required().messages({
-    "any.required": "lessonId is required"
+const completeContentSchema = Joi.object({
+  contentId: Joi.string().required().messages({
+    "any.required": "contentId is required",
+    "string.empty": "contentId cannot be empty"
   }),
+  completed: Joi.boolean().optional().default(true)
 });
 
-const markContentVisitedSchema = Joi.object({
-  contentIds: Joi.array().items(Joi.string()).min(1).required().messages({
-    "any.required": "contentIds is required",
-    "array.min": "contentIds must contain at least one id"
+const completeLessonSchema = Joi.object({
+  lessonId: Joi.string().required().messages({
+    "any.required": "lessonId is required",
+    "string.empty": "lessonId cannot be empty"
   }),
+  completed: Joi.boolean().optional().default(true)
 });
 
 module.exports = {
-  completeLessonSchema,
-  markContentVisitedSchema
+  completeContentSchema,
+  completeLessonSchema
 };

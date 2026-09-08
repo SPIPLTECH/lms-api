@@ -23,7 +23,6 @@ test("Canonical Course JSON v2 Mapper Tests", async (t) => {
       estimatedLearningHours: 12.5,
       certificatesEnabled: true,
       discussionEnabled: true,
-      dripContentEnabled: false,
       publishedAt: new Date(),
       creatorId: "user_instructor_1",
       createdAt: new Date(),
@@ -59,7 +58,6 @@ test("Canonical Course JSON v2 Mapper Tests", async (t) => {
     assert.strictEqual(mapped.settings.visibility, "PUBLIC");
     assert.strictEqual(mapped.settings.certificatesEnabled, true);
     assert.strictEqual(mapped.settings.discussionEnabled, true);
-    assert.strictEqual(mapped.settings.dripContentEnabled, false);
     assert.deepStrictEqual(mapped.modules, []);
   });
 

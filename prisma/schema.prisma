@@ -83,7 +83,6 @@ model StudentProfile {
   updatedAt             DateTime               @updatedAt
   certificates          Certificate[]
   enrollments           Enrollment[]
-  progress              Progress[]
   quizSubmissions       QuizSubmission[]
   reviews               Review[]
   stickyNotes           StickyNote[]
@@ -101,7 +100,10 @@ model StudentProfile {
   knowledgeGaps         KnowledgeGap[]
   entryAssessments      EntryAssessment[]
   courseStates          StudentCourseState[]
-  contentProgress       ContentProgress[]
+  contentProgresses     ContentProgress[]
+  topicProgresses       TopicProgress[]
+  lessonProgresses      LessonProgress[]
+  moduleProgresses      ModuleProgress[]
   user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -143,7 +145,6 @@ model Course {
   estimatedLearningHours Float?
   certificatesEnabled    Boolean          @default(false)
   discussionEnabled      Boolean          @default(true)
-  dripContentEnabled     Boolean          @default(false)
   publishedAt            DateTime?
   creatorId              String
   createdAt              DateTime         @default(now())
@@ -187,19 +188,20 @@ model Store {
 }
 
 model Module {
-  id          String     @id @default(cuid())
+  id          String           @id @default(cuid())
   title       String
   description String?
   order       Int
-  isPublished Boolean    @default(false)
+  isPublished Boolean          @default(false)
   courseId    String
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
   lessons     Lesson[]
   contents    Content[]
-  course      Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  course      Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
   questions   Question[]
   quizzes     Quiz[]
+  progresses  ModuleProgress[]
 
   @@unique([courseId, order])
 }
@@ -218,26 +220,27 @@ model Lesson {
   instructorNotes InstructorLessonNote[]
   module          Module                 @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   queries         LessonQuery[]
-  progress        Progress[]
   stickyNotes     StickyNote[]
   videoAnalytics  VideoAnalytics[]
   quizzes         Quiz[]
+  progresses      LessonProgress[]
 
   @@unique([moduleId, order])
 }
 
 model Topic {
-  id          String   @id @default(cuid())
+  id          String          @id @default(cuid())
   title       String
   description String?
   order       Int
-  isPublished Boolean  @default(false)
+  isPublished Boolean         @default(false)
   lessonId    String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
   contents    Content[]
-  lesson      Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  lesson      Lesson          @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   quizzes     Quiz[]
+  progresses  TopicProgress[]
 
   @@unique([lessonId, order])
 }
@@ -263,25 +266,12 @@ model Content {
   module      Module?           @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   lesson      Lesson?           @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   topic       Topic?            @relation(fields: [topicId], references: [id], onDelete: Cascade)
-  visits      ContentProgress[]
+  progresses  ContentProgress[]
 
   @@unique([courseId, order])
   @@unique([moduleId, order])
   @@unique([lessonId, order])
   @@unique([topicId, order])
-}
-
-model ContentProgress {
-  id        String         @id @default(cuid())
-  studentId String
-  contentId String
-  visitedAt DateTime       @default(now())
-  content   Content        @relation(fields: [contentId], references: [id], onDelete: Cascade)
-  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, contentId])
-  @@index([studentId])
-  @@index([contentId])
 }
 
 model LessonQuery {
@@ -319,15 +309,82 @@ model StickyNote {
 }
 
 model Enrollment {
-  id             String         @id @default(cuid())
-  courseId       String
-  enrolledAt     DateTime       @default(now())
-  lastAccessedAt DateTime?
-  studentId      String
-  course         Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  student        StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  id              String         @id @default(cuid())
+  courseId        String
+  enrolledAt      DateTime       @default(now())
+  lastAccessedAt  DateTime?
+  completed       Boolean        @default(false)
+  completedAt     DateTime?
+  progressPercent Int            @default(0)
+  studentId       String
+  course          Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  student         StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, courseId])
+}
+
+model ContentProgress {
+  id          String         @id @default(cuid())
+  studentId   String
+  contentId   String
+  completed   Boolean        @default(false)
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  content     Content        @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, contentId])
+  @@index([studentId])
+  @@index([contentId])
+}
+
+model TopicProgress {
+  id          String         @id @default(cuid())
+  studentId   String
+  topicId     String
+  completed   Boolean        @default(false)
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  topic       Topic          @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, topicId])
+  @@index([studentId])
+  @@index([topicId])
+}
+
+model LessonProgress {
+  id          String         @id @default(cuid())
+  studentId   String
+  lessonId    String
+  completed   Boolean        @default(false)
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lesson      Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, lessonId])
+  @@index([studentId])
+  @@index([lessonId])
+}
+
+model ModuleProgress {
+  id          String         @id @default(cuid())
+  studentId   String
+  moduleId    String
+  completed   Boolean        @default(false)
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  module      Module         @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, moduleId])
+  @@index([studentId])
+  @@index([moduleId])
 }
 
 model PaymentOrder {
@@ -349,18 +406,6 @@ model PaymentOrder {
   @@index([userId])
   @@index([courseId])
   @@index([status])
-}
-
-model Progress {
-  id          String         @id @default(cuid())
-  lessonId    String
-  completed   Boolean        @default(false)
-  completedAt DateTime?
-  studentId   String
-  lesson      Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
-  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, lessonId])
 }
 
 model Quiz {
