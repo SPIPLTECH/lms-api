@@ -84,14 +84,38 @@ const getAssignmentById = async (assignmentId, studentId) => {
         resources: a.resources,
         status,
         course: a.course,
+        // Instructor-provided reference material. NOT the student's answer —
+        // the student's own upload is `submission` below. The learning
+        // workspace shows these as two clearly separate sections, so the
+        // response has to keep them separate too.
+        attachments: Array.isArray(a.attachments) ? a.attachments : [],
+        marks: a.marks,
         grade: submission?.grade || null,
         feedback: submission?.feedback || null,
         submittedAt: submission?.submittedAt || null,
+        // The student's uploaded PDF, so they can see what they turned in.
+        submission: submission
+            ? {
+                status: submission.status,
+                fileUrl: submission.fileUrl || null,
+                fileName: submission.fileName || null,
+                fileSize: submission.fileSize || null,
+                fileType: submission.fileType || null,
+                submittedAt: submission.submittedAt
+            }
+            : null,
     };
 };
 
 const submitAssignment = async (assignmentId, studentId, data) => {
     const assignment = await prisma.assignment.findUnique({
+        where: { id: assignmentId },
+        include: {
+            course: true,
+            module: { select: { courseId: true } },
+            lesson: { include: { module: { select: { courseId: true } } } },
+            topic: { include: { lesson: { include: { module: { select: { courseId: true } } } } } },
+        },
         where: { id: assignmentId },
         include: {
             course: true,
@@ -106,6 +130,16 @@ const submitAssignment = async (assignmentId, studentId, data) => {
         throw err;
     }
 
+    // One submission per student per assignment (@@unique) — resubmitting
+    // replaces the stored PDF and timestamp rather than creating a second row.
+    // That is the existing upsert semantics; only the file fields are new.
+    const fileFields = {
+        fileUrl: data?.fileUrl ?? null,
+        fileName: data?.fileName ?? null,
+        fileSize: data?.fileSize ?? null,
+        fileType: data?.fileType ?? null,
+    };
+
     const submission = await prisma.assignmentSubmission.upsert({
         where: {
             studentId_assignmentId: {
@@ -116,11 +150,13 @@ const submitAssignment = async (assignmentId, studentId, data) => {
         update: {
             status: "Submitted",
             submittedAt: new Date(),
+            ...fileFields,
         },
         create: {
             studentId,
             assignmentId,
             status: "Submitted",
+            ...fileFields,
         }
     });
 
@@ -194,6 +230,59 @@ const getInstructorAssignments = async (instructorId, filter = {}) => {
     }));
 };
 
+/**
+ * Every student submission for one assignment, for the owning instructor.
+ *
+ * Route-level ownership (verifyAssignmentOwnership) has already established the
+ * caller owns this assignment, so this only shapes the rows: who submitted,
+ * when, and the PDF they actually uploaded. `fileUrl` here is the STUDENT's
+ * work — Assignment.attachments is the instructor's own reference material and
+ * is deliberately not mixed into these rows.
+ */
+const getAssignmentSubmissions = async (assignmentId) => {
+    const assignment = await prisma.assignment.findUnique({
+        where: { id: assignmentId },
+        select: { id: true, title: true, dueDate: true, marks: true }
+    });
+
+    if (!assignment) {
+        const err = new Error("Assignment not found.");
+        err.statusCode = 404;
+        throw err;
+    }
+
+    const submissions = await prisma.assignmentSubmission.findMany({
+        where: { assignmentId },
+        orderBy: { submittedAt: "desc" },
+        include: {
+            student: {
+                select: {
+                    id: true,
+                    user: { select: { id: true, name: true, email: true } }
+                }
+            }
+        }
+    });
+
+    return {
+        assignment,
+        submissions: submissions.map((s) => ({
+            id: s.id,
+            studentId: s.studentId,
+            studentName: s.student?.user?.name || "Student",
+            studentEmail: s.student?.user?.email || "",
+            status: s.status,
+            grade: s.grade,
+            feedback: s.feedback,
+            submittedAt: s.submittedAt,
+            fileUrl: s.fileUrl || null,
+            fileName: s.fileName || null,
+            fileSize: s.fileSize || null,
+            fileType: s.fileType || null
+        }))
+    };
+};
+
 const createAssignment = async (data) => {
     const parents = [data.courseId, data.moduleId, data.lessonId, data.topicId].filter(Boolean);
     if (parents.length !== 1) {
@@ -265,6 +354,7 @@ module.exports = {
     getAssignmentById,
     submitAssignment,
     getInstructorAssignments,
+    getAssignmentSubmissions,
     createAssignment,
     updateAssignment,
     deleteAssignment,

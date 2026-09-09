@@ -754,6 +754,16 @@ model AssignmentSubmission {
   grade        String?
   feedback     String?
   submittedAt  DateTime       @default(now())
+
+  // The student's completed work: one uploaded PDF, which IS the submission.
+  // Distinct from Assignment.attachments, the instructor's reference material.
+  // All nullable so rows submitted before uploads existed stay valid and keep
+  // counting toward Progress exactly as they do today.
+  fileUrl      String?
+  fileName     String?
+  fileSize     Int?
+  fileType     String?
+
   assignment   Assignment     @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   student      StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 

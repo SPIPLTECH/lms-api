@@ -113,9 +113,23 @@ const submitAssignment = async (req, res, next) => {
     }
 };
 
+/** Instructor view of who submitted what. Ownership is enforced on the route. */
+const getAssignmentSubmissions = async (req, res, next) => {
+    try {
+        const data = await assignmentService.getAssignmentSubmissions(req.params.assignmentId);
+        res.json({
+            success: true,
+            data,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     getAssignments,
     getAssignmentById,
+    getAssignmentSubmissions,
     submitAssignment,
     createAssignment,
     updateAssignment,
