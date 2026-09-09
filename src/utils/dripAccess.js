@@ -27,11 +27,12 @@ const getPublishedLessonIds = async (courseId) => {
 // lessons are actually complete (e.g. to render a completion checkmark),
 // and this is already the one place in the codebase computing that set.
 const buildLessonLockMap = async (courseId, studentId) => {
-  const course = await prisma.course.findUnique({
-    where: { id: courseId },
-    select: { /* dripContentEnabled removed */ },
-  });
-
+  // The course lookup that stood here selected only dripContentEnabled. With
+  // that column gone the select was left empty, which Prisma rejects at
+  // runtime — so every caller of this (GET /courses/:id among them) answered
+  // 500 and the student course page reported "Course not found". Nothing read
+  // the result: the drip branch below is already short-circuited, so the query
+  // is simply removed rather than given something arbitrary to select.
   const lessonIds = await getPublishedLessonIds(courseId);
 
   const completedSet = new Set();
