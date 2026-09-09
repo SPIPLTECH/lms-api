@@ -667,108 +667,6 @@ const updateCourse = async (courseId, data) => {
 };
 
 /**
- * Validates whether a course is ready to be published.
- * Returns structured validation details: { canPublish: boolean, errors: Array<{ code, field, message }> }
- */
-const validateCourseForPublish = async (courseId) => {
-  const course = await prisma.course.findUnique({
-    where: { id: courseId },
-    include: {
-      modules: {
-        orderBy: { order: "asc" },
-        include: {
-          lessons: {
-            orderBy: { order: "asc" },
-            include: {
-              contents: { orderBy: { order: "asc" } },
-              topics: {
-                orderBy: { order: "asc" },
-                include: {
-                  contents: { orderBy: { order: "asc" } }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  });
-
-  if (!course) {
-    throw new ApiError(404, "Course not found");
-  }
-
-  const errors = [];
-
-  if (!course.title || course.title.trim() === "") {
-    errors.push({
-      code: "MISSING_TITLE",
-      field: "title",
-      message: "Course title is required."
-    });
-  }
-
-  if (!course.description || course.description.trim() === "") {
-    errors.push({
-      code: "MISSING_DESCRIPTION",
-      field: "description",
-      message: "Course description is required before publishing."
-    });
-  }
-
-  if (!course.modules || course.modules.length === 0) {
-    errors.push({
-      code: "NO_MODULES",
-      field: "modules",
-      message: "Course must contain at least one module."
-    });
-  } else {
-    for (let mIdx = 0; mIdx < course.modules.length; mIdx++) {
-      const mod = course.modules[mIdx];
-      if (!mod.lessons || mod.lessons.length === 0) {
-        errors.push({
-          code: "EMPTY_MODULE",
-          field: `modules[${mIdx}].lessons`,
-          message: `Module "${mod.title || `Module ${mIdx + 1}`}" must contain at least one lesson.`
-        });
-      } else {
-        for (let lIdx = 0; lIdx < mod.lessons.length; lIdx++) {
-          const lesson = mod.lessons[lIdx];
-          const candidateContents = [
-            ...(lesson.contents || []),
-            ...(lesson.topics || []).flatMap((t) => t.contents || [])
-          ];
-          const hasContent = candidateContents.some((c) => {
-            if (!c) return false;
-            if (typeof c.htmlContent === "string" && c.htmlContent.trim().length > 0) return true;
-            if (typeof c.videoUrl === "string" && c.videoUrl.trim().length > 0) return true;
-            if (typeof c.fileUrl === "string" && c.fileUrl.trim().length > 0) return true;
-            if (typeof c.externalUrl === "string" && c.externalUrl.trim().length > 0) return true;
-            if (c.data !== null && c.data !== undefined) {
-              if (typeof c.data === "object" && Object.keys(c.data).length > 0) return true;
-              if (typeof c.data === "string" && c.data.trim().length > 0) return true;
-            }
-            return false;
-          });
-          if (!hasContent) {
-            errors.push({
-              code: "EMPTY_LESSON",
-              field: `modules[${mIdx}].lessons[${lIdx}].contents`,
-              message: `Lesson "${lesson.title || `Lesson ${lIdx + 1}`}" in module "${mod.title}" must contain usable content.`
-            });
-          }
-        }
-      }
-    }
-  }
-
-  return {
-    canPublish: errors.length === 0,
-    errors
-  };
-};
-
-/**
  * Publishes a course (DRAFT -> PUBLISHED).
  */
 const publishCourse = async (courseId, userId, userRole) => {
@@ -785,14 +683,6 @@ const publishCourse = async (courseId, userId, userRole) => {
 
   if (userRole !== "ADMIN" && course.creatorId !== userId) {
     throw new ApiError(403, "Forbidden: You do not own this course.");
-  }
-
-  const validation = await validateCourseForPublish(courseId);
-  if (!validation.canPublish) {
-    const error = new ApiError(400, "Course is not ready to be published.");
-    error.code = "COURSE_NOT_READY_TO_PUBLISH";
-    error.errors = validation.errors;
-    throw error;
   }
 
   const updatedCourse = await prisma.$transaction(async (tx) => {
@@ -1363,7 +1253,6 @@ module.exports = {
   updateCourse,
   updateStatus,
   deleteCourse,
-  validateCourseForPublish,
   publishCourse,
   unpublishCourse,
   archiveCourse,

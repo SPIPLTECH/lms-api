@@ -48,8 +48,17 @@ const createTopic = async (data) => {
     data.order = Number(data.order);
   }
 
+  // A topic added to an already-published course goes live with it.
+  const parentLesson = await prisma.lesson.findUnique({
+    where: { id: data.lessonId },
+    select: { module: { select: { course: { select: { status: true } } } } }
+  });
+
   return prisma.topic.create({
-    data,
+    data: {
+      ...data,
+      isPublished: data.isPublished ?? parentLesson?.module?.course?.status === "PUBLISHED"
+    },
   });
 };
 

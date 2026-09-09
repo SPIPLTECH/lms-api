@@ -83,17 +83,6 @@ router.put(
   controller.updateCourse
 );
 
-router.get(
-  "/:courseId/publish-validation",
-  verifyToken,
-  checkRole([
-    "ADMIN",
-    "INSTRUCTOR"
-  ]),
-  verifyCourseOwnership,
-  controller.validatePublish
-);
-
 router.post(
   "/:courseId/publish",
   verifyToken,

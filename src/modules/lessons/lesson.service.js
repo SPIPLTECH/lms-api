@@ -64,18 +64,24 @@ const getLessonById = async (
 const createLesson = async (
   data
 ) => {
-  if (data.isPublished) {
-    throw new ApiError(400, "A new lesson can't be published yet — add at least one content item first.");
-  }
-
   const lastLesson = await prisma.lesson.findFirst({
     where: { moduleId: data.moduleId },
     orderBy: { order: "desc" },
     select: { order: true }
   });
 
+  // A lesson added to an already-published course goes live with it.
+  const parentModule = await prisma.module.findUnique({
+    where: { id: data.moduleId },
+    select: { course: { select: { status: true } } }
+  });
+
   const lesson = await prisma.lesson.create({
-    data: { ...data, order: (lastLesson?.order ?? 0) + 1 }
+    data: {
+      ...data,
+      order: (lastLesson?.order ?? 0) + 1,
+      isPublished: data.isPublished ?? parentModule?.course?.status === "PUBLISHED"
+    }
   });
 
   if (lesson.isPublished) {
@@ -115,13 +121,6 @@ const updateLesson = async (
     const error = new Error("Lesson not found");
     error.statusCode = 404;
     throw error;
-  }
-
-  if (data.isPublished) {
-    const contentCount = await prisma.content.count({ where: { topic: { lessonId } } });
-    if (contentCount === 0) {
-      throw new ApiError(400, "Add at least one content item before publishing this lesson.");
-    }
   }
 
   const lesson = await prisma.lesson.update({

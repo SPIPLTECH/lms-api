@@ -77,18 +77,25 @@ const getModuleById = async (moduleId, role) => {
 };
 
 const createModule = async (data) => {
-  if (data.isPublished) {
-    throw new ApiError(400, "A new module can't be published yet — add at least one lesson first.");
-  }
-
   const lastModule = await prisma.module.findFirst({
     where: { courseId: data.courseId },
     orderBy: { order: "desc" },
     select: { order: true }
   });
 
+  // A module added to an already-published course goes live with it, so new
+  // material never sits invisible to students who are already enrolled.
+  const course = await prisma.course.findUnique({
+    where: { id: data.courseId },
+    select: { status: true }
+  });
+
   return await prisma.module.create({
-    data: { ...data, order: (lastModule?.order ?? 0) + 1 }
+    data: {
+      ...data,
+      order: (lastModule?.order ?? 0) + 1,
+      isPublished: data.isPublished ?? course?.status === "PUBLISHED"
+    }
   });
 };
 
@@ -99,13 +106,6 @@ const updateModule = async (
   const existing = await prisma.module.findUnique({ where: { id: moduleId } });
   if (!existing) {
     throw new ApiError(404, "Module not found");
-  }
-
-  if (data.isPublished) {
-    const lessonCount = await prisma.lesson.count({ where: { moduleId } });
-    if (lessonCount === 0) {
-      throw new ApiError(400, "Add at least one lesson before publishing this module.");
-    }
   }
 
   return await prisma.module.update({
