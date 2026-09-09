@@ -441,6 +441,13 @@ const QUIZ_PARENT_PRECEDENCE = ["topicId", "lessonId", "moduleId", "courseId"];
  * isTopicQuiz/isLessonQuiz labeling). */
 const resolveQuizParentField = (data) => QUIZ_PARENT_PRECEDENCE.find((f) => data[f]);
 
+/** A Self-Test is never timed, and the server -- not the form -- owns that.
+ * The *effective* tag decides, never the presence of a timeLimit key: a
+ * client flipping FINAL -> SELF_TEST legitimately sends only { quizTag },
+ * and the stale time limit still has to come off the row. */
+const applyTagTimerRule = (effectiveTag, quizData) =>
+  effectiveTag === "SELF_TEST" ? { ...quizData, timeLimit: null } : quizData;
+
 const createQuiz = async (
   data
 ) => {
@@ -464,7 +471,7 @@ const createQuiz = async (
 
   const quiz = await prisma.quiz.create({
     data: {
-      ...quizData,
+      ...applyTagTimerRule(quizData.quizTag, quizData),
       moduleId: quizData.moduleId || null,
       lessonId: quizData.lessonId || null
     }
@@ -546,11 +553,16 @@ const updateQuiz = async (
 
   const { questions, ...quizData } = data;
 
+  // The tag may be changing in this very request, or may not be in the
+  // payload at all -- either way the row's resulting tag is what governs
+  // whether a time limit may survive.
+  const effectiveTag = quizData.quizTag ?? existing.quizTag;
+
   const updatedQuiz = await prisma.quiz.update({
     where: {
       id: quizId
     },
-    data: quizData
+    data: applyTagTimerRule(effectiveTag, quizData)
   });
 
   if (Array.isArray(questions)) {
@@ -963,6 +975,10 @@ const generateSelfAssessmentQuiz = async (courseId, questionCount = 5) => {
     data: {
       title: SELF_ASSESSMENT_QUIZ_TITLE,
       description: "Auto-generated practice quiz from this course's question bank.",
+      // Practice by construction, so never timed. This path writes through
+      // Prisma directly and never sees createQuizSchema, hence the explicit tag.
+      quizTag: "SELF_TEST",
+      timeLimit: null,
       passingScore: 60,
       courseId,
       isPublished: true,
