@@ -27,6 +27,17 @@ router.get(
     controller.getAssignmentById
 );
 
+// Student submissions for one assignment. Ownership-checked in addition to the
+// role check: without it any INSTRUCTOR could read work submitted for an
+// assignment they do not own.
+router.get(
+    "/:assignmentId/submissions",
+    verifyToken,
+    checkRole(["INSTRUCTOR", "ADMIN"]),
+    verifyAssignmentOwnership,
+    controller.getAssignmentSubmissions
+);
+
 router.post(
     "/",
     verifyToken,

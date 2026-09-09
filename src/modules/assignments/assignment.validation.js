@@ -49,8 +49,33 @@ const updateAssignmentSchema = Joi.object({
   status: Joi.string().optional().allow(null, "")
 });
 
+// The student's final answer is one uploaded PDF. The file is already in blob
+// storage by the time this runs (the upload route enforces PDF as well), so
+// these checks are the server-side half of that rule rather than a substitute
+// for it: a caller hitting this endpoint directly still cannot register a
+// non-PDF, or a submission carrying no file at all.
+const PDF_URL_PATTERN = /\.pdf(\?|#|$)/i;
+
 const submitAssignmentSchema = Joi.object({
   status: Joi.string().valid("Submitted", "Draft").optional(),
+  fileUrl: Joi.string()
+    .uri()
+    .pattern(PDF_URL_PATTERN)
+    .required()
+    .messages({
+      "string.pattern.base": "The submitted file must be a PDF.",
+      "any.required": "A completed assignment PDF is required to submit."
+    }),
+  fileName: Joi.string()
+    .pattern(/\.pdf$/i)
+    .required()
+    .messages({ "string.pattern.base": "The submitted file must be a PDF." }),
+  fileSize: Joi.number().integer().min(1).optional().allow(null),
+  fileType: Joi.string()
+    .valid("application/pdf")
+    .optional()
+    .allow(null, "")
+    .messages({ "any.only": "The submitted file must be a PDF." })
 });
 
 module.exports = {
