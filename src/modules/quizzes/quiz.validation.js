@@ -1,5 +1,7 @@
 const Joi = require("joi");
 
+const QUIZ_TAGS = ["SELF_TEST", "FINAL"];
+
 const createQuizSchema = Joi.object({
   title: Joi.string().required(),
   description: Joi.string().optional().allow(null, ""),
@@ -8,19 +10,28 @@ const createQuizSchema = Joi.object({
   moduleId: Joi.string().optional().allow(null, ""),
   lessonId: Joi.string().optional().allow(null, ""),
   topicId: Joi.string().optional().allow(null, ""),
+  // Required, not defaulted: the instructor must actively say whether this is
+  // practice or the real assessment. A default would silently pick for them.
+  quizTag: Joi.string().valid(...QUIZ_TAGS).required(),
   passingScore: Joi.number().integer().min(0).max(100).optional(),
   timeLimit: Joi.number().integer().min(0).optional().allow(null),
   isPublished: Joi.boolean().optional(),
-  order: Joi.number().integer().min(1).optional()
+  order: Joi.number().integer().min(1).optional(),
+  questions: Joi.array().optional(),
 });
 
 const updateQuizSchema = Joi.object({
   title: Joi.string().optional(),
   description: Joi.string().optional().allow(null, ""),
+  quizTag: Joi.string().valid(...QUIZ_TAGS).optional(),
   passingScore: Joi.number().integer().min(0).max(100).optional(),
+  // A timeLimit sent alongside quizTag SELF_TEST is not rejected here -- the
+  // service nulls it instead (see applyTagTimerRule). Rejecting would hand the
+  // client an error it cannot act on when it is merely echoing a stale field.
   timeLimit: Joi.number().integer().min(0).optional().allow(null),
   isPublished: Joi.boolean().optional(),
-  order: Joi.number().integer().min(1).optional()
+  order: Joi.number().integer().min(1).optional(),
+  questions: Joi.array().optional(),
 });
 
 // evaluateAnswer() (quiz.service.js) expects a plain string for MCQ_SINGLE /
@@ -61,6 +72,7 @@ const generateSelfAssessmentQuizSchema = Joi.object({
 });
 
 module.exports = {
+  QUIZ_TAGS,
   createQuizSchema,
   updateQuizSchema,
   submitQuizSchema,

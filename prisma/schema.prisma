@@ -362,6 +362,7 @@ model Quiz {
   order            Int?
   title            String
   description      String?
+  quizTag          QuizTag          @default(FINAL)
   passingScore     Int
   timeLimit        Int?
   startDate        DateTime?
@@ -1067,6 +1068,13 @@ enum AchievementType {
   STREAK
   NOTE
   GENERAL
+}
+
+// SELF_TEST: learner practice, never timed. FINAL: the formal assessment of
+// its lesson/module, optionally timed. Orthogonal to the quiz's scope/level.
+enum QuizTag {
+  SELF_TEST
+  FINAL
 }
 
 enum QuestionType {

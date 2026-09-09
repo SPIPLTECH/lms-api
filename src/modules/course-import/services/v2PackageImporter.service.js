@@ -396,12 +396,18 @@ async function importV2Manifest(canonicalJson, instructorId) {
 
       const processQuizDef = (quizDef, targetModuleId = null, targetLessonId = null, targetTopicId = null) => {
         const quizId = crypto.randomUUID();
+        // Packages authored before quiz tags existed carry no quizTag and
+        // import as FINAL, preserving their timers. Read defensively so a
+        // future exporter that emits the tag needs no importer change.
+        const quizTag = quizDef.quizTag === "SELF_TEST" ? "SELF_TEST" : "FINAL";
         quizRows.push({
           id: quizId,
           title: quizDef.title || "Imported Quiz",
           description: quizDef.description ?? null,
+          quizTag,
           passingScore: quizDef.passingScore !== undefined && quizDef.passingScore !== null ? Number(quizDef.passingScore) : 50,
-          timeLimit: quizDef.timeLimit !== undefined && quizDef.timeLimit !== null ? Number(quizDef.timeLimit) : null,
+          // A Self-Test is never timed, whatever the package claims.
+          timeLimit: quizTag === "SELF_TEST" || quizDef.timeLimit === undefined || quizDef.timeLimit === null ? null : Number(quizDef.timeLimit),
           isPublished: quizDef.isPublished !== undefined ? Boolean(quizDef.isPublished) : true,
           status: "ACTIVE",
           courseId: courseRecord.id,
