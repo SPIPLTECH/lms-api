@@ -48,6 +48,10 @@ const createTopic = async (data) => {
     data.order = Number(data.order);
   }
 
+  if (data.isPublished === undefined) {
+    data.isPublished = true;
+  }
+
   return prisma.topic.create({
     data,
   });

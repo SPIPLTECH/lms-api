@@ -92,9 +92,9 @@ const buildWeeklyBuckets = (weeks = 6) => {
  * metric is computed from real rows (QuizSubmission/AssignmentSubmission),
  * pooled across all of a batch's linked courses. There is no
  * attendance-tracking feature anywhere in this schema, so attendanceRate is
- * intentionally null rather than a fabricated number. Lesson-completion
- * tracking (Progress) was removed from the schema, so completion rate and
- * completion-based at-risk detection no longer exist here.
+ * intentionally null rather than a fabricated number. Lesson-completion is
+ * no longer tracked anywhere in this schema, so this widget no longer
+ * reports a completion percentage or at-risk-by-completion signal.
  */
 const getBatchPerformanceOverview = async (user, filters = {}) => {
   const courseFilter = {};
@@ -173,7 +173,7 @@ const getBatchPerformanceOverview = async (user, filters = {}) => {
       }
 
       // Weekly trend: average quiz score of submissions that landed within
-      // each week. Expensive (extra queries per batch) and only ever
+      // each week. Expensive (6 extra queries per batch) and only ever
       // rendered on the single-batch detail page's sparklines — skipped
       // entirely on list views (no batchId filter) where it would just be
       // discarded unused.
@@ -237,6 +237,8 @@ const getBatchPerformanceOverview = async (user, filters = {}) => {
 
   const totalBatches = batchCards.length;
   const totalStudents = batchCards.reduce((sum, b) => sum + b.studentsCount, 0);
+  const avgEngagement =
+    totalBatches > 0 ? Math.round(batchCards.reduce((sum, b) => sum + b.engagementScore, 0) / totalBatches) : 0;
   const newBatchesThisMonth = batchCards.filter((b) => new Date(b.createdAt) >= monthStart).length;
 
   const allStudentIds = [...new Set(batches.flatMap((b) => b.students.map((s) => s.id)))];
@@ -274,6 +276,7 @@ const getBatchPerformanceOverview = async (user, filters = {}) => {
     stats: {
       totalBatches,
       totalStudents,
+      avgEngagement,
       avgAttendance: null,
       newBatchesThisMonth,
       pendingAssignmentReviews,

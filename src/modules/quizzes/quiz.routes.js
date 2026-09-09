@@ -45,6 +45,17 @@ router.post(
   controller.createQuiz
 );
 
+// PATCH /quizzes/reorder - Batch reorder quizzes within a parent scope.
+// Defined before PUT /:quizId so it isn't shadowed by that param route
+// matching the literal path segment "reorder" (mirrors content.routes.js's
+// PATCH /reorder, which is likewise defined ahead of its /:contentId routes).
+router.patch(
+  "/reorder",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  controller.reorderQuizzes
+);
+
 router.put(
   "/:quizId",
   verifyToken,

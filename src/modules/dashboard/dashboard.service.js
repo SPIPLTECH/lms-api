@@ -111,15 +111,17 @@ const getAdminDashboard = async () => {
     ratingGroups.map((r) => [r.courseId, r._avg.rating ? parseFloat(r._avg.rating.toFixed(1)) : 0])
   );
 
-  const coursePerformance = topCourses.map((course) => ({
-    id: course.id,
-    title: course.title,
-    category: course.category || "General",
-    level: course.level || "—",
-    status: course.status,
-    students: course._count.enrollments,
-    avgRating: ratingByCourse.get(course.id) ?? 0
-  }));
+  const coursePerformance = topCourses.map((course) => {
+    return {
+      id: course.id,
+      title: course.title,
+      category: course.category || "General",
+      level: course.level || "—",
+      status: course.status,
+      students: course._count.enrollments,
+      avgRating: ratingByCourse.get(course.id) ?? 0
+    };
+  });
 
   // Top Performing Instructor — ranked by real students taught, tie-broken
   // by real average rating across their courses. No time window claimed.
@@ -297,7 +299,21 @@ const getInstructorDashboard = async (instructorId, courseId) => {
       _avg: { rating: true },
       _count: { rating: true }
     }),
-    // Unanswered messages in the last 5 days
+    // 5. Inactive Students Count (no course access recorded in 5+ days)
+    prisma.studentProfile.count({
+      where: {
+        enrollments: {
+          some: {
+            courseId: { in: targetCourseIds },
+            OR: [
+              { lastAccessedAt: null },
+              { lastAccessedAt: { lt: fiveDaysAgo } }
+            ]
+          }
+        }
+      }
+    }),
+    // 6. Unanswered messages in the last 5 days
     prisma.message.count({
       where: {
         conversation: {
@@ -485,6 +501,28 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     });
   }
 
+  if (inactiveStudentsCount > 0) {
+    priorities.push({
+      id: 2,
+      icon: 'TrendingUp',
+      color: 'orange',
+      value: String(inactiveStudentsCount),
+      title: 'Inactive Students',
+      description: 'Students with no course activity in 5+ days.',
+      action: 'View Roster'
+    });
+  } else {
+    priorities.push({
+      id: 2,
+      icon: 'TrendingUp',
+      color: 'green',
+      value: 'Active',
+      title: 'Engagement Solid',
+      description: 'All enrolled students are actively learning.',
+      action: 'View Insights'
+    });
+  }
+
   const draftCoursesCount = targetCourses.filter(c => c.status === 'DRAFT').length;
   priorities.push({
     id: 2,
@@ -496,12 +534,13 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     action: draftCoursesCount > 0 ? 'Open Courses' : 'Manage Content'
   });
 
-  // 9. Performance Analytics -- course popularity by enrollment share.
+  // 9. Performance Analytics -- course popularity by enrollment share,
+  // regardless of whether a single course filter is active.
   const maxEnrolls = Math.max(
     ...instructorCourses.map(c => (courseEnrollments.get(c.id) || []).length),
     1
   );
-  const performanceAnalytics = instructorCourses.map(course => {
+  const performanceAnalytics = targetCourses.map(course => {
     const enrolledCount = (courseEnrollments.get(course.id) || []).length;
     const popularityScore = Math.round((enrolledCount / maxEnrolls) * 100);
     return {
@@ -621,6 +660,7 @@ const getInstructorDashboard = async (instructorId, courseId) => {
   const summary = [
     `Overall Quiz Average stands at ${avgQuizScore}%`,
     `Managing ${instructorCourses.length} active courses and cohorts`,
+    `${inactiveStudentsCount} student(s) have had no recent course activity`,
   ];
 
   return {
@@ -739,43 +779,41 @@ const getStudentDashboard = async (userId) => {
   const tStep2Start = Date.now();
   let tEnrollmentsMs = 0;
 
-  const [enrollments] = await Promise.all([
-    (async () => {
-      const tStart = Date.now();
-      const res = await prisma.enrollment.findMany({
-        where: { studentId },
-        select: {
-          id: true,
-          courseId: true,
-          enrolledAt: true,
-          studentId: true,
-          course: {
-            select: {
-              id: true,
-              title: true,
-              description: true,
-              category: true,
-              level: true,
-              thumbnailUrl: true,
-              creator: {
-                select: {
-                  name: true,
-                },
+  const enrollments = await (async () => {
+    const tStart = Date.now();
+    const res = await prisma.enrollment.findMany({
+      where: { studentId },
+      select: {
+        id: true,
+        courseId: true,
+        enrolledAt: true,
+        studentId: true,
+        course: {
+          select: {
+            id: true,
+            title: true,
+            description: true,
+            category: true,
+            level: true,
+            thumbnailUrl: true,
+            creator: {
+              select: {
+                name: true,
               },
-              modules: {
-                select: {
-                  _count: { select: { lessons: true } },
-                },
-              },
-              _count: { select: { quizzes: true } },
             },
+            modules: {
+              select: {
+                _count: { select: { lessons: true } },
+              },
+            },
+            _count: { select: { quizzes: true } },
           },
         },
-      });
-      tEnrollmentsMs = Date.now() - tStart;
-      return res;
-    })(),
-  ]);
+      },
+    });
+    tEnrollmentsMs = Date.now() - tStart;
+    return res;
+  })();
   console.log(`Step 2a enrollments query: ${tEnrollmentsMs} ms (count: ${enrollments.length})`);
   console.log(`Step 2 enrollments total: ${Date.now() - tStep2Start} ms`);
 
@@ -847,9 +885,8 @@ const getStudentDashboard = async (userId) => {
   );
 
   // Student percentile rank: Unused by frontend components. Default to 0 --
-  // it used to require a heavy platform-wide $queryRaw PERCENT_RANK scan
-  // over the (now-removed) Progress table, so it stays a stub rather than
-  // being wired up to a new signal that nothing consumes.
+  // wiring up a real one would need a platform-wide completion metric, which
+  // this schema no longer tracks.
   const rankPercentile = 0;
 
   console.log(`Step 3 JS processing: ${Date.now() - tStep3Start} ms`);

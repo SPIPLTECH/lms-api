@@ -17,6 +17,7 @@ const getCourses = async (req, res) => {
         category: req.query.category || undefined,
         level: req.query.level || undefined,
         sortBy: req.query.sortBy || undefined,
+        scope: req.query.scope || undefined,
       }
     );
 
@@ -52,11 +53,18 @@ const getCourseById = async (
   next
 ) => {
   try {
+    // ?include=meta returns course-level data only, without the
+    // modules -> lessons -> topics -> contents tree. Anything else (including
+    // no query param at all) keeps the full payload, so existing clients are
+    // unaffected.
+    const includeModules = req.query.include !== "meta";
+
     const course =
       await courseService.getCourseById(
         req.params.courseId,
         req.user?.role,
-        req.user?.id
+        req.user?.id,
+        { includeModules }
       );
 
     if (!course) {

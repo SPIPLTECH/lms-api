@@ -6,7 +6,7 @@ const prisma = require('../config/database');
  * Participated Entity Types:
  * - Content (direct at Course, Module, Lesson, Topic levels)
  * - Quiz (direct at Course, Module, Lesson, Topic levels)
- * - Assignment (direct at Course level)
+ * - Assignment (direct at Course, Module, Lesson, Topic levels)
  *
  * Rules:
  * 1. Only published, student-accessible items are counted.
@@ -15,79 +15,112 @@ const prisma = require('../config/database');
  * 3. A parent container completes iff ALL applicable direct items AND ALL applicable child entities complete.
  * 4. Ground Truth Completions:
  *    - Content: ContentProgress row with completed = true
- *    - Quiz: QuizSubmission row with passed = true (or submission exists if passingScore is 0)
+ *    - Quiz: QuizSubmission row with passed = true (or percentage >= passingScore)
  *    - Assignment: AssignmentSubmission row with status in ["Submitted", "Graded"]
  * 5. Idempotent and transaction-aware. Preserves completedAt when remaining complete; updates or resets on status flip.
+ *
+ * Pass `options.includeTree` to also receive the authoritative hierarchical progress
+ * tree (Course -> Module -> Lesson -> Topic -> Content/Quiz/Assignment). It is built
+ * from the exact same applicable-item set the percentages are derived from, so the
+ * Student frontend never has to reconstruct the hierarchy from unrelated APIs and can
+ * never disagree with the backend about what counts.
  */
-async function recomputeCourseProgress(studentId, courseId, tx = null) {
+const ASSIGNMENT_COMPLETED_STATUSES = ['Submitted', 'Graded'];
+
+function isAssignmentSubmissionComplete(submission) {
+  return !!submission && ASSIGNMENT_COMPLETED_STATUSES.includes(submission.status);
+}
+
+async function recomputeCourseProgress(studentId, courseId, tx = null, options = {}) {
   const client = tx || prisma;
+  const includeTree = options.includeTree === true;
+
+  const contentSelect = { id: true, title: true, type: true, order: true, duration: true };
+  const quizSelect = { id: true, title: true, order: true, passingScore: true };
+  const assignmentSelect = { id: true, title: true, dueDate: true };
 
   // 1. Fetch live published hierarchy including direct Contents, Quizzes, Assignments at all levels
   const course = await client.course.findUnique({
     where: { id: courseId },
     select: {
       id: true,
+      title: true,
+      status: true,
       contents: {
         where: { moduleId: null, lessonId: null, topicId: null },
-        select: { id: true }
+        orderBy: { order: 'asc' },
+        select: contentSelect
       },
       quizzes: {
         where: { isPublished: true, moduleId: null, lessonId: null, topicId: null },
-        select: { id: true, passingScore: true }
+        orderBy: { order: 'asc' },
+        select: quizSelect
       },
       assignments: {
         where: { isPublished: true, moduleId: null, lessonId: null, topicId: null },
-        select: { id: true }
+        select: assignmentSelect
       },
       modules: {
         where: { isPublished: true },
         orderBy: { order: 'asc' },
         select: {
           id: true,
+          title: true,
+          order: true,
           contents: {
             where: { lessonId: null, topicId: null },
-            select: { id: true }
+            orderBy: { order: 'asc' },
+            select: contentSelect
           },
           quizzes: {
             where: { isPublished: true, lessonId: null, topicId: null },
-            select: { id: true, passingScore: true }
+            orderBy: { order: 'asc' },
+            select: quizSelect
           },
           assignments: {
             where: { isPublished: true, lessonId: null, topicId: null },
-            select: { id: true }
+            select: assignmentSelect
           },
           lessons: {
             where: { isPublished: true },
             orderBy: { order: 'asc' },
             select: {
               id: true,
+              title: true,
+              order: true,
               contents: {
                 where: { topicId: null },
-                select: { id: true }
+                orderBy: { order: 'asc' },
+                select: contentSelect
               },
               quizzes: {
                 where: { isPublished: true, topicId: null },
-                select: { id: true, passingScore: true }
+                orderBy: { order: 'asc' },
+                select: quizSelect
               },
               assignments: {
                 where: { isPublished: true, topicId: null },
-                select: { id: true }
+                select: assignmentSelect
               },
               topics: {
                 where: { isPublished: true },
                 orderBy: { order: 'asc' },
                 select: {
                   id: true,
+                  title: true,
+                  order: true,
                   contents: {
-                    select: { id: true }
+                    orderBy: { order: 'asc' },
+                    select: contentSelect
                   },
                   quizzes: {
                     where: { isPublished: true },
-                    select: { id: true, passingScore: true }
+                    orderBy: { order: 'asc' },
+                    select: quizSelect
                   },
                   assignments: {
                     where: { isPublished: true },
-                    select: { id: true }
+                    select: assignmentSelect
                   }
                 }
               }
@@ -134,22 +167,28 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
   // 3. Fetch Ground Truth completions for Student
   // A. Content Completions
   const completedContentSet = new Set();
+  const contentProgressMap = new Map();
   if (allContentIds.size > 0) {
     const cpRecords = await client.contentProgress.findMany({
-      where: { studentId, contentId: { in: Array.from(allContentIds) }, completed: true },
-      select: { contentId: true }
+      where: { studentId, contentId: { in: Array.from(allContentIds) } },
+      select: { contentId: true, completed: true, completedAt: true }
     });
-    cpRecords.forEach((r) => completedContentSet.add(r.contentId));
+    cpRecords.forEach((r) => {
+      contentProgressMap.set(r.contentId, r);
+      if (r.completed) completedContentSet.add(r.contentId);
+    });
   }
 
-  // B. Quiz Completions (QuizSubmission with passed = true, or passingScore == 0)
+  // B. Quiz Completions (QuizSubmission with passed = true, or percentage >= passingScore)
   const completedQuizSet = new Set();
+  const quizSubmissionMap = new Map();
   if (allQuizMap.size > 0) {
     const qsRecords = await client.quizSubmission.findMany({
       where: { studentId, quizId: { in: Array.from(allQuizMap.keys()) } },
-      select: { quizId: true, passed: true, percentage: true }
+      select: { quizId: true, passed: true, percentage: true, score: true, totalMarks: true, submittedAt: true }
     });
     qsRecords.forEach((qs) => {
+      quizSubmissionMap.set(qs.quizId, qs);
       const minPassScore = allQuizMap.get(qs.quizId) || 0;
       if (qs.passed || (qs.percentage !== undefined && qs.percentage >= minPassScore)) {
         completedQuizSet.add(qs.quizId);
@@ -159,16 +198,19 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
 
   // C. Assignment Completions (AssignmentSubmission)
   const completedAssignmentSet = new Set();
+  const assignmentSubmissionMap = new Map();
   if (allAssignmentIds.size > 0) {
     const asRecords = await client.assignmentSubmission.findMany({
       where: {
         studentId,
-        assignmentId: { in: Array.from(allAssignmentIds) },
-        status: { in: ['Submitted', 'Graded'] }
+        assignmentId: { in: Array.from(allAssignmentIds) }
       },
-      select: { assignmentId: true }
+      select: { assignmentId: true, status: true, grade: true, submittedAt: true }
     });
-    asRecords.forEach((r) => completedAssignmentSet.add(r.assignmentId));
+    asRecords.forEach((r) => {
+      assignmentSubmissionMap.set(r.assignmentId, r);
+      if (isAssignmentSubmissionComplete(r)) completedAssignmentSet.add(r.assignmentId);
+    });
   }
 
   // Fetch existing topic/lesson/module progress to preserve completedAt
@@ -195,10 +237,13 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
   // In-memory status maps for bottom-up computation
   const topicCompletionStatus = new Map();
   const topicHasApplicableItemsMap = new Map();
+  const topicCompletedAtMap = new Map();
   const lessonCompletionStatus = new Map();
   const lessonHasApplicableItemsMap = new Map();
+  const lessonCompletedAtMap = new Map();
   const moduleCompletionStatus = new Map();
   const moduleHasApplicableItemsMap = new Map();
+  const moduleCompletedAtMap = new Map();
 
   // 4. Roll up TOPIC Progress
   for (const mod of course.modules) {
@@ -219,6 +264,7 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
 
         const existing = topicProgressMap.get(topic.id);
         const completedAt = isCompleted ? (existing?.completed ? existing.completedAt : now) : null;
+        topicCompletedAtMap.set(topic.id, completedAt);
 
         await client.topicProgress.upsert({
           where: { studentId_topicId: { studentId, topicId: topic.id } },
@@ -250,6 +296,7 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
 
       const existing = lessonProgressMap.get(lesson.id);
       const completedAt = isCompleted ? (existing?.completed ? existing.completedAt : now) : null;
+      lessonCompletedAtMap.set(lesson.id, completedAt);
 
       await client.lessonProgress.upsert({
         where: { studentId_lessonId: { studentId, lessonId: lesson.id } },
@@ -279,6 +326,7 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
 
     const existing = moduleProgressMap.get(mod.id);
     const completedAt = isCompleted ? (existing?.completed ? existing.completedAt : now) : null;
+    moduleCompletedAtMap.set(mod.id, completedAt);
 
     await client.moduleProgress.upsert({
       where: { studentId_moduleId: { studentId, moduleId: mod.id } },
@@ -318,7 +366,7 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
     });
   }
 
-  return {
+  const result = {
     courseId,
     studentId,
     totalItems: totalPublishedItems,
@@ -326,6 +374,143 @@ async function recomputeCourseProgress(studentId, courseId, tx = null) {
     progressPercent,
     completed: isCourseCompleted
   };
+
+  if (!includeTree) return result;
+
+  // 8. Build the authoritative hierarchical progress tree from the SAME
+  //    applicable-item set the percentages above were derived from.
+  const mapContent = (c) => ({
+    id: c.id,
+    kind: 'CONTENT',
+    title: c.title,
+    contentType: c.type,
+    order: c.order,
+    duration: c.duration,
+    completed: completedContentSet.has(c.id),
+    completedAt: contentProgressMap.get(c.id)?.completedAt ?? null
+  });
+
+  const mapQuiz = (q) => {
+    const sub = quizSubmissionMap.get(q.id) || null;
+    return {
+      id: q.id,
+      kind: 'QUIZ',
+      title: q.title,
+      order: q.order,
+      passingScore: q.passingScore,
+      completed: completedQuizSet.has(q.id),
+      attempted: !!sub,
+      score: sub?.score ?? null,
+      totalMarks: sub?.totalMarks ?? null,
+      percentage: sub?.percentage ?? null,
+      passed: sub?.passed ?? null,
+      submittedAt: sub?.submittedAt ?? null
+    };
+  };
+
+  const mapAssignment = (a) => {
+    const sub = assignmentSubmissionMap.get(a.id) || null;
+    return {
+      id: a.id,
+      kind: 'ASSIGNMENT',
+      title: a.title,
+      dueDate: a.dueDate,
+      completed: completedAssignmentSet.has(a.id),
+      submissionStatus: sub?.status ?? 'NotSubmitted',
+      grade: sub?.grade ?? null,
+      submittedAt: sub?.submittedAt ?? null
+    };
+  };
+
+  // Direct (non-inherited) learning items owned by an entity, with their own counts.
+  const buildDirect = (entity) => {
+    const contents = entity.contents.map(mapContent);
+    const quizzes = entity.quizzes.map(mapQuiz);
+    const assignments = entity.assignments.map(mapAssignment);
+    const items = [...contents, ...quizzes, ...assignments];
+    return {
+      contents,
+      quizzes,
+      assignments,
+      directTotalItems: items.length,
+      directCompletedItems: items.filter((i) => i.completed).length
+    };
+  };
+
+  const pct = (completedCount, totalCount) =>
+    totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+
+  const modulesTree = course.modules.map((mod) => {
+    const lessonsTree = mod.lessons.map((lesson) => {
+      const topicsTree = lesson.topics.map((topic) => {
+        const direct = buildDirect(topic);
+        return {
+          id: topic.id,
+          title: topic.title,
+          order: topic.order,
+          ...direct,
+          totalItems: direct.directTotalItems,
+          completedItems: direct.directCompletedItems,
+          progressPercent: pct(direct.directCompletedItems, direct.directTotalItems),
+          applicable: topicHasApplicableItemsMap.get(topic.id) === true,
+          completed: topicCompletionStatus.get(topic.id) === true,
+          completedAt: topicCompletedAtMap.get(topic.id) ?? null
+        };
+      });
+
+      const direct = buildDirect(lesson);
+      const totalItems = direct.directTotalItems + topicsTree.reduce((s, t) => s + t.totalItems, 0);
+      const completedItems = direct.directCompletedItems + topicsTree.reduce((s, t) => s + t.completedItems, 0);
+
+      return {
+        id: lesson.id,
+        title: lesson.title,
+        order: lesson.order,
+        ...direct,
+        topics: topicsTree,
+        totalItems,
+        completedItems,
+        progressPercent: pct(completedItems, totalItems),
+        applicable: lessonHasApplicableItemsMap.get(lesson.id) === true,
+        completed: lessonCompletionStatus.get(lesson.id) === true,
+        completedAt: lessonCompletedAtMap.get(lesson.id) ?? null
+      };
+    });
+
+    const direct = buildDirect(mod);
+    const totalItems = direct.directTotalItems + lessonsTree.reduce((s, l) => s + l.totalItems, 0);
+    const completedItems = direct.directCompletedItems + lessonsTree.reduce((s, l) => s + l.completedItems, 0);
+
+    return {
+      id: mod.id,
+      title: mod.title,
+      order: mod.order,
+      ...direct,
+      lessons: lessonsTree,
+      totalItems,
+      completedItems,
+      progressPercent: pct(completedItems, totalItems),
+      applicable: moduleHasApplicableItemsMap.get(mod.id) === true,
+      completed: moduleCompletionStatus.get(mod.id) === true,
+      completedAt: moduleCompletedAtMap.get(mod.id) ?? null
+    };
+  });
+
+  const courseDirect = buildDirect(course);
+
+  result.hierarchy = {
+    id: course.id,
+    title: course.title,
+    status: course.status,
+    ...courseDirect,
+    modules: modulesTree,
+    totalItems: totalPublishedItems,
+    completedItems: completedItemsCount,
+    progressPercent,
+    completed: isCourseCompleted
+  };
+
+  return result;
 }
 
 /**

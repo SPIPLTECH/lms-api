@@ -4,8 +4,12 @@ const { recomputeCourseProgress, ensureProgressInitialized } = require('../../ut
 /**
  * Marks a single Content item as complete/incomplete for a student
  * and triggers bottom-up course progress rollup.
+ *
+ * When `requestingUser` is supplied (always, from the HTTP layer) the caller's
+ * access to the owning course is verified before any progress row is written,
+ * so an unenrolled student cannot seed progress rows for a course.
  */
-async function completeContent(studentId, contentId, completed = true) {
+async function completeContent(studentId, contentId, completed = true, requestingUser = null) {
   const content = await prisma.content.findUnique({
     where: { id: contentId },
     include: {
@@ -39,6 +43,10 @@ async function completeContent(studentId, contentId, completed = true) {
     content.module?.courseId ||
     content.courseId;
 
+  if (requestingUser && courseId) {
+    await assertCourseProgressAccess(requestingUser, studentId, courseId);
+  }
+
   const now = new Date();
   await prisma.contentProgress.upsert({
     where: { studentId_contentId: { studentId, contentId } },
@@ -63,7 +71,7 @@ async function completeContent(studentId, contentId, completed = true) {
  * Marks all topic-level content items within a lesson as complete/incomplete
  * and triggers bottom-up course progress rollup.
  */
-async function completeLesson(studentId, lessonId, completed = true) {
+async function completeLesson(studentId, lessonId, completed = true, requestingUser = null) {
   const lesson = await prisma.lesson.findUnique({
     where: { id: lessonId },
     include: {
@@ -85,6 +93,10 @@ async function completeLesson(studentId, lessonId, completed = true) {
   }
 
   const courseId = lesson.module.courseId;
+
+  if (requestingUser) {
+    await assertCourseProgressAccess(requestingUser, studentId, courseId);
+  }
 
   const contentIds = [];
   lesson.contents.forEach((c) => contentIds.push(c.id));
@@ -114,38 +126,100 @@ async function completeLesson(studentId, lessonId, completed = true) {
 }
 
 /**
- * Retrieves detailed progress for a student in a specific course.
+ * Authorizes a request to read a student's progress in a course.
+ *
+ * - ADMIN may read any student's progress.
+ * - INSTRUCTOR may read progress only for courses they created.
+ * - Everyone else may read only their own progress, and only for a course they
+ *   are enrolled in.
+ *
+ * Called from the controller, where the requesting user is known, so the
+ * progress services themselves stay pure and directly unit-testable.
+ */
+async function assertCourseProgressAccess(requestingUser, studentId, courseId) {
+  const role = requestingUser?.role;
+
+  if (role === 'ADMIN') return;
+
+  if (role === 'INSTRUCTOR') {
+    const course = await prisma.course.findUnique({
+      where: { id: courseId },
+      select: { creatorId: true }
+    });
+    if (!course) {
+      const error = new Error('Course not found');
+      error.statusCode = 404;
+      throw error;
+    }
+    if (course.creatorId !== requestingUser.id) {
+      const error = new Error('Forbidden: you do not own this course');
+      error.statusCode = 403;
+      throw error;
+    }
+    return;
+  }
+
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { studentId_courseId: { studentId, courseId } },
+    select: { id: true }
+  });
+
+  if (!enrollment) {
+    const error = new Error('Forbidden: you are not enrolled in this course');
+    error.statusCode = 403;
+    throw error;
+  }
+}
+
+/**
+ * Retrieves detailed, course-scoped progress for a student, including the
+ * authoritative hierarchical tree
+ * (Course -> Module -> Lesson -> Topic -> Content/Quiz/Assignment).
+ *
+ * The flat id arrays are derived from that same tree, so they are scoped to
+ * this course only and can never disagree with the hierarchy or the totals.
  */
 async function getStudentCourseProgress(studentId, courseId) {
-  const rollup = await recomputeCourseProgress(studentId, courseId);
+  const rollup = await recomputeCourseProgress(studentId, courseId, null, { includeTree: true });
+  const { hierarchy } = rollup;
 
-  const topicProgresses = await prisma.topicProgress.findMany({
-    where: { studentId }
-  });
-  const lessonProgresses = await prisma.lessonProgress.findMany({
-    where: { studentId }
-  });
-  const moduleProgresses = await prisma.moduleProgress.findMany({
-    where: { studentId }
-  });
-  const contentProgresses = await prisma.contentProgress.findMany({
-    where: { studentId }
-  });
-  const quizSubmissions = await prisma.quizSubmission.findMany({
-    where: { studentId }
-  });
-  const assignmentSubmissions = await prisma.assignmentSubmission.findMany({
-    where: { studentId, status: { in: ['Submitted', 'Graded'] } }
-  });
+  const completedContentIds = [];
+  const completedQuizIds = [];
+  const completedAssignmentIds = [];
+  const completedTopicIds = [];
+  const completedLessonIds = [];
+  const completedModuleIds = [];
+
+  const collectDirect = (entity) => {
+    entity.contents.forEach((c) => { if (c.completed) completedContentIds.push(c.id); });
+    entity.quizzes.forEach((q) => { if (q.completed) completedQuizIds.push(q.id); });
+    entity.assignments.forEach((a) => { if (a.completed) completedAssignmentIds.push(a.id); });
+  };
+
+  collectDirect(hierarchy);
+  for (const mod of hierarchy.modules) {
+    collectDirect(mod);
+    if (mod.completed) completedModuleIds.push(mod.id);
+    for (const lesson of mod.lessons) {
+      collectDirect(lesson);
+      if (lesson.completed) completedLessonIds.push(lesson.id);
+      for (const topic of lesson.topics) {
+        collectDirect(topic);
+        if (topic.completed) completedTopicIds.push(topic.id);
+      }
+    }
+  }
 
   return {
     ...rollup,
-    topicProgresses: topicProgresses.filter((tp) => tp.completed).map((tp) => tp.topicId),
-    lessonProgresses: lessonProgresses.filter((lp) => lp.completed).map((lp) => lp.lessonId),
-    moduleProgresses: moduleProgresses.filter((mp) => mp.completed).map((mp) => mp.moduleId),
-    completedContentIds: contentProgresses.filter((cp) => cp.completed).map((cp) => cp.contentId),
-    completedQuizIds: quizSubmissions.filter((qs) => qs.passed).map((qs) => qs.quizId),
-    completedAssignmentIds: assignmentSubmissions.map((as) => as.assignmentId)
+    hierarchy,
+    // Flat convenience projections, scoped to this course.
+    moduleProgresses: completedModuleIds,
+    lessonProgresses: completedLessonIds,
+    topicProgresses: completedTopicIds,
+    completedContentIds,
+    completedQuizIds,
+    completedAssignmentIds
   };
 }
 
@@ -257,6 +331,7 @@ async function getInstructorCourseProgress(courseId) {
 }
 
 module.exports = {
+  assertCourseProgressAccess,
   completeContent,
   completeLesson,
   getStudentCourseProgress,

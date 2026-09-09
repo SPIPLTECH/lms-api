@@ -39,6 +39,8 @@ model User {
   teachingGoals           TeachingGoal[]
   courseImportJobs        CourseImportJob[]
   paymentOrders           PaymentOrder[]
+
+  @@index([role])
 }
 
 model StudentProfile {
@@ -80,31 +82,31 @@ model StudentProfile {
   preferredStudyTime     PreferredStudyTime?
   technicalSkills        String[]                @default([])
 
-  updatedAt             DateTime               @updatedAt
-  certificates          Certificate[]
-  enrollments           Enrollment[]
-  quizSubmissions       QuizSubmission[]
-  reviews               Review[]
-  stickyNotes           StickyNote[]
-  notes                 Note[]
-  bookmarks             Bookmark[]
-  achievements          StudentAchievement[]
-  assignmentSubmissions AssignmentSubmission[]
-  batches               Batch[]                @relation("BatchToStudentProfile")
-  lessonQueries         LessonQuery[]
-  videoAnalytics        VideoAnalytics[]
-  studentState          StudentState[]
-  learningEvents        LearningEvent[]
-  activityState         StudentActivityState?
-  conceptMasteries      ConceptMastery[]
-  knowledgeGaps         KnowledgeGap[]
-  entryAssessments      EntryAssessment[]
-  courseStates          StudentCourseState[]
-  contentProgresses     ContentProgress[]
-  topicProgresses       TopicProgress[]
-  lessonProgresses      LessonProgress[]
-  moduleProgresses      ModuleProgress[]
-  user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  updatedAt                   DateTime                      @updatedAt
+  certificates                Certificate[]
+  enrollments                 Enrollment[]
+  quizSubmissions             QuizSubmission[]
+  reviews                     Review[]
+  stickyNotes                 StickyNote[]
+  notes                       Note[]
+  bookmarks                   Bookmark[]
+  achievements                StudentAchievement[]
+  assignmentSubmissions       AssignmentSubmission[]
+  batches                     Batch[]                       @relation("BatchToStudentProfile")
+  lessonQueries               LessonQuery[]
+  videoAnalytics              VideoAnalytics[]
+  studentState                StudentState[]
+  conceptMasteries            ConceptMastery[]
+  knowledgeGaps               KnowledgeGap[]
+  learningEvents               LearningEvent[]
+  activityState                 StudentActivityState?
+  courseStates                  StudentCourseState[]
+  entryAssessments               EntryAssessment[]
+  contentProgresses           ContentProgress[]
+  topicProgresses             TopicProgress[]
+  lessonProgresses            LessonProgress[]
+  moduleProgresses            ModuleProgress[]
+  user                        User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model TeacherProfile {
@@ -145,6 +147,7 @@ model Course {
   estimatedLearningHours Float?
   certificatesEnabled    Boolean          @default(false)
   discussionEnabled      Boolean          @default(true)
+  
   publishedAt            DateTime?
   creatorId              String
   createdAt              DateTime         @default(now())
@@ -173,6 +176,8 @@ model Course {
   store               Store?
   questions           Question[]
   paymentOrders       PaymentOrder[]
+
+  @@index([creatorId])
 }
 
 model Store {
@@ -221,6 +226,7 @@ model Lesson {
   instructorNotes InstructorLessonNote[]
   module          Module                 @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   queries         LessonQuery[]
+  
   stickyNotes     StickyNote[]
   videoAnalytics  VideoAnalytics[]
   quizzes         Quiz[]
@@ -270,6 +276,7 @@ model Content {
   lesson      Lesson?           @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   topic       Topic?            @relation(fields: [topicId], references: [id], onDelete: Cascade)
   progresses  ContentProgress[]
+  
 
   @@unique([courseId, order])
   @@unique([moduleId, order])
@@ -410,6 +417,8 @@ model PaymentOrder {
   @@index([courseId])
   @@index([status])
 }
+
+
 
 model Quiz {
   id               String           @id @default(cuid())
@@ -767,6 +776,10 @@ model CalendarEvent {
   courseName     String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+
+  @@index([courseId])
+  @@index([instructorId])
+  @@index([date])
 }
 
 model Exam {
@@ -888,7 +901,7 @@ model KnowledgeGap {
 
   type        String?
   severity    Float          @default(0)
-  status      GapStatus      @default(OPEN)
+ 
   detectedAt  DateTime       @default(now())
   closedAt    DateTime?
 
@@ -899,9 +912,9 @@ model KnowledgeGap {
   evidence    String?
   student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
-  @@index([studentId, status])
+  
   @@index([concept])
-  @@index([studentId, kc, status])
+ 
 }
 
 model VideoAnalytics {
@@ -1310,8 +1323,7 @@ model ConceptMastery {
 
   masteryScore    Float         @default(0)
   confidenceLevel Float         @default(0)
-  status          MasteryStatus @default(UNASSESSED)
-
+ 
   attemptsCount Int    @default(0)
   recentScores  Json?
   trend         String @default("STABLE")
@@ -1326,7 +1338,7 @@ model ConceptMastery {
   student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, concept])
-  @@index([studentId, status])
+ 
   @@index([nextReassessmentAt])
 }
 

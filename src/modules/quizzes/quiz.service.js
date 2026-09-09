@@ -3,6 +3,7 @@ const notificationService = require("../notifications/notification.service");
 const learnerModelService = require("../learner-model/learnerModel.service");
 const { MISCONCEPTION_TAXONOMY, isKnownMisconceptionType } = require("../learner-model/misconceptionTaxonomy.config");
 const misconceptionClassifier = require("../learner-model/misconceptionClassifier.service");
+const { getNextOrder } = require("../contents/contentOrder.util");
 
 // Tracks classifyAndApply() calls dispatched below fire-and-forget (never
 // awaited by the HTTP response, by design — see the dispatch site). Exists
@@ -258,7 +259,8 @@ const getQuizzes = async (
   courseId,
   role,
   userId,
-  batchId
+  batchId,
+  studentId
 ) => {
   const where = {};
 
@@ -267,22 +269,44 @@ const getQuizzes = async (
   } else if (role === "INSTRUCTOR") {
     // No specific course requested: scope to this instructor's own courses only.
     where.course = { creatorId: userId };
+  } else if (role === "STUDENT" && studentId) {
+    // No specific course requested: scope to courses this student is
+    // actually enrolled in — previously unscoped here (studentId was
+    // resolved by the controller but never passed through), so a student
+    // calling GET /quizzes with no courseId got every quiz in the system.
+    where.course = { enrollments: { some: { studentId } } };
   }
 
   if (batchId) {
     where.batchId = batchId;
   }
 
-  return prisma.quiz.findMany({
+  const quizzes = await prisma.quiz.findMany({
     where,
     include: {
+      course: {
+        select: { id: true, title: true }
+      },
+      quizQuestions: {
+        select: { marks: true }
+      },
       _count: {
         select: {
           quizQuestions: true
         }
       }
-    }
+    },
+    orderBy: { createdAt: "desc" }
   });
+
+  // Total marks = sum of each QuizQuestion's own marks override (not
+  // Question.marks — a question can be worth a different amount within a
+  // specific quiz). Computed here since Prisma has no relation-sum in
+  // findMany; quizQuestions itself isn't returned to callers.
+  return quizzes.map(({ quizQuestions, ...quiz }) => ({
+    ...quiz,
+    totalMarks: quizQuestions.reduce((sum, q) => sum + q.marks, 0)
+  }));
 };
 
 const getQuizById = async (
@@ -408,12 +432,35 @@ const validateQuizScope = async ({ batchId, courseId, moduleId, lessonId, topicI
   }
 };
 
+const QUIZ_PARENT_PRECEDENCE = ["topicId", "lessonId", "moduleId", "courseId"];
+
+/** Most-specific non-null parent field on a quiz payload — courseId is
+ * always present (schema-required), so this always resolves. Matches the
+ * topic > lesson > module > course precedence this codebase already uses
+ * elsewhere (validateQuizScope's nesting checks, the frontend's
+ * isTopicQuiz/isLessonQuiz labeling). */
+const resolveQuizParentField = (data) => QUIZ_PARENT_PRECEDENCE.find((f) => data[f]);
+
 const createQuiz = async (
   data
 ) => {
   await validateQuizScope(data);
 
   const { questions, ...quizData } = data;
+
+  const orderField = resolveQuizParentField(quizData);
+  if (quizData.order === undefined || quizData.order === null) {
+    quizData.order = await getNextOrder(orderField, quizData[orderField]);
+  } else {
+    quizData.order = Number(quizData.order);
+    const [collidingContent, collidingQuiz] = await Promise.all([
+      prisma.content.findFirst({ where: { [orderField]: quizData[orderField], order: quizData.order }, select: { id: true } }),
+      prisma.quiz.findFirst({ where: { [orderField]: quizData[orderField], order: quizData.order }, select: { id: true } }),
+    ]);
+    if (collidingContent || collidingQuiz) {
+      quizData.order = await getNextOrder(orderField, quizData[orderField]);
+    }
+  }
 
   const quiz = await prisma.quiz.create({
     data: {
@@ -938,6 +985,29 @@ const generateSelfAssessmentQuiz = async (courseId, questionCount = 5) => {
   });
 };
 
+// Two-phase reorder: the same @@unique([...parentId, order]) partial index
+// that content rows sit under rejects a naive parallel swap (A->2 while B
+// still holds 2), so first move every row to a disjoint negative
+// placeholder, then to its final order. Mirrors content.service.js's
+// reorderContents exactly.
+const reorderQuizzes = async (quizzes) => {
+  const offsetUpdates = quizzes.map((quiz, index) =>
+    prisma.quiz.update({
+      where: { id: quiz.id },
+      data: { order: -1000 - index }
+    })
+  );
+
+  const finalUpdates = quizzes.map((quiz) =>
+    prisma.quiz.update({
+      where: { id: quiz.id },
+      data: { order: quiz.order }
+    })
+  );
+
+  return prisma.$transaction([...offsetUpdates, ...finalUpdates]);
+};
+
 module.exports = {
   evaluateAnswer,
   resolveMisconceptionTag,
@@ -951,5 +1021,6 @@ module.exports = {
   getQuizResult,
   getBatchQuizzes,
   generateSelfAssessmentQuiz,
-  flushPendingMisconceptionClassifications
+  flushPendingMisconceptionClassifications,
+  reorderQuizzes
 };

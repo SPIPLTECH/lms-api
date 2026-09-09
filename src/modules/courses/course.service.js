@@ -252,6 +252,7 @@ const getCourses = async (
     category,
     level,
     sortBy = "newest",
+    scope,
   } = {}
 ) => {
   const where = {};
@@ -299,7 +300,7 @@ const getCourses = async (
   if (role === "ADMIN") {
     query.include = commonInclude;
     if (status) where.status = status;
-  } else if (role === "INSTRUCTOR") {
+  } else if (role === "INSTRUCTOR" && scope !== "all") {
     where.creatorId = userId;
     query.include = commonInclude;
     if (status) where.status = status;
@@ -319,19 +320,60 @@ const getCourses = async (
   return { courses: await attachCourseStats(courses), total };
 };
 
-/** Real status-breakdown counts for the instructor's own courses (used by the My Courses summary cards). */
+/**
+ * Summary counts for the instructor's own courses.
+ *
+ * Backs both the My Courses summary cards and the instructor dashboard's KPI
+ * strip. Every value here is computed by the database and returns a single
+ * number — nothing loads a list in order to take its `.length`.
+ *
+ * `students` is a COUNT(DISTINCT) rather than a groupBy/findMany, because a
+ * groupBy would still return one row per student (248 rows to display "248").
+ * Prisma has no first-class distinct-count, so this is the one place raw SQL
+ * is the right tool; the instructor id is parameterised, never interpolated.
+ */
 const getCourseStatusCounts = async (instructorId) => {
-  const [total, published, draft, archived] = await Promise.all([
-    prisma.course.count({ where: { creatorId: instructorId } }),
-    prisma.course.count({ where: { creatorId: instructorId, status: "PUBLISHED" } }),
-    prisma.course.count({ where: { creatorId: instructorId, status: "DRAFT" } }),
-    prisma.course.count({ where: { creatorId: instructorId, status: "ARCHIVED" } }),
-  ]);
+  const [total, published, draft, archived, activeQuizzes, studentRows] =
+    await Promise.all([
+      prisma.course.count({ where: { creatorId: instructorId } }),
+      prisma.course.count({ where: { creatorId: instructorId, status: "PUBLISHED" } }),
+      prisma.course.count({ where: { creatorId: instructorId, status: "DRAFT" } }),
+      prisma.course.count({ where: { creatorId: instructorId, status: "ARCHIVED" } }),
+      prisma.quiz.count({
+        where: { isPublished: true, course: { creatorId: instructorId } },
+      }),
+      prisma.$queryRaw`
+        SELECT COUNT(DISTINCT e."studentId")::int AS count
+        FROM "Enrollment" e
+        JOIN "Course" c ON c."id" = e."courseId"
+        WHERE c."creatorId" = ${instructorId}
+      `,
+    ]);
 
-  return { total, published, draft, archived };
+  return {
+    total,
+    published,
+    draft,
+    archived,
+    activeQuizzes,
+    students: Number(studentRows?.[0]?.count ?? 0),
+  };
 };
 
-const getCourseById = async (courseId, role, userId) => {
+/**
+ * @param {object}  [options]
+ * @param {boolean} [options.includeModules=true]
+ *   When false, the `modules` relation (modules -> lessons -> topics ->
+ *   contents, plus quizzes -> quizQuestions -> question at four levels) is
+ *   omitted and only course-level data is returned.
+ *
+ *   Defaults to true so every existing caller keeps its current payload.
+ *   Callers that only render course metadata — the breadcrumb in
+ *   DashboardNavbar, the course-overview header, the edit form — opt out and
+ *   avoid transferring every content cell body and every quiz answer key.
+ */
+const getCourseById = async (courseId, role, userId, options = {}) => {
+  const { includeModules = true } = options;
   const isStudentOrGuest = role === "STUDENT" || role === "GUEST";
 
   // If role is STUDENT, check if student holds an active enrollment
@@ -382,42 +424,30 @@ const getCourseById = async (courseId, role, userId) => {
         },
       },
 
-      contents: {
-        where: { moduleId: null, lessonId: null, topicId: null },
-        orderBy: { order: "asc" }
-      },
-      quizzes: {
-        where: {
-          moduleId: null,
-          lessonId: null,
-          topicId: null,
-          ...(isStudentOrGuest ? { isPublished: true } : {})
-        }
-      },
-      assignments: {
-        where: {
-          moduleId: null,
-          lessonId: null,
-          topicId: null,
-          ...(isStudentOrGuest ? { isPublished: true } : {})
-        }
-      },
+      // The deep tree. Omitted entirely when includeModules is false so
+      // metadata-only callers don't transfer every content cell and quiz answer.
+      ...(includeModules ? {
       modules: {
         where: isStudentOrGuest ? { isPublished: true } : undefined,
         orderBy: {
           order: "asc"
         },
         include: {
+          // Direct (module-level) learning items. These are counted by the
+          // Progress roll-up, so the learning tree has to return them too or a
+          // student can never complete what their progress bar is waiting on.
           contents: {
             where: { lessonId: null, topicId: null },
             orderBy: { order: "asc" }
           },
+          assignments: {
+            where: isStudentOrGuest
+              ? { isPublished: true, lessonId: null, topicId: null }
+              : { lessonId: null, topicId: null }
+          },
           quizzes: {
-            where: {
-              lessonId: null,
-              topicId: null,
-              ...(isStudentOrGuest ? { isPublished: true } : {})
-            },
+            where: isStudentOrGuest ? { isPublished: true } : undefined,
+            orderBy: { order: "asc" },
             include: {
               quizQuestions: {
                 orderBy: { order: "asc" },
@@ -440,28 +470,25 @@ const getCourseById = async (courseId, role, userId) => {
               }
             }
           },
-          assignments: {
-            where: {
-              lessonId: null,
-              topicId: null,
-              ...(isStudentOrGuest ? { isPublished: true } : {})
-            }
-          },
           lessons: {
             where: isStudentOrGuest ? { isPublished: true } : undefined,
             orderBy: {
               order: "asc"
             },
             include: {
+              // Direct (lesson-level) learning items counted by Progress.
               contents: {
                 where: { topicId: null },
                 orderBy: { order: "asc" }
               },
+              assignments: {
+                where: isStudentOrGuest
+                  ? { isPublished: true, topicId: null }
+                  : { topicId: null }
+              },
               quizzes: {
-                where: {
-                  topicId: null,
-                  ...(isStudentOrGuest ? { isPublished: true } : {})
-                },
+                where: isStudentOrGuest ? { isPublished: true } : undefined,
+                orderBy: { order: "asc" },
                 include: {
                   quizQuestions: {
                     orderBy: { order: "asc" },
@@ -484,12 +511,6 @@ const getCourseById = async (courseId, role, userId) => {
                   }
                 }
               },
-              assignments: {
-                where: {
-                  topicId: null,
-                  ...(isStudentOrGuest ? { isPublished: true } : {})
-                }
-              },
               topics: {
                 where: isStudentOrGuest ? { isPublished: true } : undefined,
                 orderBy: {
@@ -498,6 +519,7 @@ const getCourseById = async (courseId, role, userId) => {
                 include: {
                   quizzes: {
                     where: isStudentOrGuest ? { isPublished: true } : undefined,
+                    orderBy: { order: "asc" },
                     include: {
                       quizQuestions: {
                         orderBy: { order: "asc" },
@@ -520,13 +542,14 @@ const getCourseById = async (courseId, role, userId) => {
                       }
                     }
                   },
-                  assignments: {
-                    where: isStudentOrGuest ? { isPublished: true } : undefined
-                  },
                   contents: {
                     orderBy: {
                       order: "asc"
                     }
+                  },
+                  // Topic-level assignments counted by Progress.
+                  assignments: {
+                    where: isStudentOrGuest ? { isPublished: true } : undefined
                   },
                   _count: {
                     select: { contents: true }
@@ -537,8 +560,11 @@ const getCourseById = async (courseId, role, userId) => {
           }
         }
       },
+      } : {}),
 
       quizzes: {
+        where: isStudentOrGuest ? { isPublished: true } : undefined,
+        orderBy: { order: "asc" },
         include: {
           quizQuestions: {
             orderBy: {
@@ -564,6 +590,19 @@ const getCourseById = async (courseId, role, userId) => {
             }
           }
         }
+      },
+      // Direct (course-level) learning items counted by Progress. Content
+      // carries exactly one parent id, so this relation yields only the
+      // course-direct rows; the explicit nulls keep it aligned with the
+      // roll-up's filter if that ever changes.
+      contents: {
+        where: { moduleId: null, lessonId: null, topicId: null },
+        orderBy: { order: "asc" }
+      },
+      assignments: {
+        where: isStudentOrGuest
+          ? { isPublished: true, moduleId: null, lessonId: null, topicId: null }
+          : { moduleId: null, lessonId: null, topicId: null }
       },
       enrollments: true
     }
@@ -996,6 +1035,7 @@ const duplicateCourse = async (courseId, instructorId) => {
         tags: source.tags,
         certificatesEnabled: source.certificatesEnabled,
         discussionEnabled: source.discussionEnabled,
+        
         estimatedLearningHours: source.estimatedLearningHours
       }
     });
@@ -1276,4 +1316,4 @@ module.exports = {
   getCourseStudents,
   getCourseStatusCounts,
   exportCourse
-};
+};

@@ -82,8 +82,8 @@ const getStudents = async (user) => {
     const firstEnrollment = relevantEnrollments[0];
     const courseTitle = firstEnrollment?.course?.title || "General Course";
 
-    const totalSubmissions = relevantAssignmentSubmissions.length;
-    const gradedSubmissions = relevantAssignmentSubmissions.filter((a) => a.status === "Graded" || a.grade).length;
+    const totalSubmissions = student.assignmentSubmissions.length;
+    const gradedSubmissions = student.assignmentSubmissions.filter((a) => a.status === "Graded" || a.grade).length;
     const assignmentRate = totalSubmissions > 0
       ? Math.round((gradedSubmissions / totalSubmissions) * 100)
       : 0;
@@ -118,7 +118,7 @@ const getStudents = async (user) => {
           year: "numeric",
         }),
       })),
-      certificates: relevantCertificates.map((c) => ({
+      certificates: student.certificates.map((c) => ({
         id: c.id,
         title: c.course?.title || "Certificate of Completion",
         date: new Date(c.issuedAt).toLocaleDateString("en-US", {

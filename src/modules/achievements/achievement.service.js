@@ -112,10 +112,8 @@ const checkAndAwardAchievements = async (studentId) => {
       : 0;
 
   // Define rules: maps achievement name patterns to unlock conditions.
-  // "Quick Learner"/"First Step" (lesson-completion-based) were removed
-  // along with the Progress module -- lesson completion is no longer
-  // tracked anywhere in the schema, so those achievements can never be
-  // computed again and are intentionally absent from this rule set.
+  // "Quick Learner" and "First Step" (lesson-completion based) were removed
+  // along with lesson-progress tracking -- no signal remains for them.
   const rules = {
     "Quiz Master": avgScore >= 90 && quizSubmissions.length >= 5,
     "Note Taker": notes >= 10,
