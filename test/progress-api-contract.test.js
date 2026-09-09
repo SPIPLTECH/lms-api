@@ -166,8 +166,8 @@ test("Progress API contract: hierarchy, empty entities, and access control", asy
     );
     const h = data.hierarchy;
 
-    // 4 contents + 4 quizzes + 4 published assignments = 12 applicable items.
-    assert.strictEqual(data.totalItems, 12, "Unpublished assignment must be excluded");
+    // 3 direct items + 1 applicable module = 4 immediate units.
+    assert.strictEqual(data.totalItems, 4, "Course totalItems counts direct items + immediate child modules");
 
     assert.strictEqual(h.contents.length, 1, "Course direct content");
     assert.strictEqual(h.quizzes.length, 1, "Course direct quiz");
@@ -192,11 +192,14 @@ test("Progress API contract: hierarchy, empty entities, and access control", asy
       "Topic assignment; the unpublished one must not appear"
     );
 
-    // Item states are present and start uncompleted.
+    // Item states are present and start uncompleted and unvisited.
     assert.strictEqual(tp.contents[0].completed, false);
+    assert.strictEqual(tp.contents[0].visited, false);
     assert.strictEqual(tp.quizzes[0].completed, false);
+    assert.strictEqual(tp.quizzes[0].visited, false);
     assert.strictEqual(tp.quizzes[0].attempted, false);
     assert.strictEqual(tp.assignments[0].completed, false);
+    assert.strictEqual(tp.assignments[0].visited, false);
     assert.strictEqual(tp.assignments[0].submissionStatus, "NotSubmitted");
   });
 
@@ -227,9 +230,9 @@ test("Progress API contract: hierarchy, empty entities, and access control", asy
 
     assert.strictEqual(tp.completedItems, 1, "Topic counts its own completed content");
     assert.strictEqual(tp.completed, false, "Topic still has an open quiz and assignment");
-    assert.strictEqual(l.completedItems, 1, "Lesson aggregate includes topic items");
-    assert.strictEqual(m.completedItems, 1, "Module aggregate includes lesson items");
-    assert.strictEqual(data.completedItems, 1);
+    assert.strictEqual(l.completedItems, 0, "Lesson completedItems counts completed direct items + completed topics (topic incomplete)");
+    assert.strictEqual(m.completedItems, 0, "Module completedItems counts completed direct items + completed lessons (lesson incomplete)");
+    assert.strictEqual(data.completedItems, 0, "Course completedItems counts completed direct items + completed modules (module incomplete)");
 
     assert.deepStrictEqual(
       data.completedContentIds,

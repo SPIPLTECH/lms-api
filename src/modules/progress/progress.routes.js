@@ -6,7 +6,7 @@ const verifyToken = require('../../middleware/auth.middleware');
 const checkRole = require('../../middleware/role.middleware');
 const validate = require('../../middleware/joiValidation.middleware');
 const verifyCourseOwnership = require('../../middleware/courseOwnership.middleware');
-const { completeContentSchema, completeLessonSchema } = require('./progress.validation');
+const { completeContentSchema, completeLessonSchema, markVisitedSchema } = require('./progress.validation');
 
 router.use(verifyToken);
 
@@ -29,6 +29,12 @@ router.post(
   '/complete',
   validate(completeLessonSchema),
   progressController.markLessonComplete
+);
+
+router.post(
+  '/visit',
+  validate(markVisitedSchema),
+  progressController.markVisited
 );
 
 router.get('/courses/:courseId', progressController.getCourseProgress);

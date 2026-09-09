@@ -694,6 +694,30 @@ const submitQuiz = async (studentId, quizId, answers = []) => {
     }
   });
 
+  // Synchronize QuizProgress when quiz is passed authoritatively
+  if (result.passed) {
+    try {
+      const existingQp = await prisma.quizProgress.findUnique({
+        where: { studentId_quizId: { studentId, quizId } }
+      });
+      await prisma.quizProgress.upsert({
+        where: { studentId_quizId: { studentId, quizId } },
+        create: {
+          studentId,
+          quizId,
+          completed: true,
+          completedAt: new Date()
+        },
+        update: {
+          completed: true,
+          completedAt: existingQp?.completedAt || new Date()
+        }
+      });
+    } catch (qpErr) {
+      console.error("QuizProgress sync failed after quiz submission:", qpErr);
+    }
+  }
+
   // Recompute course progress after quiz submission
   try {
     const { recomputeCourseProgress } = require("../../utils/progressRollup");
