@@ -48,6 +48,7 @@ const conversationRoutes = require("./modules/conversations/conversation.routes"
 const messageRoutes = require("./modules/messages/message.routes");
 const landingRoutes = require("./modules/landing/landing.routes");
 const courseImportRoutes = require("./modules/course-import/routes");
+const progressRoutes = require("./modules/progress/progress.routes");
 const app = express();
 app.disable('etag');
 
@@ -147,6 +148,8 @@ app.use("/upcoming-tasks", upcomingTasksRoutes);
 // app.use("/student-state", entryAssessment.courseStateRouter);
 app.use("/course-import", courseImportRoutes);
 app.use("/api/ai", courseImportRoutes);
+app.use("/progress", progressRoutes);
+app.use("/api/v1/progress", progressRoutes);
 app.use(
   "/learner-model",
   require("./modules/learner-model/learnerModel.routes")

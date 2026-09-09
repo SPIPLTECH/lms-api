@@ -9,7 +9,10 @@ const attachmentSchema = Joi.object({
 const createAssignmentSchema = Joi.object({
   title: Joi.string().required(),
   description: Joi.string().optional().allow(null, ""),
-  courseId: Joi.string().required(),
+  courseId: Joi.string().optional(),
+  moduleId: Joi.string().optional(),
+  lessonId: Joi.string().optional(),
+  topicId: Joi.string().optional(),
   dueDate: Joi.date().iso().required(),
   startDate: Joi.date().iso().optional().allow(null),
   availableFrom: Joi.date().iso().optional().allow(null),
@@ -22,7 +25,12 @@ const createAssignmentSchema = Joi.object({
   attachments: Joi.array().items(attachmentSchema).optional(),
   isPublished: Joi.boolean().optional(),
   status: Joi.string().optional().allow(null, "")
-});
+})
+  .xor("courseId", "moduleId", "lessonId", "topicId")
+  .messages({
+    "object.missing": "Assignment must be attached to exactly one of course, module, lesson, or topic.",
+    "object.xor": "Assignment must be attached to exactly one of course, module, lesson, or topic.",
+  });
 
 const updateAssignmentSchema = Joi.object({
   title: Joi.string().optional(),

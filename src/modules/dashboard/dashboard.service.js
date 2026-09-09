@@ -257,7 +257,6 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     quizSubmissionGroups,
     quizSubmissionsThisWeek,
     reviewGroups,
-    inactiveStudentsCount,
     pendingFeedbackCount
   ] = await Promise.all([
     // All enrollments for this instructor's own courses (bounded, not platform-wide)
@@ -339,12 +338,9 @@ const getInstructorDashboard = async (instructorId, courseId) => {
   const courseModuleCount = new Map(moduleGroups.map(g => [g.courseId, g._count._all]));
 
   const courseLessonCount = new Map();
-  const lessonsByCourse = new Map();
   for (const l of lessons) {
     const cid = l.module.courseId;
     courseLessonCount.set(cid, (courseLessonCount.get(cid) || 0) + 1);
-    if (!lessonsByCourse.has(cid)) lessonsByCourse.set(cid, []);
-    lessonsByCourse.get(cid).push(l);
   }
 
   const courseEnrollments = new Map();
@@ -529,7 +525,7 @@ const getInstructorDashboard = async (instructorId, courseId) => {
 
   const draftCoursesCount = targetCourses.filter(c => c.status === 'DRAFT').length;
   priorities.push({
-    id: 3,
+    id: 2,
     icon: 'CheckCircle2',
     color: draftCoursesCount > 0 ? 'blue' : 'green',
     value: String(draftCoursesCount),
@@ -596,7 +592,11 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     });
   }
 
-  // 11. Course Performance (All Courses Table)
+  // 11. Course Performance (All Courses Table). Health/trend are based on
+  // the quiz-average signal only -- the completion-rate signal they used to
+  // blend with was removed along with the Progress module, and per Rule 4
+  // (no fake replacements) a course with no quiz submissions genuinely has
+  // no signal, so it reports "No Data" rather than a fabricated health.
   const coursePerformance = instructorCourses.map(course => {
     const cid = course.id;
     const enrolledCount = (courseEnrollments.get(cid) || []).length;
@@ -632,15 +632,6 @@ const getInstructorDashboard = async (instructorId, courseId) => {
 
   // 13. Recommended Actions
   const recommendedActions = [
-    {
-      id: 1,
-      title: 'Review Student Progress',
-      description: inactiveStudentsCount > 0 
-        ? `${inactiveStudentsCount} students have shown no learning activity in 5 days.`
-        : 'All students are showing active progress.',
-      priority: inactiveStudentsCount > 5 ? 'Critical' : inactiveStudentsCount > 0 ? 'Needs Review' : 'Good',
-      action: 'Send Message',
-    },
     {
       id: 2,
       title: 'Audit Quiz Performance',

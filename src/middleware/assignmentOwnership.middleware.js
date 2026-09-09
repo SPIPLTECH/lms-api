@@ -4,10 +4,27 @@ const { buildOwnershipCheck } = require("./ownership.middleware");
 const findAssignmentById = (id) =>
   prisma.assignment.findUnique({
     where: { id },
-    include: { course: { select: { creatorId: true } } },
+    include: {
+      course: { select: { creatorId: true } },
+      module: { include: { course: { select: { creatorId: true } } } },
+      lesson: { include: { module: { include: { course: { select: { creatorId: true } } } } } },
+      topic: {
+        include: {
+          lesson: {
+            include: {
+              module: { include: { course: { select: { creatorId: true } } } },
+            },
+          },
+        },
+      },
+    },
   });
 
-const getCourseCreatorId = (assignment) => assignment.course?.creatorId;
+const getCourseCreatorId = (assignment) =>
+  assignment.course?.creatorId ??
+  assignment.module?.course?.creatorId ??
+  assignment.lesson?.module?.course?.creatorId ??
+  assignment.topic?.lesson?.module?.course?.creatorId;
 
 /**
  * Verifies the caller owns the course behind req.params.assignmentId.

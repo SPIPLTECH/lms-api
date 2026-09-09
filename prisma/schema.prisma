@@ -102,6 +102,10 @@ model StudentProfile {
   activityState                 StudentActivityState?
   courseStates                  StudentCourseState[]
   entryAssessments               EntryAssessment[]
+  contentProgresses           ContentProgress[]
+  topicProgresses             TopicProgress[]
+  lessonProgresses            LessonProgress[]
+  moduleProgresses            ModuleProgress[]
   user                        User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -189,19 +193,21 @@ model Store {
 }
 
 model Module {
-  id          String     @id @default(cuid())
+  id          String           @id @default(cuid())
   title       String
   description String?
   order       Int
-  isPublished Boolean    @default(false)
+  isPublished Boolean          @default(false)
   courseId    String
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
   lessons     Lesson[]
   contents    Content[]
-  course      Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  course      Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
   questions   Question[]
   quizzes     Quiz[]
+  assignments Assignment[]
+  progresses  ModuleProgress[]
 
   @@unique([courseId, order])
 }
@@ -224,22 +230,26 @@ model Lesson {
   stickyNotes     StickyNote[]
   videoAnalytics  VideoAnalytics[]
   quizzes         Quiz[]
+  assignments     Assignment[]
+  progresses      LessonProgress[]
 
   @@unique([moduleId, order])
 }
 
 model Topic {
-  id          String   @id @default(cuid())
+  id          String          @id @default(cuid())
   title       String
   description String?
   order       Int
-  isPublished Boolean  @default(false)
+  isPublished Boolean         @default(false)
   lessonId    String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
   contents    Content[]
-  lesson      Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  lesson      Lesson          @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   quizzes     Quiz[]
+  assignments Assignment[]
+  progresses  TopicProgress[]
 
   @@unique([lessonId, order])
 }
@@ -265,6 +275,7 @@ model Content {
   module      Module?           @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   lesson      Lesson?           @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   topic       Topic?            @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  progresses  ContentProgress[]
   
 
   @@unique([courseId, order])
@@ -308,15 +319,82 @@ model StickyNote {
 }
 
 model Enrollment {
-  id             String         @id @default(cuid())
-  courseId       String
-  enrolledAt     DateTime       @default(now())
-  lastAccessedAt DateTime?
-  studentId      String
-  course         Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  student        StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  id              String         @id @default(cuid())
+  courseId        String
+  enrolledAt      DateTime       @default(now())
+  lastAccessedAt  DateTime?
+  completed       Boolean        @default(false)
+  completedAt     DateTime?
+  progressPercent Int            @default(0)
+  studentId       String
+  course          Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  student         StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, courseId])
+}
+
+model ContentProgress {
+  id          String         @id @default(cuid())
+  studentId   String
+  contentId   String
+  completed   Boolean        @default(false)
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  content     Content        @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, contentId])
+  @@index([studentId])
+  @@index([contentId])
+}
+
+model TopicProgress {
+  id          String         @id @default(cuid())
+  studentId   String
+  topicId     String
+  completed   Boolean        @default(false)
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  topic       Topic          @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, topicId])
+  @@index([studentId])
+  @@index([topicId])
+}
+
+model LessonProgress {
+  id          String         @id @default(cuid())
+  studentId   String
+  lessonId    String
+  completed   Boolean        @default(false)
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lesson      Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, lessonId])
+  @@index([studentId])
+  @@index([lessonId])
+}
+
+model ModuleProgress {
+  id          String         @id @default(cuid())
+  studentId   String
+  moduleId    String
+  completed   Boolean        @default(false)
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  module      Module         @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, moduleId])
+  @@index([studentId])
+  @@index([moduleId])
 }
 
 model PaymentOrder {
@@ -650,13 +728,22 @@ model Assignment {
   attachments    Json?
   isPublished    Boolean                @default(true)
   status         String?                @default("ACTIVE")
-  courseId       String
+  courseId       String?
+  moduleId       String?
+  lessonId       String?
+  topicId        String?
   createdAt      DateTime               @default(now())
   updatedAt      DateTime               @updatedAt
-  course         Course                 @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  course         Course?                @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  module         Module?                @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  lesson         Lesson?                @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  topic          Topic?                 @relation(fields: [topicId], references: [id], onDelete: Cascade)
   submissions    AssignmentSubmission[]
 
   @@index([courseId])
+  @@index([moduleId])
+  @@index([lessonId])
+  @@index([topicId])
 }
 
 model AssignmentSubmission {
@@ -815,7 +902,7 @@ model KnowledgeGap {
 
   type        String?
   severity    Float          @default(0)
- 
+  status      GapStatus      @default(OPEN)
   detectedAt  DateTime       @default(now())
   closedAt    DateTime?
 
@@ -826,9 +913,9 @@ model KnowledgeGap {
   evidence    String?
   student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
-  
+  @@index([studentId, status])
   @@index([concept])
- 
+  @@index([studentId, kc, status])
 }
 
 model VideoAnalytics {
@@ -1244,7 +1331,8 @@ model ConceptMastery {
 
   masteryScore    Float         @default(0)
   confidenceLevel Float         @default(0)
- 
+  status          MasteryStatus @default(UNASSESSED)
+
   attemptsCount Int    @default(0)
   recentScores  Json?
   trend         String @default("STABLE")
@@ -1259,7 +1347,7 @@ model ConceptMastery {
   student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, concept])
- 
+  @@index([studentId, status])
   @@index([nextReassessmentAt])
 }
 
@@ -1340,4 +1428,16 @@ enum CourseImportStatus {
   IMPORTING
   COMPLETED
   FAILED
+}
+
+enum MasteryStatus {
+  UNASSESSED
+  WEAK
+  DEVELOPING
+  MASTERED
+}
+
+enum GapStatus {
+  OPEN
+  CLOSED
 }

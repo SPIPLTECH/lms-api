@@ -433,7 +433,20 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
           order: "asc"
         },
         include: {
+          // Direct (module-level) learning items. These are counted by the
+          // Progress roll-up, so the learning tree has to return them too or a
+          // student can never complete what their progress bar is waiting on.
+          contents: {
+            where: { lessonId: null, topicId: null },
+            orderBy: { order: "asc" }
+          },
+          assignments: {
+            where: isStudentOrGuest
+              ? { isPublished: true, lessonId: null, topicId: null }
+              : { lessonId: null, topicId: null }
+          },
           quizzes: {
+            where: isStudentOrGuest ? { isPublished: true } : undefined,
             orderBy: { order: "asc" },
             include: {
               quizQuestions: {
@@ -463,7 +476,18 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
               order: "asc"
             },
             include: {
+              // Direct (lesson-level) learning items counted by Progress.
+              contents: {
+                where: { topicId: null },
+                orderBy: { order: "asc" }
+              },
+              assignments: {
+                where: isStudentOrGuest
+                  ? { isPublished: true, topicId: null }
+                  : { topicId: null }
+              },
               quizzes: {
+                where: isStudentOrGuest ? { isPublished: true } : undefined,
                 orderBy: { order: "asc" },
                 include: {
                   quizQuestions: {
@@ -494,6 +518,7 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
                 },
                 include: {
                   quizzes: {
+                    where: isStudentOrGuest ? { isPublished: true } : undefined,
                     orderBy: { order: "asc" },
                     include: {
                       quizQuestions: {
@@ -522,6 +547,10 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
                       order: "asc"
                     }
                   },
+                  // Topic-level assignments counted by Progress.
+                  assignments: {
+                    where: isStudentOrGuest ? { isPublished: true } : undefined
+                  },
                   _count: {
                     select: { contents: true }
                   }
@@ -534,6 +563,7 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
       } : {}),
 
       quizzes: {
+        where: isStudentOrGuest ? { isPublished: true } : undefined,
         orderBy: { order: "asc" },
         include: {
           quizQuestions: {
@@ -560,6 +590,19 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
             }
           }
         }
+      },
+      // Direct (course-level) learning items counted by Progress. Content
+      // carries exactly one parent id, so this relation yields only the
+      // course-direct rows; the explicit nulls keep it aligned with the
+      // roll-up's filter if that ever changes.
+      contents: {
+        where: { moduleId: null, lessonId: null, topicId: null },
+        orderBy: { order: "asc" }
+      },
+      assignments: {
+        where: isStudentOrGuest
+          ? { isPublished: true, moduleId: null, lessonId: null, topicId: null }
+          : { moduleId: null, lessonId: null, topicId: null }
       },
       enrollments: true
     }

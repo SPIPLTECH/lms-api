@@ -7,16 +7,18 @@ const getStudents = async (user) => {
     },
   };
 
+  let instructorCourseIds = null;
+
   if (user && user.role === "INSTRUCTOR") {
     const instructorCourses = await prisma.course.findMany({
       where: { creatorId: user.id },
       select: { id: true },
     });
-    const courseIds = instructorCourses.map((c) => c.id);
+    instructorCourseIds = instructorCourses.map((c) => c.id);
 
     whereClause.enrollments = {
       some: {
-        courseId: { in: courseIds },
+        courseId: { in: instructorCourseIds },
       },
     };
   }
@@ -47,7 +49,7 @@ const getStudents = async (user) => {
       assignmentSubmissions: {
         include: {
           assignment: {
-            select: { id: true, title: true, dueDate: true },
+            select: { id: true, title: true, dueDate: true, courseId: true },
           },
         },
       },
@@ -62,7 +64,22 @@ const getStudents = async (user) => {
   });
 
   return students.map((student) => {
-    const firstEnrollment = student.enrollments[0];
+    // Scope this student's per-course data (enrollments, assignments,
+    // certificates) to the requesting instructor's own courses, since a
+    // student may also be enrolled in other instructors' courses and the
+    // whereClause.enrollments filter only guarantees SOME overlap, not that
+    // every relation below belongs to this instructor.
+    const relevantEnrollments = instructorCourseIds
+      ? student.enrollments.filter((e) => instructorCourseIds.includes(e.courseId))
+      : student.enrollments;
+    const relevantAssignmentSubmissions = instructorCourseIds
+      ? student.assignmentSubmissions.filter((a) => instructorCourseIds.includes(a.assignment?.courseId))
+      : student.assignmentSubmissions;
+    const relevantCertificates = instructorCourseIds
+      ? student.certificates.filter((c) => instructorCourseIds.includes(c.courseId))
+      : student.certificates;
+
+    const firstEnrollment = relevantEnrollments[0];
     const courseTitle = firstEnrollment?.course?.title || "General Course";
 
     const totalSubmissions = student.assignmentSubmissions.length;
@@ -89,7 +106,7 @@ const getStudents = async (user) => {
       // null rather than a fabricated number - frontend should render "N/A".
       attendanceRate: null,
       joinedDate: joinedDateStr,
-      assignments: student.assignmentSubmissions.map((as) => ({
+      assignments: relevantAssignmentSubmissions.map((as) => ({
         id: as.id,
         title: as.assignment?.title || "Assignment",
         status: as.status || "Submitted",
