@@ -33,7 +33,14 @@ const getEnrollments = async (
         select: {
           id: true,
           title: true,
-          description: true
+          description: true,
+          thumbnailUrl: true,
+          creator: { select: { name: true } },
+          modules: {
+            select: {
+              lessons: { select: { id: true } }
+            }
+          }
         }
       }
     }
@@ -130,17 +137,25 @@ const updateLastAccessed = async (
   studentId,
   courseId
 ) => {
-  return await prisma.enrollment.update({
-    where: {
-      studentId_courseId: {
-        studentId,
-        courseId
+  if (!studentId || !courseId) return null;
+  try {
+    return await prisma.enrollment.update({
+      where: {
+        studentId_courseId: {
+          studentId,
+          courseId
+        }
+      },
+      data: {
+        lastAccessedAt: new Date()
       }
-    },
-    data: {
-      lastAccessedAt: new Date()
+    });
+  } catch (error) {
+    if (error.code === "P2025") {
+      return null;
     }
-  });
+    throw error;
+  }
 };
 
 module.exports = {

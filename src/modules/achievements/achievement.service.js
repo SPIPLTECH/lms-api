@@ -92,14 +92,12 @@ const awardAchievement = async (studentId, achievementId) => {
  */
 const checkAndAwardAchievements = async (studentId) => {
   const [
-    completedLessons,
     completedCourses,
     quizSubmissions,
     notes,
     alreadyEarned,
     allAchievements,
   ] = await Promise.all([
-    prisma.progress.count({ where: { studentId, completed: true } }),
     prisma.enrollment.count({ where: { studentId } }),
     prisma.quizSubmission.findMany({ where: { studentId } }),
     prisma.note.count({ where: { studentId } }),
@@ -113,13 +111,13 @@ const checkAndAwardAchievements = async (studentId) => {
       ? Math.round(quizSubmissions.reduce((s, q) => s + q.percentage, 0) / quizSubmissions.length)
       : 0;
 
-  // Define rules: maps achievement name patterns to unlock conditions
+  // Define rules: maps achievement name patterns to unlock conditions.
+  // "Quick Learner" and "First Step" (lesson-completion based) were removed
+  // along with lesson-progress tracking -- no signal remains for them.
   const rules = {
-    "Quick Learner": completedLessons >= 5,
     "Quiz Master": avgScore >= 90 && quizSubmissions.length >= 5,
     "Note Taker": notes >= 10,
     "Knowledge Seeker": completedCourses >= 10,
-    "First Step": completedLessons >= 1,
     "Course Champion": completedCourses >= 1,
   };
 

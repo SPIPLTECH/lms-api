@@ -1,341 +1,505 @@
-const prisma = require("../../config/database");
-const notificationService = require("../notifications/notification.service");
-const ApiError = require("../../utils/ApiError");
-const { buildLessonLockMap, getPublishedLessonIds } = require("../../utils/dripAccess");
-let publishEvent = null;
-let EVENT_TYPES = {
-  LESSON_COMPLETED: "LESSON_COMPLETED",
-  COURSE_COMPLETED: "COURSE_COMPLETED",
-};
+const prisma = require('../../config/database');
+const { recomputeCourseProgress, ensureProgressInitialized } = require('../../utils/progressRollup');
 
-try {
-  const obs = require("../observation");
-  if (obs.publishEvent) publishEvent = obs.publishEvent;
-  if (obs.EVENT_TYPES) EVENT_TYPES = obs.EVENT_TYPES;
-} catch (e) {
-  // Observation agent is optional or removed
-}
-
-// Fire-and-forget observation call, mirroring auth.controller.js's
-// observeAuthEvent: progress tracking must never fail because the
-// Observation Agent is slow or down.
-const observeProgressEvent = (studentId, eventType, extra) => {
-  if (!publishEvent || !eventType) return;
-  publishEvent({ studentId, eventType, source: "progress.service", ...extra }).catch((error) => {
-    console.error(`[observation] failed to record ${eventType}:`, error.message);
-  });
-};
-
-const completeLesson = async (
-  studentId,
-  lessonId
-) => {
-  const lesson =
-    await prisma.lesson.findUnique({
-      where: {
-        id: lessonId
+/**
+ * Marks a single Content item as complete/incomplete for a student
+ * and triggers bottom-up course progress rollup.
+ *
+ * When `requestingUser` is supplied (always, from the HTTP layer) the caller's
+ * access to the owning course is verified before any progress row is written,
+ * so an unenrolled student cannot seed progress rows for a course.
+ */
+async function completeContent(studentId, contentId, completed = true, requestingUser = null) {
+  const content = await prisma.content.findUnique({
+    where: { id: contentId },
+    include: {
+      topic: {
+        include: {
+          lesson: {
+            include: {
+              module: true
+            }
+          }
+        }
       },
-      include: {
-        module: true
-      }
-    });
+      lesson: {
+        include: {
+          module: true
+        }
+      },
+      module: true
+    }
+  });
 
-  if (!lesson) {
-    throw new ApiError(404, "Lesson not found");
+  if (!content) {
+    const error = new Error('Content not found');
+    error.statusCode = 404;
+    throw error;
   }
 
   const courseId =
-    lesson.module.courseId;
+    content.topic?.lesson?.module?.courseId ||
+    content.lesson?.module?.courseId ||
+    content.module?.courseId ||
+    content.courseId;
 
-  const { lockMap } = await buildLessonLockMap(courseId, studentId);
-  if (lockMap.get(lessonId)) {
-    throw new ApiError(403, "Complete the previous lesson first to unlock this one.");
+  if (requestingUser && courseId) {
+    await assertCourseProgressAccess(requestingUser, studentId, courseId);
   }
 
-  // Read before the upsert so LESSON_COMPLETED only publishes on a genuine
-  // not-completed -> completed transition. Downstream student-state reducers
-  // increment counters (not idempotent flags) on this event, so re-firing it
-  // on a redundant re-completion would inflate those counts.
-  const existingProgress = await prisma.progress.findUnique({
-    where: { studentId_lessonId: { studentId, lessonId } },
-    select: { completed: true }
+  const existing = await prisma.contentProgress.findUnique({
+    where: { studentId_contentId: { studentId, contentId } }
   });
-  const wasAlreadyCompleted = existingProgress?.completed === true;
+  const now = new Date();
+  const completedAt = completed ? (existing?.completed && existing?.completedAt ? existing.completedAt : now) : null;
 
-  const progress =
-    await prisma.progress.upsert({
-      where: {
-        studentId_lessonId: {
-          studentId,
-          lessonId
-        }
-      },
-      update: {
-        completed: true,
-        completedAt: new Date()
-      },
-      create: {
-        studentId,
-        lessonId,
-        completed: true,
-        completedAt: new Date()
-      }
-    });
-
-  if (!wasAlreadyCompleted) {
-    observeProgressEvent(studentId, EVENT_TYPES.LESSON_COMPLETED, { courseId, lessonId });
-  }
-
-  const lessonIds = await getPublishedLessonIds(courseId);
-
-  const completedLessons =
-    await prisma.progress.count({
-      where: {
-        studentId,
-        lessonId: {
-          in: lessonIds
-        },
-        completed: true
-      }
-    });
-
-  const totalLessons =
-    lessonIds.length;
-
-  const percentage =
-    totalLessons === 0
-      ? 0
-      : Math.round(
-          (completedLessons /
-            totalLessons) *
-            100
-        );
-
-  if (percentage === 100) {
-    const existingCertificate =
-      await prisma.certificate.findFirst({
-        where: {
-          studentId,
-          courseId
-        }
-      });
-
-    if (!existingCertificate) {
-      observeProgressEvent(studentId, EVENT_TYPES.COURSE_COMPLETED, { courseId });
-
-      const certificate = await prisma.certificate.create({
-        data: {
-          certificateNo:
-            `CERT-${Date.now()}`,
-          studentId,
-          courseId
-        },
-        include: {
-          student: {
-            select: {
-              userId: true
-            }
-          },
-          course: {
-            select: {
-              title: true
-            }
-          }
-        }
-      });
-
-      try {
-        await notificationService.createNotification(certificate.student.userId, {
-          title: "Course Completed! 🎓",
-          message: `Congratulations! You have completed all lessons in the course "${certificate.course.title}". Your certificate is ready!`,
-          type: "CERTIFICATE",
-          link: `/certificates`
-        });
-      } catch (error) {
-        console.error("Error creating certificate notification:", error.message);
-      }
-    }
-  }
-
-  return progress;
-};
-
-// Records that a student has visited one or more Content rows (a video
-// watched to the end, or a document/file/link block scrolled into view on
-// the frontend — see contentDocument.js for why a single displayed block
-// can map to several underlying Content ids). Once every Content row under
-// a lesson has been visited, the lesson auto-completes via the exact same
-// completeLesson() path the manual "Mark Complete" button uses, so
-// certificate issuance and percentage math are never duplicated.
-const markContentVisited = async (
-  studentId,
-  contentIds
-) => {
-  const contents = await prisma.content.findMany({
-    where: { id: { in: contentIds } },
-    select: { id: true, topic: { select: { lessonId: true } } }
+  await prisma.contentProgress.upsert({
+    where: { studentId_contentId: { studentId, contentId } },
+    create: { studentId, contentId, completed, completedAt: completed ? now : null },
+    update: { completed, completedAt }
   });
 
-  if (contents.length === 0) {
-    throw new ApiError(404, "Content not found");
+  let rollup = null;
+  if (courseId) {
+    rollup = await recomputeCourseProgress(studentId, courseId);
   }
-
-  const lessonId = contents[0].topic.lessonId;
-
-  await prisma.$transaction(
-    contents.map((content) =>
-      prisma.contentProgress.upsert({
-        where: {
-          studentId_contentId: { studentId, contentId: content.id }
-        },
-        update: {},
-        create: { studentId, contentId: content.id }
-      })
-    )
-  );
-
-  const lessonContents = await prisma.content.findMany({
-    where: { topic: { lessonId } },
-    select: { id: true }
-  });
-  const lessonContentIds = lessonContents.map((c) => c.id);
-
-  const visitedCount = await prisma.contentProgress.count({
-    where: { studentId, contentId: { in: lessonContentIds } }
-  });
-
-  const allContentVisited =
-    lessonContentIds.length > 0 && visitedCount === lessonContentIds.length;
-
-  let lessonCompleted = false;
-  if (allContentVisited) {
-    try {
-      await completeLesson(studentId, lessonId);
-      lessonCompleted = true;
-    } catch (error) {
-      // Drip-locked or otherwise not completable yet — visiting content
-      // still gets recorded above, it just doesn't force completion.
-      lessonCompleted = false;
-    }
-  }
-
-  return { lessonId, allContentVisited, lessonCompleted };
-};
-
-const getAllCoursesProgress = async (
-  studentId
-) => {
-  const enrollments =
-    await prisma.enrollment.findMany({
-      where: { studentId },
-      select: {
-        course: {
-          select: {
-            id: true,
-            title: true,
-            creator: { select: { name: true } },
-            modules: {
-              where: { isPublished: true },
-              select: {
-                lessons: { where: { isPublished: true }, select: { id: true } }
-              }
-            }
-          }
-        }
-      }
-    });
-
-  const courseIds = enrollments.map((e) => e.course.id);
-
-  const completedProgress = courseIds.length
-    ? await prisma.progress.findMany({
-        where: {
-          studentId,
-          completed: true,
-          lesson: { module: { courseId: { in: courseIds } } }
-        },
-        select: {
-          lesson: { select: { module: { select: { courseId: true } } } }
-        }
-      })
-    : [];
-
-  const completedByCourse = new Map();
-  for (const p of completedProgress) {
-    const cid = p.lesson.module.courseId;
-    completedByCourse.set(cid, (completedByCourse.get(cid) || 0) + 1);
-  }
-
-  const courses = enrollments.map(({ course }) => {
-    const totalLessons = course.modules.reduce(
-      (sum, m) => sum + m.lessons.length,
-      0
-    );
-    const completedLessons = completedByCourse.get(course.id) || 0;
-    const progress =
-      totalLessons === 0
-        ? 0
-        : Math.round((completedLessons / totalLessons) * 100);
-
-    return {
-      id: course.id,
-      title: course.title,
-      instructor: course.creator?.name || "Unknown",
-      completedLessons,
-      totalLessons,
-      progress
-    };
-  });
-
-  const totalLessons = courses.reduce((sum, c) => sum + c.totalLessons, 0);
-  const completedLessons = courses.reduce((sum, c) => sum + c.completedLessons, 0);
-  const percentage =
-    totalLessons === 0
-      ? 0
-      : Math.round((completedLessons / totalLessons) * 100);
-
-  return { totalLessons, completedLessons, percentage, courses };
-};
-
-const getCourseProgress = async (
-  studentId,
-  courseId
-) => {
-  const lessonIds = await getPublishedLessonIds(courseId);
-
-  const completedLessons =
-    await prisma.progress.count({
-      where: {
-        studentId,
-        lessonId: {
-          in: lessonIds
-        },
-        completed: true
-      }
-    });
-
-  const totalLessons =
-    lessonIds.length;
-
-  const percentage =
-    totalLessons === 0
-      ? 0
-      : Math.round(
-          (completedLessons /
-            totalLessons) *
-            100
-        );
 
   return {
-    totalLessons,
-    completedLessons,
-    percentage
+    contentId,
+    studentId,
+    completed,
+    courseProgress: rollup
   };
-};
+}
+
+/**
+ * Marks all topic-level content items within a lesson as complete/incomplete
+ * and triggers bottom-up course progress rollup.
+ */
+async function completeLesson(studentId, lessonId, completed = true, requestingUser = null) {
+  const lesson = await prisma.lesson.findUnique({
+    where: { id: lessonId },
+    include: {
+      module: true,
+      contents: true,
+      topics: {
+        where: { isPublished: true },
+        include: {
+          contents: true
+        }
+      }
+    }
+  });
+
+  if (!lesson) {
+    const error = new Error('Lesson not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const courseId = lesson.module.courseId;
+
+  if (requestingUser) {
+    await assertCourseProgressAccess(requestingUser, studentId, courseId);
+  }
+
+  const contentIds = [];
+  lesson.contents.forEach((c) => contentIds.push(c.id));
+  for (const topic of lesson.topics) {
+    for (const c of topic.contents) {
+      contentIds.push(c.id);
+    }
+  }
+
+  const now = new Date();
+  for (const cId of contentIds) {
+    await prisma.contentProgress.upsert({
+      where: { studentId_contentId: { studentId, contentId: cId } },
+      create: { studentId, contentId: cId, completed, completedAt: completed ? now : null },
+      update: { completed, completedAt: completed ? now : null }
+    });
+  }
+
+  const rollup = await recomputeCourseProgress(studentId, courseId);
+
+  return {
+    lessonId,
+    studentId,
+    completed,
+    courseProgress: rollup
+  };
+}
+
+/**
+ * Explicitly marks an item or container as visited/unvisited for a student
+ * and triggers bottom-up course progress rollup.
+ */
+async function markVisited(studentId, params, visited = true, requestingUser = null) {
+  let { entityType, entityId, contentId, quizId, assignmentId, topicId, lessonId, moduleId } =
+    typeof params === 'string' ? { entityId: params } : (params || {});
+
+  if (contentId) { entityType = 'CONTENT'; entityId = contentId; }
+  else if (quizId) { entityType = 'QUIZ'; entityId = quizId; }
+  else if (assignmentId) { entityType = 'ASSIGNMENT'; entityId = assignmentId; }
+  else if (topicId) { entityType = 'TOPIC'; entityId = topicId; }
+  else if (lessonId) { entityType = 'LESSON'; entityId = lessonId; }
+  else if (moduleId) { entityType = 'MODULE'; entityId = moduleId; }
+
+  entityType = (entityType || '').toUpperCase();
+
+  let courseId = null;
+  const now = new Date();
+
+  if (entityType === 'CONTENT') {
+    const content = await prisma.content.findUnique({
+      where: { id: entityId },
+      include: {
+        topic: { include: { lesson: { include: { module: true } } } },
+        lesson: { include: { module: true } },
+        module: true
+      }
+    });
+    if (!content) throw Object.assign(new Error('Content not found'), { statusCode: 404 });
+    courseId = content.topic?.lesson?.module?.courseId || content.lesson?.module?.courseId || content.module?.courseId || content.courseId;
+    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
+
+    await prisma.contentProgress.upsert({
+      where: { studentId_contentId: { studentId, contentId: entityId } },
+      create: { studentId, contentId: entityId, visited, visitedAt: visited ? now : null },
+      update: { visited, visitedAt: visited ? now : null }
+    });
+  } else if (entityType === 'QUIZ') {
+    const quiz = await prisma.quiz.findUnique({
+      where: { id: entityId },
+      include: {
+        topic: { include: { lesson: { include: { module: true } } } },
+        lesson: { include: { module: true } },
+        module: true
+      }
+    });
+    if (!quiz) throw Object.assign(new Error('Quiz not found'), { statusCode: 404 });
+    courseId = quiz.topic?.lesson?.module?.courseId || quiz.lesson?.module?.courseId || quiz.module?.courseId || quiz.courseId;
+    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
+
+    await prisma.quizProgress.upsert({
+      where: { studentId_quizId: { studentId, quizId: entityId } },
+      create: { studentId, quizId: entityId, visited, visitedAt: visited ? now : null },
+      update: { visited, visitedAt: visited ? now : null }
+    });
+  } else if (entityType === 'ASSIGNMENT') {
+    const assignment = await prisma.assignment.findUnique({
+      where: { id: entityId },
+      include: {
+        topic: { include: { lesson: { include: { module: true } } } },
+        lesson: { include: { module: true } },
+        module: true
+      }
+    });
+    if (!assignment) throw Object.assign(new Error('Assignment not found'), { statusCode: 404 });
+    courseId = assignment.topic?.lesson?.module?.courseId || assignment.lesson?.module?.courseId || assignment.module?.courseId || assignment.courseId;
+    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
+
+    await prisma.assignmentProgress.upsert({
+      where: { studentId_assignmentId: { studentId, assignmentId: entityId } },
+      create: { studentId, assignmentId: entityId, visited, visitedAt: visited ? now : null },
+      update: { visited, visitedAt: visited ? now : null }
+    });
+  } else if (entityType === 'TOPIC') {
+    const topic = await prisma.topic.findUnique({
+      where: { id: entityId },
+      include: { lesson: { include: { module: true } } }
+    });
+    if (!topic) throw Object.assign(new Error('Topic not found'), { statusCode: 404 });
+    courseId = topic.lesson.module.courseId;
+    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
+
+    await prisma.topicProgress.upsert({
+      where: { studentId_topicId: { studentId, topicId: entityId } },
+      create: { studentId, topicId: entityId, visited, visitedAt: visited ? now : null },
+      update: { visited, visitedAt: visited ? now : null }
+    });
+  } else if (entityType === 'LESSON') {
+    const lesson = await prisma.lesson.findUnique({
+      where: { id: entityId },
+      include: { module: true }
+    });
+    if (!lesson) throw Object.assign(new Error('Lesson not found'), { statusCode: 404 });
+    courseId = lesson.module.courseId;
+    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
+
+    await prisma.lessonProgress.upsert({
+      where: { studentId_lessonId: { studentId, lessonId: entityId } },
+      create: { studentId, lessonId: entityId, visited, visitedAt: visited ? now : null },
+      update: { visited, visitedAt: visited ? now : null }
+    });
+  } else if (entityType === 'MODULE') {
+    const moduleItem = await prisma.module.findUnique({
+      where: { id: entityId }
+    });
+    if (!moduleItem) throw Object.assign(new Error('Module not found'), { statusCode: 404 });
+    courseId = moduleItem.courseId;
+    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
+
+    await prisma.moduleProgress.upsert({
+      where: { studentId_moduleId: { studentId, moduleId: entityId } },
+      create: { studentId, moduleId: entityId, visited, visitedAt: visited ? now : null },
+      update: { visited, visitedAt: visited ? now : null }
+    });
+  } else {
+    throw Object.assign(new Error('Invalid entity type for visited progress'), { statusCode: 400 });
+  }
+
+  let rollup = null;
+  if (courseId) {
+    rollup = await recomputeCourseProgress(studentId, courseId, null, { includeTree: true });
+  }
+
+  return {
+    entityType,
+    entityId,
+    studentId,
+    visited,
+    courseProgress: rollup
+  };
+}
+
+/**
+ * Authorizes a request to read a student's progress in a course.
+ *
+ * - ADMIN may read any student's progress.
+ * - INSTRUCTOR may read progress only for courses they created.
+ * - Everyone else may read only their own progress, and only for a course they
+ *   are enrolled in.
+ *
+ * Called from the controller, where the requesting user is known, so the
+ * progress services themselves stay pure and directly unit-testable.
+ */
+async function assertCourseProgressAccess(requestingUser, studentId, courseId) {
+  const role = requestingUser?.role;
+
+  if (role === 'ADMIN') return;
+
+  if (role === 'INSTRUCTOR') {
+    const course = await prisma.course.findUnique({
+      where: { id: courseId },
+      select: { creatorId: true }
+    });
+    if (!course) {
+      const error = new Error('Course not found');
+      error.statusCode = 404;
+      throw error;
+    }
+    if (course.creatorId !== requestingUser.id) {
+      const error = new Error('Forbidden: you do not own this course');
+      error.statusCode = 403;
+      throw error;
+    }
+    return;
+  }
+
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { studentId_courseId: { studentId, courseId } },
+    select: { id: true }
+  });
+
+  if (!enrollment) {
+    const error = new Error('Forbidden: you are not enrolled in this course');
+    error.statusCode = 403;
+    throw error;
+  }
+}
+
+/**
+ * Retrieves detailed, course-scoped progress for a student, including the
+ * authoritative hierarchical tree
+ * (Course -> Module -> Lesson -> Topic -> Content/Quiz/Assignment).
+ *
+ * The flat id arrays are derived from that same tree, so they are scoped to
+ * this course only and can never disagree with the hierarchy or the totals.
+ */
+async function getStudentCourseProgress(studentId, courseId) {
+  const rollup = await recomputeCourseProgress(studentId, courseId, null, { includeTree: true });
+  const { hierarchy } = rollup;
+
+  const completedContentIds = [];
+  const completedQuizIds = [];
+  const completedAssignmentIds = [];
+  const completedTopicIds = [];
+  const completedLessonIds = [];
+  const completedModuleIds = [];
+
+  const visitedContentIds = [];
+  const visitedQuizIds = [];
+  const visitedAssignmentIds = [];
+  const visitedTopicIds = [];
+  const visitedLessonIds = [];
+  const visitedModuleIds = [];
+
+  const collectDirect = (entity) => {
+    entity.contents.forEach((c) => {
+      if (c.completed) completedContentIds.push(c.id);
+      if (c.visited) visitedContentIds.push(c.id);
+    });
+    entity.quizzes.forEach((q) => {
+      if (q.completed) completedQuizIds.push(q.id);
+      if (q.visited) visitedQuizIds.push(q.id);
+    });
+    entity.assignments.forEach((a) => {
+      if (a.completed) completedAssignmentIds.push(a.id);
+      if (a.visited) visitedAssignmentIds.push(a.id);
+    });
+  };
+
+  collectDirect(hierarchy);
+  for (const mod of hierarchy.modules) {
+    collectDirect(mod);
+    if (mod.completed) completedModuleIds.push(mod.id);
+    if (mod.visited) visitedModuleIds.push(mod.id);
+    for (const lesson of mod.lessons) {
+      collectDirect(lesson);
+      if (lesson.completed) completedLessonIds.push(lesson.id);
+      if (lesson.visited) visitedLessonIds.push(lesson.id);
+      for (const topic of lesson.topics) {
+        collectDirect(topic);
+        if (topic.completed) completedTopicIds.push(topic.id);
+        if (topic.visited) visitedTopicIds.push(topic.id);
+      }
+    }
+  }
+
+  return {
+    ...rollup,
+    hierarchy,
+    // Flat convenience projections, scoped to this course.
+    moduleProgresses: completedModuleIds,
+    lessonProgresses: completedLessonIds,
+    topicProgresses: completedTopicIds,
+    completedContentIds,
+    completedQuizIds,
+    completedAssignmentIds,
+    visitedModuleProgresses: visitedModuleIds,
+    visitedLessonProgresses: visitedLessonIds,
+    visitedTopicProgresses: visitedTopicIds,
+    visitedContentIds,
+    visitedQuizIds,
+    visitedAssignmentIds
+  };
+}
+
+/**
+ * Retrieves progress overview across all enrolled courses for a student.
+ */
+async function getStudentOverallProgress(studentId) {
+  const enrollments = await prisma.enrollment.findMany({
+    where: { studentId },
+    include: {
+      course: {
+        select: {
+          id: true,
+          title: true,
+          thumbnailUrl: true,
+          category: true,
+          level: true
+        }
+      }
+    }
+  });
+
+  const validEnrollments = enrollments.filter((enc) => enc.course);
+
+  const results = await Promise.all(
+    validEnrollments.map(async (enc) => {
+      const rollup = await recomputeCourseProgress(studentId, enc.courseId);
+      return {
+        courseId: enc.courseId,
+        courseTitle: enc.course.title,
+        thumbnailUrl: enc.course.thumbnailUrl,
+        category: enc.course.category,
+        level: enc.course.level,
+        progressPercent: rollup.progressPercent,
+        completed: rollup.completed,
+        completedAt: enc.completedAt,
+        lastAccessedAt: enc.lastAccessedAt,
+        enrolledAt: enc.enrolledAt,
+        totalItems: rollup.totalItems,
+        completedItems: rollup.completedItems
+      };
+    })
+  );
+
+  return results;
+}
+
+/**
+ * Instructor Analytics — retrieves read-only progress analytics for a course.
+ */
+async function getInstructorCourseProgress(courseId) {
+  const enrollments = await prisma.enrollment.findMany({
+    where: { courseId },
+    include: {
+      student: {
+        include: {
+          user: {
+            select: { name: true, email: true }
+          }
+        }
+      }
+    }
+  });
+
+  const totalStudents = enrollments.length;
+  let completedStudents = 0;
+  let inProgressStudents = 0;
+  let totalPercentSum = 0;
+
+  const studentList = [];
+
+  for (const enc of enrollments) {
+    const rollup = await recomputeCourseProgress(enc.studentId, courseId);
+    const percent = rollup.progressPercent;
+    totalPercentSum += percent;
+
+    let status = 'Not Started';
+    if (rollup.completed) {
+      status = 'Completed';
+      completedStudents++;
+    } else if (percent > 0) {
+      status = 'In Progress';
+      inProgressStudents++;
+    }
+
+    studentList.push({
+      studentId: enc.studentId,
+      name: enc.student?.user?.name || 'Student',
+      email: enc.student?.user?.email || '',
+      progressPercent: percent,
+      completedItems: rollup.completedItems,
+      totalItems: rollup.totalItems,
+      status,
+      lastAccessedAt: enc.lastAccessedAt || enc.enrolledAt
+    });
+  }
+
+  const avgProgressPercent = totalStudents > 0 ? Math.round(totalPercentSum / totalStudents) : 0;
+
+  return {
+    overview: {
+      totalStudents,
+      completedStudents,
+      inProgressStudents,
+      avgProgressPercent
+    },
+    students: studentList
+  };
+}
 
 module.exports = {
+  assertCourseProgressAccess,
+  completeContent,
   completeLesson,
-  markContentVisited,
-  getAllCoursesProgress,
-  getCourseProgress
+  markVisited,
+  getStudentCourseProgress,
+  getStudentOverallProgress,
+  getInstructorCourseProgress,
+  ensureProgressInitialized
 };

@@ -265,7 +265,8 @@ const getLessonTranscript = async (
   }
 
   const videoContent = lesson.topics
-    .flatMap((topic) => topic.contents)
+    .flatMap((topic) => topic.contents || [])
+    .concat(lesson.contents || [])
     .find(
       (content) =>
         content.type === "VIDEO" &&
@@ -273,11 +274,11 @@ const getLessonTranscript = async (
     );
 
   if (!videoContent) {
-    const error = new Error(
-      "This lesson does not contain any video content."
-    );
-    error.statusCode = 404;
-    throw error;
+    return {
+      lessonId,
+      videoId: null,
+      segments: []
+    };
   }
 
   const { videoId, segments } =

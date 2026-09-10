@@ -1267,4 +1267,4 @@ module.exports = {
   getCourseStudents,
   getCourseStatusCounts,
   exportCourse
-};
+};

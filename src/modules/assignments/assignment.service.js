@@ -2,6 +2,12 @@ const prisma = require("../../config/database");
 
 const getAssignments = async (studentId) => {
     const assignments = await prisma.assignment.findMany({
+        // Only assignments from courses this student is actually enrolled in —
+        // previously unscoped, which returned every assignment in the system
+        // to every student regardless of enrollment.
+        where: {
+            course: { enrollments: { some: { studentId } } }
+        },
         include: {
             course: {
                 select: {
@@ -12,7 +18,8 @@ const getAssignments = async (studentId) => {
             submissions: {
                 where: { studentId },
             }
-        }
+        },
+        orderBy: { createdAt: "desc" }
     });
 
     return assignments.map(a => {
@@ -26,6 +33,8 @@ const getAssignments = async (studentId) => {
             title: a.title,
             description: a.description,
             dueDate: a.dueDate,
+            assessmentType: a.assessmentType,
+            createdAt: a.createdAt,
             totalQuestions: a.totalQuestions,
             estimatedTime: a.estimatedTime,
             resources: a.resources,
@@ -75,15 +84,45 @@ const getAssignmentById = async (assignmentId, studentId) => {
         resources: a.resources,
         status,
         course: a.course,
+        // Instructor-provided reference material. NOT the student's answer —
+        // the student's own upload is `submission` below. The learning
+        // workspace shows these as two clearly separate sections, so the
+        // response has to keep them separate too.
+        attachments: Array.isArray(a.attachments) ? a.attachments : [],
+        marks: a.marks,
         grade: submission?.grade || null,
         feedback: submission?.feedback || null,
         submittedAt: submission?.submittedAt || null,
+        // The student's uploaded PDF, so they can see what they turned in.
+        submission: submission
+            ? {
+                status: submission.status,
+                fileUrl: submission.fileUrl || null,
+                fileName: submission.fileName || null,
+                fileSize: submission.fileSize || null,
+                fileType: submission.fileType || null,
+                submittedAt: submission.submittedAt
+            }
+            : null,
     };
 };
 
 const submitAssignment = async (assignmentId, studentId, data) => {
     const assignment = await prisma.assignment.findUnique({
-        where: { id: assignmentId }
+        where: { id: assignmentId },
+        include: {
+            course: true,
+            module: { select: { courseId: true } },
+            lesson: { include: { module: { select: { courseId: true } } } },
+            topic: { include: { lesson: { include: { module: { select: { courseId: true } } } } } },
+        },
+        where: { id: assignmentId },
+        include: {
+            course: true,
+            module: { select: { courseId: true } },
+            lesson: { include: { module: { select: { courseId: true } } } },
+            topic: { include: { lesson: { include: { module: { select: { courseId: true } } } } } },
+        }
     });
     if (!assignment) {
         const err = new Error("Assignment not found.");
@@ -91,7 +130,17 @@ const submitAssignment = async (assignmentId, studentId, data) => {
         throw err;
     }
 
-    return await prisma.assignmentSubmission.upsert({
+    // One submission per student per assignment (@@unique) — resubmitting
+    // replaces the stored PDF and timestamp rather than creating a second row.
+    // That is the existing upsert semantics; only the file fields are new.
+    const fileFields = {
+        fileUrl: data?.fileUrl ?? null,
+        fileName: data?.fileName ?? null,
+        fileSize: data?.fileSize ?? null,
+        fileType: data?.fileType ?? null,
+    };
+
+    const submission = await prisma.assignmentSubmission.upsert({
         where: {
             studentId_assignmentId: {
                 studentId,
@@ -101,21 +150,78 @@ const submitAssignment = async (assignmentId, studentId, data) => {
         update: {
             status: "Submitted",
             submittedAt: new Date(),
+            ...fileFields,
         },
         create: {
             studentId,
             assignmentId,
             status: "Submitted",
+            ...fileFields,
         }
     });
+
+    // Synchronize AssignmentProgress when assignment is submitted authoritatively
+    try {
+        const existingAp = await prisma.assignmentProgress.findUnique({
+            where: { studentId_assignmentId: { studentId, assignmentId } }
+        });
+        await prisma.assignmentProgress.upsert({
+            where: { studentId_assignmentId: { studentId, assignmentId } },
+            create: {
+                studentId,
+                assignmentId,
+                completed: true,
+                completedAt: new Date()
+            },
+            update: {
+                completed: true,
+                completedAt: existingAp?.completedAt || new Date()
+            }
+        });
+    } catch (apErr) {
+        console.error("AssignmentProgress sync failed after assignment submission:", apErr);
+    }
+
+    const courseId =
+        assignment.courseId ||
+        assignment.module?.courseId ||
+        assignment.lesson?.module?.courseId ||
+        assignment.topic?.lesson?.module?.courseId;
+
+    if (courseId) {
+        try {
+            const { recomputeCourseProgress } = require("../../utils/progressRollup");
+            await recomputeCourseProgress(studentId, courseId);
+        } catch (err) {
+            console.error("Progress rollup recalculation failed after assignment submission:", err);
+        }
+    }
+
+    return submission;
 };
 
-const getInstructorAssignments = async (instructorId, courseId) => {
+const getInstructorAssignments = async (instructorId, filter = {}) => {
+    let courseId = typeof filter === "string" ? filter : filter.courseId;
+    let moduleId = filter.moduleId;
+    let lessonId = filter.lessonId;
+    let topicId = filter.topicId;
+
     const where = {};
     if (courseId) {
         where.courseId = courseId;
+    } else if (moduleId) {
+        where.moduleId = moduleId;
+    } else if (lessonId) {
+        where.lessonId = lessonId;
+    } else if (topicId) {
+        where.topicId = topicId;
     } else {
-        where.course = { creatorId: instructorId };
+        where.OR = [
+            { course: { creatorId: instructorId } },
+            { module: { course: { creatorId: instructorId } } },
+            { lesson: { module: { course: { creatorId: instructorId } } } },
+            { topic: { lesson: { module: { course: { creatorId: instructorId } } } } },
+        ];
     }
 
     const assignments = await prisma.assignment.findMany({
@@ -166,7 +272,67 @@ const getInstructorAssignments = async (instructorId, courseId) => {
     }));
 };
 
+/**
+ * Every student submission for one assignment, for the owning instructor.
+ *
+ * Route-level ownership (verifyAssignmentOwnership) has already established the
+ * caller owns this assignment, so this only shapes the rows: who submitted,
+ * when, and the PDF they actually uploaded. `fileUrl` here is the STUDENT's
+ * work — Assignment.attachments is the instructor's own reference material and
+ * is deliberately not mixed into these rows.
+ */
+const getAssignmentSubmissions = async (assignmentId) => {
+    const assignment = await prisma.assignment.findUnique({
+        where: { id: assignmentId },
+        select: { id: true, title: true, dueDate: true, marks: true }
+    });
+
+    if (!assignment) {
+        const err = new Error("Assignment not found.");
+        err.statusCode = 404;
+        throw err;
+    }
+
+    const submissions = await prisma.assignmentSubmission.findMany({
+        where: { assignmentId },
+        orderBy: { submittedAt: "desc" },
+        include: {
+            student: {
+                select: {
+                    id: true,
+                    user: { select: { id: true, name: true, email: true } }
+                }
+            }
+        }
+    });
+
+    return {
+        assignment,
+        submissions: submissions.map((s) => ({
+            id: s.id,
+            studentId: s.studentId,
+            studentName: s.student?.user?.name || "Student",
+            studentEmail: s.student?.user?.email || "",
+            status: s.status,
+            grade: s.grade,
+            feedback: s.feedback,
+            submittedAt: s.submittedAt,
+            fileUrl: s.fileUrl || null,
+            fileName: s.fileName || null,
+            fileSize: s.fileSize || null,
+            fileType: s.fileType || null
+        }))
+    };
+};
+
 const createAssignment = async (data) => {
+    const parents = [data.courseId, data.moduleId, data.lessonId, data.topicId].filter(Boolean);
+    if (parents.length !== 1) {
+        const error = new Error("Assignment must be attached to exactly one of course, module, lesson, or topic.");
+        error.statusCode = 400;
+        throw error;
+    }
+
     return await prisma.assignment.create({
         data: {
             title: data.title,
@@ -178,7 +344,10 @@ const createAssignment = async (data) => {
             marks: data.marks !== undefined && data.marks !== null ? parseInt(data.marks) : null,
             assessmentType: data.assessmentType || null,
             attachments: data.attachments ?? undefined,
-            courseId: data.courseId,
+            courseId: data.courseId || null,
+            moduleId: data.moduleId || null,
+            lessonId: data.lessonId || null,
+            topicId: data.topicId || null,
             isPublished: data.isPublished !== undefined ? data.isPublished : true,
         }
     });
@@ -227,6 +396,7 @@ module.exports = {
     getAssignmentById,
     submitAssignment,
     getInstructorAssignments,
+    getAssignmentSubmissions,
     createAssignment,
     updateAssignment,
     deleteAssignment,

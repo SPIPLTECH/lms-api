@@ -9,7 +9,10 @@ const attachmentSchema = Joi.object({
 const createAssignmentSchema = Joi.object({
   title: Joi.string().required(),
   description: Joi.string().optional().allow(null, ""),
-  courseId: Joi.string().required(),
+  courseId: Joi.string().optional(),
+  moduleId: Joi.string().optional(),
+  lessonId: Joi.string().optional(),
+  topicId: Joi.string().optional(),
   dueDate: Joi.date().iso().required(),
   startDate: Joi.date().iso().optional().allow(null),
   availableFrom: Joi.date().iso().optional().allow(null),
@@ -22,7 +25,12 @@ const createAssignmentSchema = Joi.object({
   attachments: Joi.array().items(attachmentSchema).optional(),
   isPublished: Joi.boolean().optional(),
   status: Joi.string().optional().allow(null, "")
-});
+})
+  .xor("courseId", "moduleId", "lessonId", "topicId")
+  .messages({
+    "object.missing": "Assignment must be attached to exactly one of course, module, lesson, or topic.",
+    "object.xor": "Assignment must be attached to exactly one of course, module, lesson, or topic.",
+  });
 
 const updateAssignmentSchema = Joi.object({
   title: Joi.string().optional(),
@@ -41,8 +49,33 @@ const updateAssignmentSchema = Joi.object({
   status: Joi.string().optional().allow(null, "")
 });
 
+// The student's final answer is one uploaded PDF. The file is already in blob
+// storage by the time this runs (the upload route enforces PDF as well), so
+// these checks are the server-side half of that rule rather than a substitute
+// for it: a caller hitting this endpoint directly still cannot register a
+// non-PDF, or a submission carrying no file at all.
+const PDF_URL_PATTERN = /\.pdf(\?|#|$)/i;
+
 const submitAssignmentSchema = Joi.object({
   status: Joi.string().valid("Submitted", "Draft").optional(),
+  fileUrl: Joi.string()
+    .uri()
+    .pattern(PDF_URL_PATTERN)
+    .required()
+    .messages({
+      "string.pattern.base": "The submitted file must be a PDF.",
+      "any.required": "A completed assignment PDF is required to submit."
+    }),
+  fileName: Joi.string()
+    .pattern(/\.pdf$/i)
+    .required()
+    .messages({ "string.pattern.base": "The submitted file must be a PDF." }),
+  fileSize: Joi.number().integer().min(1).optional().allow(null),
+  fileType: Joi.string()
+    .valid("application/pdf")
+    .optional()
+    .allow(null, "")
+    .messages({ "any.only": "The submitted file must be a PDF." })
 });
 
 module.exports = {

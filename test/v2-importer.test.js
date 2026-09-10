@@ -153,8 +153,7 @@ test("V2 Importer Module Tests", async (t) => {
           settings: {
             visibility: "PUBLIC",
             certificatesEnabled: true,
-            discussionEnabled: true,
-            dripContentEnabled: false
+            discussionEnabled: true
           },
           modules: [
             {

@@ -19,7 +19,6 @@ const lessonRoutes = require("./modules/lessons/lesson.routes");
 const topicRoutes = require("./modules/topics/topic.routes");
 const contentRoutes = require("./modules/contents/content.routes");
 const enrollmentRoutes = require("./modules/enrollments/enrollment.routes");
-const progressRoutes = require("./modules/progress/progress.routes");
 const quizRoutes = require("./modules/quizzes/quiz.routes");
 const questionRoutes = require("./modules/questions/question.routes");
 const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
@@ -48,8 +47,8 @@ const notificationRoutes = require("./modules/notifications/notification.routes"
 const conversationRoutes = require("./modules/conversations/conversation.routes");
 const messageRoutes = require("./modules/messages/message.routes");
 const landingRoutes = require("./modules/landing/landing.routes");
-const entryAssessment = require("./modules/entry-assessment");
 const courseImportRoutes = require("./modules/course-import/routes");
+const progressRoutes = require("./modules/progress/progress.routes");
 const app = express();
 app.disable('etag');
 
@@ -105,7 +104,6 @@ app.use("/lessons", lessonRoutes);
 app.use("/topics", topicRoutes);
 app.use("/contents", contentRoutes);
 app.use("/enrollments", enrollmentRoutes);
-app.use("/progress", progressRoutes);
 app.use("/quizzes", quizRoutes);
 app.use("/questions", questionRoutes);
 app.use("/dashboard", dashboardRoutes);
@@ -146,10 +144,12 @@ app.use("/upcoming-tasks", upcomingTasksRoutes);
 // The AI Student Entry Phase feature (not one of the 12) was extracted
 // from inside assessment/student-state into its own module and kept live,
 // remounted at the exact same URLs the frontend already calls:
-app.use("/assessment/entry", entryAssessment.entryAssessmentRouter);
-app.use("/student-state", entryAssessment.courseStateRouter);
+// app.use("/assessment/entry", entryAssessment.entryAssessmentRouter);
+// app.use("/student-state", entryAssessment.courseStateRouter);
 app.use("/course-import", courseImportRoutes);
 app.use("/api/ai", courseImportRoutes);
+app.use("/progress", progressRoutes);
+app.use("/api/v1/progress", progressRoutes);
 app.use(
   "/learner-model",
   require("./modules/learner-model/learnerModel.routes")

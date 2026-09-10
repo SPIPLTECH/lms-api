@@ -5,7 +5,7 @@ const controller = require("./assignment.controller");
 const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
 const verifyAssignmentOwnership = require("../../middleware/assignmentOwnership.middleware");
-const verifyCourseOwnership = require("../../middleware/courseOwnership.middleware");
+const verifyAssignmentParentOwnership = require("../../middleware/assignmentParentOwnership.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
 const {
   createAssignmentSchema,
@@ -27,12 +27,23 @@ router.get(
     controller.getAssignmentById
 );
 
+// Student submissions for one assignment. Ownership-checked in addition to the
+// role check: without it any INSTRUCTOR could read work submitted for an
+// assignment they do not own.
+router.get(
+    "/:assignmentId/submissions",
+    verifyToken,
+    checkRole(["INSTRUCTOR", "ADMIN"]),
+    verifyAssignmentOwnership,
+    controller.getAssignmentSubmissions
+);
+
 router.post(
     "/",
     verifyToken,
     checkRole(["INSTRUCTOR", "ADMIN"]),
     validate(createAssignmentSchema),
-    verifyCourseOwnership.fromBody,
+    verifyAssignmentParentOwnership.fromBody,
     controller.createAssignment
 );
 

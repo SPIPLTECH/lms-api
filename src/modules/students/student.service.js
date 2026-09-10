@@ -7,16 +7,18 @@ const getStudents = async (user) => {
     },
   };
 
+  let instructorCourseIds = null;
+
   if (user && user.role === "INSTRUCTOR") {
     const instructorCourses = await prisma.course.findMany({
       where: { creatorId: user.id },
       select: { id: true },
     });
-    const courseIds = instructorCourses.map((c) => c.id);
+    instructorCourseIds = instructorCourses.map((c) => c.id);
 
     whereClause.enrollments = {
       some: {
-        courseId: { in: courseIds },
+        courseId: { in: instructorCourseIds },
       },
     };
   }
@@ -40,25 +42,14 @@ const getStudents = async (user) => {
             select: {
               id: true,
               title: true,
-              modules: {
-                select: {
-                  id: true,
-                  title: true,
-                },
-              },
             },
           },
         },
       },
-      // No `progress` relation here: the Progress model is gone from the
-      // schema, and unlike the prisma.progress shim in config/database.js a
-      // nested include is passed straight to Prisma, which rejects the unknown
-      // field and fails the whole query. Completion now comes from
-      // ContentProgress, loaded in bulk below.
       assignmentSubmissions: {
         include: {
           assignment: {
-            select: { id: true, title: true, dueDate: true },
+            select: { id: true, title: true, dueDate: true, courseId: true },
           },
         },
       },
@@ -148,57 +139,29 @@ const getStudents = async (user) => {
   };
 
   return students.map((student) => {
-    const firstEnrollment = student.enrollments[0];
+    // Scope this student's per-course data (enrollments, assignments,
+    // certificates) to the requesting instructor's own courses, since a
+    // student may also be enrolled in other instructors' courses and the
+    // whereClause.enrollments filter only guarantees SOME overlap, not that
+    // every relation below belongs to this instructor.
+    const relevantEnrollments = instructorCourseIds
+      ? student.enrollments.filter((e) => instructorCourseIds.includes(e.courseId))
+      : student.enrollments;
+    const relevantAssignmentSubmissions = instructorCourseIds
+      ? student.assignmentSubmissions.filter((a) => instructorCourseIds.includes(a.assignment?.courseId))
+      : student.assignmentSubmissions;
+    const relevantCertificates = instructorCourseIds
+      ? student.certificates.filter((c) => instructorCourseIds.includes(c.courseId))
+      : student.certificates;
+
+    const firstEnrollment = relevantEnrollments[0];
     const courseTitle = firstEnrollment?.course?.title || "General Course";
-
-    const visited = visitsByStudent.get(student.id) || new Set();
-
-    let totalContentCount = 0;
-    let visitedContentCount = 0;
-    // Dedupe: the same course enrolled twice must not count twice.
-    const countedCourseIds = new Set();
-    for (const e of student.enrollments) {
-      const cid = e.course?.id;
-      if (!cid || countedCourseIds.has(cid)) continue;
-      countedCourseIds.add(cid);
-      const ids = courseContentIds.get(cid);
-      if (!ids) continue;
-      totalContentCount += ids.size;
-      visitedContentCount += countVisited(visited, ids);
-    }
-
-    const progressPercent = totalContentCount > 0
-      ? Math.round((visitedContentCount / totalContentCount) * 100)
-      : 0;
-
-    // Every course this student is enrolled in, not just the first. The
-    // directory's course filter matches against this — filtering on the single
-    // `course` title below silently hid anyone whose first enrollment happened
-    // to be a different course.
-    const enrolledCourses = [];
-    const seenCourseIds = new Set();
-    for (const e of student.enrollments) {
-      if (!e.course?.id || seenCourseIds.has(e.course.id)) continue;
-      seenCourseIds.add(e.course.id);
-      enrolledCourses.push({ id: e.course.id, title: e.course.title });
-    }
 
     const totalSubmissions = student.assignmentSubmissions.length;
     const gradedSubmissions = student.assignmentSubmissions.filter((a) => a.status === "Graded" || a.grade).length;
     const assignmentRate = totalSubmissions > 0
       ? Math.round((gradedSubmissions / totalSubmissions) * 100)
       : 0;
-
-    // These four labels are exactly the filter chips on the Student Directory,
-    // so every student must land on one of them. "Not Started" means literally
-    // zero content visited — it used to swallow everyone under 40%, which left
-    // a student at 39% indistinguishable from one who had never opened the
-    // course.
-    let status;
-    if (progressPercent === 0) status = "Not Started";
-    else if (progressPercent >= 85) status = "Top Performer";
-    else if (progressPercent >= 60) status = "Behind Average";
-    else status = "Struggling";
 
     const joinedDateStr = new Date(student.createdAt || student.user.createdAt).toLocaleDateString("en-US", {
       month: "short",
@@ -213,16 +176,12 @@ const getStudents = async (user) => {
       email: student.user.email,
       role: student.user.role,
       course: courseTitle,
-      courses: enrolledCourses,
-      courseIds: enrolledCourses.map((c) => c.id),
-      status: status,
-      progress: progressPercent,
       assignmentRate: assignmentRate,
       // No attendance-tracking feature exists yet, so this is intentionally
       // null rather than a fabricated number - frontend should render "N/A".
       attendanceRate: null,
       joinedDate: joinedDateStr,
-      assignments: student.assignmentSubmissions.map((as) => ({
+      assignments: relevantAssignmentSubmissions.map((as) => ({
         id: as.id,
         title: as.assignment?.title || "Assignment",
         status: as.status || "Submitted",
@@ -234,20 +193,6 @@ const getStudents = async (user) => {
           year: "numeric",
         }),
       })),
-      modules: (firstEnrollment?.course?.modules || []).map((m) => {
-        const moduleIds = moduleContentIds.get(m.id);
-        const moduleTotal = moduleIds ? moduleIds.size : 0;
-        const moduleVisited = countVisited(visited, moduleIds);
-        const moduleProgress = moduleTotal > 0
-          ? Math.round((moduleVisited / moduleTotal) * 100)
-          : 0;
-
-        return {
-          name: m.title,
-          progress: moduleProgress,
-          status: moduleProgress === 100 ? "Completed" : moduleProgress > 0 ? "In Progress" : "Not Started",
-        };
-      }),
       certificates: student.certificates.map((c) => ({
         id: c.id,
         title: c.course?.title || "Certificate of Completion",
@@ -284,39 +229,8 @@ const updateStudent = async (studentId, data) => {
   });
 };
 
-const getStudentProgress = async (studentId) => {
-  const progress = await prisma.progress.findMany({
-    where: {
-      studentId
-    },
-    include: {
-      lesson: true
-    }
-  });
-
-  const totalLessons = progress.length;
-  const completedLessons = progress.filter(
-    (item) => item.completed
-  ).length;
-
-  const completionPercentage =
-    totalLessons === 0
-      ? 0
-      : Math.round(
-          (completedLessons / totalLessons) * 100
-        );
-
-  return {
-    totalLessons,
-    completedLessons,
-    completionPercentage,
-    progress
-  };
-};
-
 module.exports = {
   getStudents,
   getStudentById,
-  updateStudent,
-  getStudentProgress
+  updateStudent
 };

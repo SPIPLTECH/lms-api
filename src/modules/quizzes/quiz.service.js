@@ -259,7 +259,8 @@ const getQuizzes = async (
   courseId,
   role,
   userId,
-  batchId
+  batchId,
+  studentId
 ) => {
   const where = {};
 
@@ -268,22 +269,44 @@ const getQuizzes = async (
   } else if (role === "INSTRUCTOR") {
     // No specific course requested: scope to this instructor's own courses only.
     where.course = { creatorId: userId };
+  } else if (role === "STUDENT" && studentId) {
+    // No specific course requested: scope to courses this student is
+    // actually enrolled in — previously unscoped here (studentId was
+    // resolved by the controller but never passed through), so a student
+    // calling GET /quizzes with no courseId got every quiz in the system.
+    where.course = { enrollments: { some: { studentId } } };
   }
 
   if (batchId) {
     where.batchId = batchId;
   }
 
-  return prisma.quiz.findMany({
+  const quizzes = await prisma.quiz.findMany({
     where,
     include: {
+      course: {
+        select: { id: true, title: true }
+      },
+      quizQuestions: {
+        select: { marks: true }
+      },
       _count: {
         select: {
           quizQuestions: true
         }
       }
-    }
+    },
+    orderBy: { createdAt: "desc" }
   });
+
+  // Total marks = sum of each QuizQuestion's own marks override (not
+  // Question.marks — a question can be worth a different amount within a
+  // specific quiz). Computed here since Prisma has no relation-sum in
+  // findMany; quizQuestions itself isn't returned to callers.
+  return quizzes.map(({ quizQuestions, ...quiz }) => ({
+    ...quiz,
+    totalMarks: quizQuestions.reduce((sum, q) => sum + q.marks, 0)
+  }));
 };
 
 const getQuizById = async (
@@ -682,6 +705,38 @@ const submitQuiz = async (studentId, quizId, answers = []) => {
       passed: result.passed
     }
   });
+
+  // Synchronize QuizProgress when quiz is passed authoritatively
+  if (result.passed) {
+    try {
+      const existingQp = await prisma.quizProgress.findUnique({
+        where: { studentId_quizId: { studentId, quizId } }
+      });
+      await prisma.quizProgress.upsert({
+        where: { studentId_quizId: { studentId, quizId } },
+        create: {
+          studentId,
+          quizId,
+          completed: true,
+          completedAt: new Date()
+        },
+        update: {
+          completed: true,
+          completedAt: existingQp?.completedAt || new Date()
+        }
+      });
+    } catch (qpErr) {
+      console.error("QuizProgress sync failed after quiz submission:", qpErr);
+    }
+  }
+
+  // Recompute course progress after quiz submission
+  try {
+    const { recomputeCourseProgress } = require("../../utils/progressRollup");
+    await recomputeCourseProgress(studentId, quiz.courseId);
+  } catch (err) {
+    console.error("Progress rollup recalculation failed after quiz submission:", err);
+  }
 
   // Feed each answered question into the existing learner-model evidence
   // pipeline (BKT + misconception detection) as its own observation, so
