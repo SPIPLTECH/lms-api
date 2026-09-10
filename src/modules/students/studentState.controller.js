@@ -2,7 +2,8 @@ const studentStateService = require("./studentState.service");
 
 const getStudentState = async (req, res, next) => {
   try {
-    const state = await studentStateService.getStudentState(req.user.id);
+    const courseId = req.query.courseId || null;
+    const state = await studentStateService.getStudentState(req.user.id, courseId);
     res.json({
       success: true,
       data: state || null

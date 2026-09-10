@@ -1,22 +1,21 @@
 const prisma = require("../../config/database");
 
-const getStudentState = async (userId) => {
+const getStudentState = async (userId, courseId = null) => {
   const studentProfile = await prisma.studentProfile.findUnique({
     where: { userId }
   });
 
   if (!studentProfile) {
-    const error = new Error("Student profile not found");
-    error.statusCode = 404;
-    throw error;
+    return null;
   }
 
-  // StudentState is unique per (studentId, courseId) — a student has one row
-  // per course, not one globally — so this can't be a findUnique on studentId
-  // alone. The caller doesn't scope by course, so return whichever course's
-  // state was touched most recently.
+  const where = { studentId: studentProfile.id };
+  if (courseId) {
+    where.courseId = courseId;
+  }
+
   const state = await prisma.studentState.findFirst({
-    where: { studentId: studentProfile.id },
+    where,
     orderBy: { updatedAt: "desc" }
   });
 

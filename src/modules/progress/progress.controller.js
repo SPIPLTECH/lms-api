@@ -67,6 +67,21 @@ async function markLessonComplete(req, res, next) {
   }
 }
 
+async function markVisited(req, res, next) {
+  try {
+    const studentId = await resolveStudentId(req);
+    const { visited = true } = req.body;
+    const data = await progressService.markVisited(studentId, req.body, visited, req.user);
+    res.json({
+      success: true,
+      message: visited ? 'Marked as visited' : 'Marked as unvisited',
+      data
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function getCourseProgress(req, res, next) {
   try {
     const studentId = await resolveStudentId(req);
@@ -111,6 +126,7 @@ async function getInstructorProgress(req, res, next) {
 module.exports = {
   markContentComplete,
   markLessonComplete,
+  markVisited,
   getCourseProgress,
   getOverallProgress,
   getInstructorProgress

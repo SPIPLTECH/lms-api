@@ -160,6 +160,28 @@ const submitAssignment = async (assignmentId, studentId, data) => {
         }
     });
 
+    // Synchronize AssignmentProgress when assignment is submitted authoritatively
+    try {
+        const existingAp = await prisma.assignmentProgress.findUnique({
+            where: { studentId_assignmentId: { studentId, assignmentId } }
+        });
+        await prisma.assignmentProgress.upsert({
+            where: { studentId_assignmentId: { studentId, assignmentId } },
+            create: {
+                studentId,
+                assignmentId,
+                completed: true,
+                completedAt: new Date()
+            },
+            update: {
+                completed: true,
+                completedAt: existingAp?.completedAt || new Date()
+            }
+        });
+    } catch (apErr) {
+        console.error("AssignmentProgress sync failed after assignment submission:", apErr);
+    }
+
     const courseId =
         assignment.courseId ||
         assignment.module?.courseId ||

@@ -47,11 +47,16 @@ async function completeContent(studentId, contentId, completed = true, requestin
     await assertCourseProgressAccess(requestingUser, studentId, courseId);
   }
 
+  const existing = await prisma.contentProgress.findUnique({
+    where: { studentId_contentId: { studentId, contentId } }
+  });
   const now = new Date();
+  const completedAt = completed ? (existing?.completed && existing?.completedAt ? existing.completedAt : now) : null;
+
   await prisma.contentProgress.upsert({
     where: { studentId_contentId: { studentId, contentId } },
     create: { studentId, contentId, completed, completedAt: completed ? now : null },
-    update: { completed, completedAt: completed ? now : null }
+    update: { completed, completedAt }
   });
 
   let rollup = null;
@@ -126,6 +131,139 @@ async function completeLesson(studentId, lessonId, completed = true, requestingU
 }
 
 /**
+ * Explicitly marks an item or container as visited/unvisited for a student
+ * and triggers bottom-up course progress rollup.
+ */
+async function markVisited(studentId, params, visited = true, requestingUser = null) {
+  let { entityType, entityId, contentId, quizId, assignmentId, topicId, lessonId, moduleId } =
+    typeof params === 'string' ? { entityId: params } : (params || {});
+
+  if (contentId) { entityType = 'CONTENT'; entityId = contentId; }
+  else if (quizId) { entityType = 'QUIZ'; entityId = quizId; }
+  else if (assignmentId) { entityType = 'ASSIGNMENT'; entityId = assignmentId; }
+  else if (topicId) { entityType = 'TOPIC'; entityId = topicId; }
+  else if (lessonId) { entityType = 'LESSON'; entityId = lessonId; }
+  else if (moduleId) { entityType = 'MODULE'; entityId = moduleId; }
+
+  entityType = (entityType || '').toUpperCase();
+
+  let courseId = null;
+  const now = new Date();
+
+  if (entityType === 'CONTENT') {
+    const content = await prisma.content.findUnique({
+      where: { id: entityId },
+      include: {
+        topic: { include: { lesson: { include: { module: true } } } },
+        lesson: { include: { module: true } },
+        module: true
+      }
+    });
+    if (!content) throw Object.assign(new Error('Content not found'), { statusCode: 404 });
+    courseId = content.topic?.lesson?.module?.courseId || content.lesson?.module?.courseId || content.module?.courseId || content.courseId;
+    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
+
+    await prisma.contentProgress.upsert({
+      where: { studentId_contentId: { studentId, contentId: entityId } },
+      create: { studentId, contentId: entityId, visited, visitedAt: visited ? now : null },
+      update: { visited, visitedAt: visited ? now : null }
+    });
+  } else if (entityType === 'QUIZ') {
+    const quiz = await prisma.quiz.findUnique({
+      where: { id: entityId },
+      include: {
+        topic: { include: { lesson: { include: { module: true } } } },
+        lesson: { include: { module: true } },
+        module: true
+      }
+    });
+    if (!quiz) throw Object.assign(new Error('Quiz not found'), { statusCode: 404 });
+    courseId = quiz.topic?.lesson?.module?.courseId || quiz.lesson?.module?.courseId || quiz.module?.courseId || quiz.courseId;
+    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
+
+    await prisma.quizProgress.upsert({
+      where: { studentId_quizId: { studentId, quizId: entityId } },
+      create: { studentId, quizId: entityId, visited, visitedAt: visited ? now : null },
+      update: { visited, visitedAt: visited ? now : null }
+    });
+  } else if (entityType === 'ASSIGNMENT') {
+    const assignment = await prisma.assignment.findUnique({
+      where: { id: entityId },
+      include: {
+        topic: { include: { lesson: { include: { module: true } } } },
+        lesson: { include: { module: true } },
+        module: true
+      }
+    });
+    if (!assignment) throw Object.assign(new Error('Assignment not found'), { statusCode: 404 });
+    courseId = assignment.topic?.lesson?.module?.courseId || assignment.lesson?.module?.courseId || assignment.module?.courseId || assignment.courseId;
+    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
+
+    await prisma.assignmentProgress.upsert({
+      where: { studentId_assignmentId: { studentId, assignmentId: entityId } },
+      create: { studentId, assignmentId: entityId, visited, visitedAt: visited ? now : null },
+      update: { visited, visitedAt: visited ? now : null }
+    });
+  } else if (entityType === 'TOPIC') {
+    const topic = await prisma.topic.findUnique({
+      where: { id: entityId },
+      include: { lesson: { include: { module: true } } }
+    });
+    if (!topic) throw Object.assign(new Error('Topic not found'), { statusCode: 404 });
+    courseId = topic.lesson.module.courseId;
+    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
+
+    await prisma.topicProgress.upsert({
+      where: { studentId_topicId: { studentId, topicId: entityId } },
+      create: { studentId, topicId: entityId, visited, visitedAt: visited ? now : null },
+      update: { visited, visitedAt: visited ? now : null }
+    });
+  } else if (entityType === 'LESSON') {
+    const lesson = await prisma.lesson.findUnique({
+      where: { id: entityId },
+      include: { module: true }
+    });
+    if (!lesson) throw Object.assign(new Error('Lesson not found'), { statusCode: 404 });
+    courseId = lesson.module.courseId;
+    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
+
+    await prisma.lessonProgress.upsert({
+      where: { studentId_lessonId: { studentId, lessonId: entityId } },
+      create: { studentId, lessonId: entityId, visited, visitedAt: visited ? now : null },
+      update: { visited, visitedAt: visited ? now : null }
+    });
+  } else if (entityType === 'MODULE') {
+    const moduleItem = await prisma.module.findUnique({
+      where: { id: entityId }
+    });
+    if (!moduleItem) throw Object.assign(new Error('Module not found'), { statusCode: 404 });
+    courseId = moduleItem.courseId;
+    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
+
+    await prisma.moduleProgress.upsert({
+      where: { studentId_moduleId: { studentId, moduleId: entityId } },
+      create: { studentId, moduleId: entityId, visited, visitedAt: visited ? now : null },
+      update: { visited, visitedAt: visited ? now : null }
+    });
+  } else {
+    throw Object.assign(new Error('Invalid entity type for visited progress'), { statusCode: 400 });
+  }
+
+  let rollup = null;
+  if (courseId) {
+    rollup = await recomputeCourseProgress(studentId, courseId, null, { includeTree: true });
+  }
+
+  return {
+    entityType,
+    entityId,
+    studentId,
+    visited,
+    courseProgress: rollup
+  };
+}
+
+/**
  * Authorizes a request to read a student's progress in a course.
  *
  * - ADMIN may read any student's progress.
@@ -190,22 +328,41 @@ async function getStudentCourseProgress(studentId, courseId) {
   const completedLessonIds = [];
   const completedModuleIds = [];
 
+  const visitedContentIds = [];
+  const visitedQuizIds = [];
+  const visitedAssignmentIds = [];
+  const visitedTopicIds = [];
+  const visitedLessonIds = [];
+  const visitedModuleIds = [];
+
   const collectDirect = (entity) => {
-    entity.contents.forEach((c) => { if (c.completed) completedContentIds.push(c.id); });
-    entity.quizzes.forEach((q) => { if (q.completed) completedQuizIds.push(q.id); });
-    entity.assignments.forEach((a) => { if (a.completed) completedAssignmentIds.push(a.id); });
+    entity.contents.forEach((c) => {
+      if (c.completed) completedContentIds.push(c.id);
+      if (c.visited) visitedContentIds.push(c.id);
+    });
+    entity.quizzes.forEach((q) => {
+      if (q.completed) completedQuizIds.push(q.id);
+      if (q.visited) visitedQuizIds.push(q.id);
+    });
+    entity.assignments.forEach((a) => {
+      if (a.completed) completedAssignmentIds.push(a.id);
+      if (a.visited) visitedAssignmentIds.push(a.id);
+    });
   };
 
   collectDirect(hierarchy);
   for (const mod of hierarchy.modules) {
     collectDirect(mod);
     if (mod.completed) completedModuleIds.push(mod.id);
+    if (mod.visited) visitedModuleIds.push(mod.id);
     for (const lesson of mod.lessons) {
       collectDirect(lesson);
       if (lesson.completed) completedLessonIds.push(lesson.id);
+      if (lesson.visited) visitedLessonIds.push(lesson.id);
       for (const topic of lesson.topics) {
         collectDirect(topic);
         if (topic.completed) completedTopicIds.push(topic.id);
+        if (topic.visited) visitedTopicIds.push(topic.id);
       }
     }
   }
@@ -219,7 +376,13 @@ async function getStudentCourseProgress(studentId, courseId) {
     topicProgresses: completedTopicIds,
     completedContentIds,
     completedQuizIds,
-    completedAssignmentIds
+    completedAssignmentIds,
+    visitedModuleProgresses: visitedModuleIds,
+    visitedLessonProgresses: visitedLessonIds,
+    visitedTopicProgresses: visitedTopicIds,
+    visitedContentIds,
+    visitedQuizIds,
+    visitedAssignmentIds
   };
 }
 
@@ -334,6 +497,7 @@ module.exports = {
   assertCourseProgressAccess,
   completeContent,
   completeLesson,
+  markVisited,
   getStudentCourseProgress,
   getStudentOverallProgress,
   getInstructorCourseProgress,
