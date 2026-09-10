@@ -92,6 +92,7 @@ model StudentProfile {
   bookmarks                   Bookmark[]
   achievements                StudentAchievement[]
   assignmentSubmissions       AssignmentSubmission[]
+  contentSubmissions          ContentSubmission[]
   batches                     Batch[]                       @relation("BatchToStudentProfile")
   lessonQueries               LessonQuery[]
   videoAnalytics              VideoAnalytics[]
@@ -278,6 +279,8 @@ model Content {
   lesson      Lesson?           @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   topic       Topic?            @relation(fields: [topicId], references: [id], onDelete: Cascade)
   progresses  ContentProgress[]
+  submissions ContentSubmission[]
+  lessonQueries LessonQuery[]
   
 
   @@unique([courseId, order])
@@ -289,6 +292,13 @@ model Content {
 model LessonQuery {
   id         String            @id @default(cuid())
   lessonId   String
+  // The one item the student asked from — a content block, a quiz or an
+  // assignment (at most one is set). All optional so lesson-wide questions
+  // (and every existing row) stay valid. A question tied to an item is only
+  // ever listed back to the student on that item.
+  contentId    String?
+  quizId       String?
+  assignmentId String?
   studentId  String
   question   String
   reply      String?
@@ -296,9 +306,15 @@ model LessonQuery {
   createdAt  DateTime          @default(now())
   answeredAt DateTime?
   lesson     Lesson            @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  content    Content?          @relation(fields: [contentId], references: [id], onDelete: SetNull)
+  quiz       Quiz?             @relation(fields: [quizId], references: [id], onDelete: SetNull)
+  assignment Assignment?       @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
   student    StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@index([lessonId])
+  @@index([contentId])
+  @@index([quizId])
+  @@index([assignmentId])
   @@index([studentId])
 }
 
@@ -497,6 +513,7 @@ model Quiz {
   topic            Topic?           @relation(fields: [topicId], references: [id], onDelete: Cascade)
   quizSubmissions  QuizSubmission[]
   quizProgresses   QuizProgress[]
+  lessonQueries    LessonQuery[]
   instructions     String?          @db.Text
   shuffleQuestions Boolean          @default(false)
   shuffleOptions   Boolean          @default(false)
@@ -789,6 +806,7 @@ model Assignment {
   topic          Topic?                 @relation(fields: [topicId], references: [id], onDelete: Cascade)
   submissions    AssignmentSubmission[]
   progresses     AssignmentProgress[]
+  lessonQueries  LessonQuery[]
 
   @@index([courseId])
   @@index([moduleId])
@@ -813,12 +831,39 @@ model AssignmentSubmission {
   fileName     String?
   fileSize     Int?
   fileType     String?
+  // Optional typed/pasted answer, alongside or instead of the PDF.
+  textAnswer   String?
 
   assignment   Assignment     @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   student      StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, assignmentId])
   @@index([studentId])
+}
+
+// A student's uploaded PDF for a lesson-composer Assignment block — a Content
+// row with type ASSIGNMENT, which has no Assignment row of its own. Same shape
+// and one-per-student semantics as AssignmentSubmission.
+model ContentSubmission {
+  id          String         @id @default(cuid())
+  contentId   String
+  studentId   String
+  status      String         @default("Submitted")
+  grade       String?
+  feedback    String?
+  submittedAt DateTime       @default(now())
+  // A PDF, a written answer, or both — at least one is enforced on submit.
+  fileUrl     String?
+  fileName    String?
+  fileSize    Int?
+  fileType    String?
+  textAnswer  String?
+
+  content     Content        @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, contentId])
+  @@index([contentId])
 }
 
 model CalendarEvent {

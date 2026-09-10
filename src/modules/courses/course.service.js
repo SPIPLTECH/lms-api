@@ -494,12 +494,19 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
       // The deep tree. Omitted entirely when includeModules is false so
       // metadata-only callers don't transfer every content cell and quiz answer.
       ...(includeModules ? {
+      // Content attached directly to the Course / a Module / a Lesson (not
+      // under a Topic). The student player and Course Map need these to
+      // reach — and step through — every item the progress roll-up counts;
+      // without them those rows did nothing when clicked and Next stopped
+      // short of them.
+      contents: { orderBy: { order: "asc" } },
       modules: {
         where: isStudentOrGuest ? { isPublished: true } : undefined,
         orderBy: {
           order: "asc"
         },
         include: {
+          contents: { orderBy: { order: "asc" } },
           quizzes: {
             orderBy: { order: "asc" },
             include: {
@@ -530,6 +537,7 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
               order: "asc"
             },
             include: {
+              contents: { orderBy: { order: "asc" } },
               quizzes: {
                 orderBy: { order: "asc" },
                 include: {
@@ -646,6 +654,7 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
         lesson.completed = completedSet.has(lesson.id);
         if (locked) {
           lesson.topics = [];
+          lesson.contents = [];
         }
       });
     });

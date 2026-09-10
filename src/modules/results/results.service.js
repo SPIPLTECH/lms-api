@@ -31,8 +31,13 @@ const dateRangeWhere = (startDate, endDate) => {
   return range;
 };
 
+// Quiz tags a caller may filter by; anything else is ignored rather than
+// passed to Prisma (where an unknown enum value would throw).
+const QUIZ_TAGS = ["FINAL", "SELF_TEST"];
+
 const getResults = async (instructorId, filters = {}) => {
   const { courseId, batchId, quizId, assignmentId, studentId, startDate, endDate } = filters;
+  const quizTag = QUIZ_TAGS.includes(filters.quizTag) ? filters.quizTag : undefined;
 
   const courseIds = await resolveCourseIds(instructorId, courseId);
   const batchStudentIds = await resolveBatchStudentIds(batchId);
@@ -45,7 +50,9 @@ const getResults = async (instructorId, filters = {}) => {
 
   const quizWhere = {
     courseId: { in: courseIds },
-    ...(quizId ? { id: quizId } : {})
+    ...(quizId ? { id: quizId } : {}),
+    // e.g. quizTag=FINAL: only formal Final tests, never learner Self-Tests.
+    ...(quizTag ? { quizTag } : {})
   };
 
   const submissionWhere = {
@@ -63,6 +70,7 @@ const getResults = async (instructorId, filters = {}) => {
           id: true,
           title: true,
           passingScore: true,
+          course: { select: { id: true, title: true } },
           quizQuestions: {
             select: {
               question: {
@@ -72,7 +80,7 @@ const getResults = async (instructorId, filters = {}) => {
           }
         }
       },
-      student: { include: { user: { select: { id: true, name: true } } } }
+      student: { include: { user: { select: { id: true, name: true, email: true } } } }
     },
     orderBy: { submittedAt: "desc" }
   });
@@ -113,8 +121,11 @@ const getResults = async (instructorId, filters = {}) => {
     submissionId: s.id,
     studentId: s.studentId,
     studentName: s.student?.user?.name || "—",
+    studentEmail: s.student?.user?.email || "",
     quizId: s.quiz?.id,
     title: s.quiz?.title,
+    courseId: s.quiz?.course?.id || null,
+    courseTitle: s.quiz?.course?.title || "",
     score: s.score,
     totalMarks: s.totalMarks,
     percentage: s.percentage,

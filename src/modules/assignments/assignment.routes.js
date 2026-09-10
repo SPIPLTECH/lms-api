@@ -10,7 +10,8 @@ const validate = require("../../middleware/joiValidation.middleware");
 const {
   createAssignmentSchema,
   updateAssignmentSchema,
-  submitAssignmentSchema
+  submitAssignmentSchema,
+  gradeSubmissionSchema
 } = require("./assignment.validation");
 
 router.get(
@@ -36,6 +37,15 @@ router.get(
     checkRole(["INSTRUCTOR", "ADMIN"]),
     verifyAssignmentOwnership,
     controller.getAssignmentSubmissions
+);
+
+router.patch(
+    "/:assignmentId/submissions/:submissionId/grade",
+    verifyToken,
+    checkRole(["INSTRUCTOR", "ADMIN"]),
+    verifyAssignmentOwnership,
+    validate(gradeSubmissionSchema),
+    controller.gradeSubmission
 );
 
 router.post(

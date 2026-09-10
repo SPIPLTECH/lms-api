@@ -2,7 +2,7 @@ const resultsService = require("./results.service");
 
 const getResults = async (req, res, next) => {
   try {
-    const { courseId, batchId, quizId, assignmentId, examId, studentId, startDate, endDate } = req.query;
+    const { courseId, batchId, quizId, assignmentId, examId, studentId, startDate, endDate, quizTag } = req.query;
     const results = await resultsService.getResults(req.user.id, {
       courseId,
       batchId,
@@ -11,7 +11,8 @@ const getResults = async (req, res, next) => {
       examId,
       studentId,
       startDate,
-      endDate
+      endDate,
+      quizTag
     });
 
     res.json({

@@ -455,7 +455,9 @@ async function getInstructorCourseProgress(courseId) {
   const studentList = [];
 
   for (const enc of enrollments) {
-    const rollup = await recomputeCourseProgress(enc.studentId, courseId);
+    // Read-only: an instructor viewing analytics must not write progress rows
+    // or stamp every student's lastAccessedAt with "now".
+    const rollup = await recomputeCourseProgress(enc.studentId, courseId, null, { persist: false });
     const percent = rollup.progressPercent;
     totalPercentSum += percent;
 

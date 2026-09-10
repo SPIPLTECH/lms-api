@@ -22,7 +22,7 @@ const getAssignments = async (studentId) => {
         orderBy: { createdAt: "desc" }
     });
 
-    return assignments.map(a => {
+    const assignmentItems = assignments.map(a => {
         const submission = a.submissions[0];
         let status = "Not Submitted";
         if (submission) {
@@ -42,8 +42,61 @@ const getAssignments = async (studentId) => {
             course: a.course,
             grade: submission?.grade || null,
             feedback: submission?.feedback || null,
+            submittedAt: submission?.submittedAt || null,
+            kind: "assignment",
         };
     });
+
+    // Lesson-composer Assignment blocks (Content type ASSIGNMENT) from the
+    // same enrolled courses, so the student's Assignments page lists — and
+    // shows the grade and feedback for — both kinds in one place.
+    const enrolled = { enrollments: { some: { studentId } } };
+    const COURSE = { select: { id: true, title: true } };
+    const contents = await prisma.content.findMany({
+        where: {
+            type: "ASSIGNMENT",
+            OR: [
+                { course: enrolled },
+                { module: { course: enrolled } },
+                { lesson: { module: { course: enrolled } } },
+                { topic: { lesson: { module: { course: enrolled } } } },
+            ],
+        },
+        include: {
+            course: COURSE,
+            module: { select: { course: COURSE } },
+            lesson: { select: { module: { select: { course: COURSE } } } },
+            topic: { select: { lessonId: true, lesson: { select: { module: { select: { course: COURSE } } } } } },
+            submissions: { where: { studentId } },
+        },
+        orderBy: { createdAt: "desc" },
+    });
+
+    const contentItems = contents.map((c) => {
+        const submission = c.submissions[0];
+        return {
+            id: c.id,
+            kind: "content",
+            title: c.title || "Assignment",
+            description: c.htmlContent,
+            dueDate: null,
+            createdAt: c.createdAt,
+            status: submission?.status || "Not Submitted",
+            course:
+                c.course ||
+                c.module?.course ||
+                c.lesson?.module?.course ||
+                c.topic?.lesson?.module?.course ||
+                null,
+            // The course player deep-links by lesson; a topic's lesson works too.
+            lessonId: c.lessonId || c.topic?.lessonId || null,
+            grade: submission?.grade || null,
+            feedback: submission?.feedback || null,
+            submittedAt: submission?.submittedAt || null,
+        };
+    });
+
+    return [...assignmentItems, ...contentItems];
 };
 
 const getAssignmentById = async (assignmentId, studentId) => {
@@ -101,6 +154,7 @@ const getAssignmentById = async (assignmentId, studentId) => {
                 fileName: submission.fileName || null,
                 fileSize: submission.fileSize || null,
                 fileType: submission.fileType || null,
+                textAnswer: submission.textAnswer || null,
                 submittedAt: submission.submittedAt
             }
             : null,
@@ -138,6 +192,10 @@ const submitAssignment = async (assignmentId, studentId, data) => {
         fileName: data?.fileName ?? null,
         fileSize: data?.fileSize ?? null,
         fileType: data?.fileType ?? null,
+        // "A PDF or a written answer" is enforced for HTTP callers by
+        // submitAssignmentSchema; the service itself still accepts a bare
+        // submission, as it always has (progress roll-up callers rely on it).
+        textAnswer: data?.textAnswer?.trim() || null,
     };
 
     const submission = await prisma.assignmentSubmission.upsert({
@@ -150,6 +208,10 @@ const submitAssignment = async (assignmentId, studentId, data) => {
         update: {
             status: "Submitted",
             submittedAt: new Date(),
+            // A resubmission replaces the graded PDF, so the old grade no
+            // longer applies — it goes back to the instructor's ungraded list.
+            grade: null,
+            feedback: null,
             ...fileFields,
         },
         create: {
@@ -320,8 +382,39 @@ const getAssignmentSubmissions = async (assignmentId) => {
             fileUrl: s.fileUrl || null,
             fileName: s.fileName || null,
             fileSize: s.fileSize || null,
-            fileType: s.fileType || null
+            fileType: s.fileType || null,
+            textAnswer: s.textAnswer || null
         }))
+    };
+};
+
+/**
+ * Instructor grades one student submission. Route-level ownership
+ * (verifyAssignmentOwnership) has already run; the submission must belong to
+ * this assignment, so a submissionId from another assignment is a 404.
+ */
+const gradeAssignmentSubmission = async (assignmentId, submissionId, { grade, feedback }) => {
+    const existing = await prisma.assignmentSubmission.findFirst({
+        where: { id: submissionId, assignmentId },
+        select: { id: true }
+    });
+
+    if (!existing) {
+        const err = new Error("Submission not found.");
+        err.statusCode = 404;
+        throw err;
+    }
+
+    const updated = await prisma.assignmentSubmission.update({
+        where: { id: submissionId },
+        data: { grade, feedback: feedback || null, status: "Graded" }
+    });
+
+    return {
+        id: updated.id,
+        status: updated.status,
+        grade: updated.grade,
+        feedback: updated.feedback
     };
 };
 
@@ -397,6 +490,7 @@ module.exports = {
     submitAssignment,
     getInstructorAssignments,
     getAssignmentSubmissions,
+    gradeAssignmentSubmission,
     createAssignment,
     updateAssignment,
     deleteAssignment,

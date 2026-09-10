@@ -26,6 +26,13 @@ const prisma = require('../config/database');
  *
  * Pass `options.includeTree` to also receive the authoritative hierarchical progress
  * tree (Course -> Module -> Lesson -> Topic -> Content/Quiz/Assignment).
+ *
+ * Pass `options.persist: false` for a read-only computation (e.g. an
+ * instructor viewing a student list): the same numbers and tree, but no
+ * Topic/Lesson/Module progress rows are written and the enrollment is not
+ * touched — so viewing never bumps a student's lastAccessedAt. Every level's
+ * completion is computed from in-memory maps, so skipping the writes cannot
+ * change the result.
  */
 const ASSIGNMENT_COMPLETED_STATUSES = ['Submitted', 'Graded'];
 
@@ -36,6 +43,7 @@ function isAssignmentSubmissionComplete(submission) {
 async function recomputeCourseProgress(studentId, courseId, tx = null, options = {}) {
   const client = tx || prisma;
   const includeTree = options.includeTree === true;
+  const persist = options.persist !== false;
 
   const contentSelect = { id: true, title: true, type: true, order: true, duration: true };
   const quizSelect = {
@@ -323,11 +331,13 @@ async function recomputeCourseProgress(studentId, courseId, tx = null, options =
         const visitedAt = isVisited ? (existing?.visited ? existing.visitedAt : now) : null;
         topicVisitedAtMap.set(topic.id, visitedAt);
 
-        await client.topicProgress.upsert({
-          where: { studentId_topicId: { studentId, topicId: topic.id } },
-          create: { studentId, topicId: topic.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
-          update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
-        });
+        if (persist) {
+          await client.topicProgress.upsert({
+            where: { studentId_topicId: { studentId, topicId: topic.id } },
+            create: { studentId, topicId: topic.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
+            update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
+          });
+        }
       }
     }
   }
@@ -365,11 +375,13 @@ async function recomputeCourseProgress(studentId, courseId, tx = null, options =
       const visitedAt = isVisited ? (existing?.visited ? existing.visitedAt : now) : null;
       lessonVisitedAtMap.set(lesson.id, visitedAt);
 
-      await client.lessonProgress.upsert({
-        where: { studentId_lessonId: { studentId, lessonId: lesson.id } },
-        create: { studentId, lessonId: lesson.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
-        update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
-      });
+      if (persist) {
+        await client.lessonProgress.upsert({
+          where: { studentId_lessonId: { studentId, lessonId: lesson.id } },
+          create: { studentId, lessonId: lesson.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
+          update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
+        });
+      }
     }
   }
 
@@ -405,11 +417,13 @@ async function recomputeCourseProgress(studentId, courseId, tx = null, options =
     const visitedAt = isVisited ? (existing?.visited ? existing.visitedAt : now) : null;
     moduleVisitedAtMap.set(mod.id, visitedAt);
 
-    await client.moduleProgress.upsert({
-      where: { studentId_moduleId: { studentId, moduleId: mod.id } },
-      create: { studentId, moduleId: mod.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
-      update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
-    });
+    if (persist) {
+      await client.moduleProgress.upsert({
+        where: { studentId_moduleId: { studentId, moduleId: mod.id } },
+        create: { studentId, moduleId: mod.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
+        update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
+      });
+    }
   }
 
   // 7. Helper functions for mapping items and building direct item counts
@@ -574,9 +588,11 @@ async function recomputeCourseProgress(studentId, courseId, tx = null, options =
   const isCourseCompleted = courseTotalItems > 0 && courseCompletedItems === courseTotalItems;
   const isCourseVisited = courseTotalItems > 0 && courseVisitedItems === courseTotalItems;
 
-  const existingEnrollment = await client.enrollment.findUnique({
-    where: { studentId_courseId: { studentId, courseId } }
-  });
+  const existingEnrollment = persist
+    ? await client.enrollment.findUnique({
+        where: { studentId_courseId: { studentId, courseId } }
+      })
+    : null;
 
   if (existingEnrollment) {
     const courseCompletedAt = isCourseCompleted

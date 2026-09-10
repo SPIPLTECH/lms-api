@@ -34,8 +34,15 @@ const getMyQueries = async (req, res, next) => {
 
 const getMyQuestions = async (req, res, next) => {
   try {
-    const { courseId } = req.query;
-    const queries = await lessonQueryService.getQueriesForStudent(req.user.id, { courseId });
+    const { courseId, lessonId, contentId, quizId, assignmentId, lessonOnly } = req.query;
+    const queries = await lessonQueryService.getQueriesForStudent(req.user.id, {
+      courseId,
+      lessonId,
+      contentId,
+      quizId,
+      assignmentId,
+      lessonOnly
+    });
 
     res.json({
       success: true,

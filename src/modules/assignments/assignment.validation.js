@@ -49,11 +49,12 @@ const updateAssignmentSchema = Joi.object({
   status: Joi.string().optional().allow(null, "")
 });
 
-// The student's final answer is one uploaded PDF. The file is already in blob
-// storage by the time this runs (the upload route enforces PDF as well), so
-// these checks are the server-side half of that rule rather than a substitute
-// for it: a caller hitting this endpoint directly still cannot register a
-// non-PDF, or a submission carrying no file at all.
+// The student's answer is an uploaded PDF, a typed/pasted written answer, or
+// both — but never neither. Any file is already in blob storage by the time
+// this runs (the upload route enforces PDF as well), so these checks are the
+// server-side half of that rule rather than a substitute for it: a caller
+// hitting this endpoint directly still cannot register a non-PDF, or an empty
+// submission.
 const PDF_URL_PATTERN = /\.pdf(\?|#|$)/i;
 
 const submitAssignmentSchema = Joi.object({
@@ -61,25 +62,48 @@ const submitAssignmentSchema = Joi.object({
   fileUrl: Joi.string()
     .uri()
     .pattern(PDF_URL_PATTERN)
-    .required()
-    .messages({
-      "string.pattern.base": "The submitted file must be a PDF.",
-      "any.required": "A completed assignment PDF is required to submit."
-    }),
+    .optional()
+    .messages({ "string.pattern.base": "The submitted file must be a PDF." }),
   fileName: Joi.string()
     .pattern(/\.pdf$/i)
-    .required()
+    .optional()
     .messages({ "string.pattern.base": "The submitted file must be a PDF." }),
+  textAnswer: Joi.string()
+    .trim()
+    .max(20000)
+    .optional()
+    .messages({
+      "string.empty": "The written answer cannot be empty.",
+      "string.max": "The written answer must be 20,000 characters or fewer."
+    }),
   fileSize: Joi.number().integer().min(1).optional().allow(null),
   fileType: Joi.string()
     .valid("application/pdf")
     .optional()
     .allow(null, "")
     .messages({ "any.only": "The submitted file must be a PDF." })
+})
+  .with("fileUrl", "fileName")
+  .or("fileUrl", "textAnswer")
+  .messages({
+    "object.missing": "Upload a PDF or write an answer to submit.",
+    "object.with": "A file name is required with the uploaded PDF."
+  });
+
+// Instructor grading of one student submission — used for both Assignment
+// submissions and lesson-composer (Content) assignment submissions. Grade is
+// free text ("A", "8/10", "Pass") to match the String column.
+const gradeSubmissionSchema = Joi.object({
+  grade: Joi.string().trim().max(20).required().messages({
+    "any.required": "A grade is required.",
+    "string.empty": "A grade is required."
+  }),
+  feedback: Joi.string().trim().max(2000).optional().allow(null, "")
 });
 
 module.exports = {
   createAssignmentSchema,
   updateAssignmentSchema,
-  submitAssignmentSchema
+  submitAssignmentSchema,
+  gradeSubmissionSchema
 };

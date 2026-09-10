@@ -126,10 +126,29 @@ const getAssignmentSubmissions = async (req, res, next) => {
     }
 };
 
+/** Instructor grades one submission. Ownership is enforced on the route. */
+const gradeSubmission = async (req, res, next) => {
+    try {
+        const data = await assignmentService.gradeAssignmentSubmission(
+            req.params.assignmentId,
+            req.params.submissionId,
+            req.body
+        );
+        res.json({
+            success: true,
+            message: "Grade saved.",
+            data,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     getAssignments,
     getAssignmentById,
     getAssignmentSubmissions,
+    gradeSubmission,
     submitAssignment,
     createAssignment,
     updateAssignment,
