@@ -17,6 +17,12 @@ class QuestionRepositoryService {
       search = "",
       subject = "",
       topic = "",
+      // The repository UI has offered Course and Module dropdowns all along,
+      // but they were never destructured here, so the query string carried
+      // them and this method dropped them on the floor — the list came back
+      // unfiltered and the two controls looked broken.
+      courseId = "",
+      moduleId = "",
       difficulty = "",
       questionType = "",
       tags = "",
@@ -72,6 +78,16 @@ class QuestionRepositoryService {
 
     if (topic) {
       where.topic = { equals: topic, mode: "insensitive" };
+    }
+
+    // Both are exact-id matches, and both are nullable on Question — a
+    // repository question need not belong to any course.
+    if (courseId) {
+      where.courseId = courseId;
+    }
+
+    if (moduleId) {
+      where.moduleId = moduleId;
     }
 
     if (difficulty) {

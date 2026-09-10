@@ -299,16 +299,12 @@ const getInstructorDashboard = async (instructorId, courseId) => {
       _avg: { rating: true },
       _count: { rating: true }
     }),
-    // 5. Inactive Students Count (no course access recorded in 5+ days)
+    // 5. Inactive Students Count (no activity for 5+ days)
     prisma.studentProfile.count({
       where: {
         enrollments: {
           some: {
-            courseId: { in: targetCourseIds },
-            OR: [
-              { lastAccessedAt: null },
-              { lastAccessedAt: { lt: fiveDaysAgo } }
-            ]
+            courseId: { in: targetCourseIds }
           }
         }
       }

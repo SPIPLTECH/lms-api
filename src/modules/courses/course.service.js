@@ -1,6 +1,7 @@
 const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
 const ApiError = require("../../utils/ApiError");
+const { buildLessonLockMap } = require("../../utils/dripAccess");
 // const verifyToken = require(
 //   "../../middleware/auth.middleware"
 // );
@@ -25,10 +26,14 @@ const buildCourseStatsMap = async (courseIds) => {
         upcomingLiveClassesCount: 0,
         pendingSubmissionsCount: 0,
         pendingDoubtsCount: 0,
+        completionRate: 0,
         videosCount: 0,
         pdfsCount: 0,
         notesCount: 0,
+        activeStudents: 0,
+        inactiveStudents: 0,
         contentHealth: "Needs Work",
+        engagementHealth: "Needs Work",
         recentActivity: []
       }
     ])
@@ -166,6 +171,63 @@ const buildCourseStatsMap = async (courseIds) => {
     if (stats) stats.pendingDoubtsCount += 1;
   }
 
+  // Course-level completion rate: average, across enrolled students, of
+  // (lessons that student completed / total lessons in the course).
+  const lessonIdsByCourse = new Map();
+  for (const module of modules) {
+    if (!lessonIdsByCourse.has(module.courseId)) lessonIdsByCourse.set(module.courseId, []);
+    lessonIdsByCourse.get(module.courseId).push(...module.lessons.map((l) => l.id));
+  }
+
+  const allLessonIds = modules.flatMap((m) => m.lessons.map((l) => l.id));
+  const allStudentIds = [...new Set(enrollments.map((e) => e.studentId))];
+
+  const progressRows =
+    allLessonIds.length > 0 && allStudentIds.length > 0
+      ? await prisma.progress.findMany({
+          where: { lessonId: { in: allLessonIds }, studentId: { in: allStudentIds }, completed: true },
+          select: { lessonId: true, studentId: true }
+        })
+      : [];
+
+  const lessonToCourseId = new Map();
+  for (const module of modules) {
+    for (const lesson of module.lessons) lessonToCourseId.set(lesson.id, module.courseId);
+  }
+
+  const completedCountByStudentCourse = new Map();
+  for (const row of progressRows) {
+    const courseId = lessonToCourseId.get(row.lessonId);
+    if (!courseId) continue;
+    const key = `${courseId}::${row.studentId}`;
+    completedCountByStudentCourse.set(key, (completedCountByStudentCourse.get(key) || 0) + 1);
+  }
+
+  const enrollmentsByCourse = new Map();
+  for (const e of enrollments) {
+    if (!enrollmentsByCourse.has(e.courseId)) enrollmentsByCourse.set(e.courseId, []);
+    enrollmentsByCourse.get(e.courseId).push(e.studentId);
+  }
+
+  for (const [courseId, studentIds] of enrollmentsByCourse.entries()) {
+    const totalLessons = (lessonIdsByCourse.get(courseId) || []).length;
+    const stats = statsMap.get(courseId);
+    if (!stats || totalLessons === 0 || studentIds.length === 0) continue;
+
+    const percentages = studentIds.map((studentId) => {
+      const completed = completedCountByStudentCourse.get(`${courseId}::${studentId}`) || 0;
+      return (completed / totalLessons) * 100;
+    });
+    stats.completionRate = Math.round(percentages.reduce((sum, p) => sum + p, 0) / percentages.length);
+    
+    // Rough heuristic for active vs inactive students (if they have >0 completion, active)
+    stats.activeStudents = percentages.filter((p) => p > 0).length;
+    stats.inactiveStudents = percentages.filter((p) => p === 0).length;
+    
+    if (stats.completionRate > 50) stats.engagementHealth = "Healthy";
+    else if (stats.completionRate > 20) stats.engagementHealth = "Average";
+  }
+
   // Generate health metrics and recent activity timeline
   for (const courseId of courseIds) {
     const stats = statsMap.get(courseId);
@@ -252,7 +314,6 @@ const getCourses = async (
     category,
     level,
     sortBy = "newest",
-    scope,
   } = {}
 ) => {
   const where = {};
@@ -300,7 +361,7 @@ const getCourses = async (
   if (role === "ADMIN") {
     query.include = commonInclude;
     if (status) where.status = status;
-  } else if (role === "INSTRUCTOR" && scope !== "all") {
+  } else if (role === "INSTRUCTOR") {
     where.creatorId = userId;
     query.include = commonInclude;
     if (status) where.status = status;
@@ -333,7 +394,7 @@ const getCourses = async (
  * is the right tool; the instructor id is parameterised, never interpolated.
  */
 const getCourseStatusCounts = async (instructorId) => {
-  const [total, published, draft, archived, activeQuizzes, studentRows] =
+  const [total, published, draft, archived, activeQuizzes, lessons, studentRows] =
     await Promise.all([
       prisma.course.count({ where: { creatorId: instructorId } }),
       prisma.course.count({ where: { creatorId: instructorId, status: "PUBLISHED" } }),
@@ -341,6 +402,11 @@ const getCourseStatusCounts = async (instructorId) => {
       prisma.course.count({ where: { creatorId: instructorId, status: "ARCHIVED" } }),
       prisma.quiz.count({
         where: { isPublished: true, course: { creatorId: instructorId } },
+      }),
+      // Lessons hang off the course through Module, so the filter walks
+      // lesson -> module -> course rather than counting a fetched list.
+      prisma.lesson.count({
+        where: { module: { course: { creatorId: instructorId } } },
       }),
       prisma.$queryRaw`
         SELECT COUNT(DISTINCT e."studentId")::int AS count
@@ -356,6 +422,7 @@ const getCourseStatusCounts = async (instructorId) => {
     draft,
     archived,
     activeQuizzes,
+    lessons,
     students: Number(studentRows?.[0]?.count ?? 0),
   };
 };
@@ -433,20 +500,7 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
           order: "asc"
         },
         include: {
-          // Direct (module-level) learning items. These are counted by the
-          // Progress roll-up, so the learning tree has to return them too or a
-          // student can never complete what their progress bar is waiting on.
-          contents: {
-            where: { lessonId: null, topicId: null },
-            orderBy: { order: "asc" }
-          },
-          assignments: {
-            where: isStudentOrGuest
-              ? { isPublished: true, lessonId: null, topicId: null }
-              : { lessonId: null, topicId: null }
-          },
           quizzes: {
-            where: isStudentOrGuest ? { isPublished: true } : undefined,
             orderBy: { order: "asc" },
             include: {
               quizQuestions: {
@@ -476,18 +530,7 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
               order: "asc"
             },
             include: {
-              // Direct (lesson-level) learning items counted by Progress.
-              contents: {
-                where: { topicId: null },
-                orderBy: { order: "asc" }
-              },
-              assignments: {
-                where: isStudentOrGuest
-                  ? { isPublished: true, topicId: null }
-                  : { topicId: null }
-              },
               quizzes: {
-                where: isStudentOrGuest ? { isPublished: true } : undefined,
                 orderBy: { order: "asc" },
                 include: {
                   quizQuestions: {
@@ -512,13 +555,11 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
                 }
               },
               topics: {
-                where: isStudentOrGuest ? { isPublished: true } : undefined,
                 orderBy: {
                   order: "asc"
                 },
                 include: {
                   quizzes: {
-                    where: isStudentOrGuest ? { isPublished: true } : undefined,
                     orderBy: { order: "asc" },
                     include: {
                       quizQuestions: {
@@ -547,10 +588,6 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
                       order: "asc"
                     }
                   },
-                  // Topic-level assignments counted by Progress.
-                  assignments: {
-                    where: isStudentOrGuest ? { isPublished: true } : undefined
-                  },
                   _count: {
                     select: { contents: true }
                   }
@@ -563,7 +600,6 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
       } : {}),
 
       quizzes: {
-        where: isStudentOrGuest ? { isPublished: true } : undefined,
         orderBy: { order: "asc" },
         include: {
           quizQuestions: {
@@ -591,19 +627,6 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
           }
         }
       },
-      // Direct (course-level) learning items counted by Progress. Content
-      // carries exactly one parent id, so this relation yields only the
-      // course-direct rows; the explicit nulls keep it aligned with the
-      // roll-up's filter if that ever changes.
-      contents: {
-        where: { moduleId: null, lessonId: null, topicId: null },
-        orderBy: { order: "asc" }
-      },
-      assignments: {
-        where: isStudentOrGuest
-          ? { isPublished: true, moduleId: null, lessonId: null, topicId: null }
-          : { moduleId: null, lessonId: null, topicId: null }
-      },
       enrollments: true
     }
   });
@@ -612,6 +635,20 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
 
   if (isStudentOrGuest && course.status !== "PUBLISHED" && !isEnrolledStudent) {
     return null;
+  }
+
+  if (role === "STUDENT") {
+    const { lockMap, completedSet } = await buildLessonLockMap(courseId, studentProfileId);
+    course.modules.forEach((moduleItem) => {
+      moduleItem.lessons.forEach((lesson) => {
+        const locked = lockMap.get(lesson.id) ?? false;
+        lesson.locked = locked;
+        lesson.completed = completedSet.has(lesson.id);
+        if (locked) {
+          lesson.topics = [];
+        }
+      });
+    });
   }
 
   return attachCourseStats(course);
@@ -636,108 +673,6 @@ const updateCourse = async (courseId, data) => {
 };
 
 /**
- * Validates whether a course is ready to be published.
- * Returns structured validation details: { canPublish: boolean, errors: Array<{ code, field, message }> }
- */
-const validateCourseForPublish = async (courseId) => {
-  const course = await prisma.course.findUnique({
-    where: { id: courseId },
-    include: {
-      modules: {
-        orderBy: { order: "asc" },
-        include: {
-          lessons: {
-            orderBy: { order: "asc" },
-            include: {
-              contents: { orderBy: { order: "asc" } },
-              topics: {
-                orderBy: { order: "asc" },
-                include: {
-                  contents: { orderBy: { order: "asc" } }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  });
-
-  if (!course) {
-    throw new ApiError(404, "Course not found");
-  }
-
-  const errors = [];
-
-  if (!course.title || course.title.trim() === "") {
-    errors.push({
-      code: "MISSING_TITLE",
-      field: "title",
-      message: "Course title is required."
-    });
-  }
-
-  if (!course.description || course.description.trim() === "") {
-    errors.push({
-      code: "MISSING_DESCRIPTION",
-      field: "description",
-      message: "Course description is required before publishing."
-    });
-  }
-
-  if (!course.modules || course.modules.length === 0) {
-    errors.push({
-      code: "NO_MODULES",
-      field: "modules",
-      message: "Course must contain at least one module."
-    });
-  } else {
-    for (let mIdx = 0; mIdx < course.modules.length; mIdx++) {
-      const mod = course.modules[mIdx];
-      if (!mod.lessons || mod.lessons.length === 0) {
-        errors.push({
-          code: "EMPTY_MODULE",
-          field: `modules[${mIdx}].lessons`,
-          message: `Module "${mod.title || `Module ${mIdx + 1}`}" must contain at least one lesson.`
-        });
-      } else {
-        for (let lIdx = 0; lIdx < mod.lessons.length; lIdx++) {
-          const lesson = mod.lessons[lIdx];
-          const candidateContents = [
-            ...(lesson.contents || []),
-            ...(lesson.topics || []).flatMap((t) => t.contents || [])
-          ];
-          const hasContent = candidateContents.some((c) => {
-            if (!c) return false;
-            if (typeof c.htmlContent === "string" && c.htmlContent.trim().length > 0) return true;
-            if (typeof c.videoUrl === "string" && c.videoUrl.trim().length > 0) return true;
-            if (typeof c.fileUrl === "string" && c.fileUrl.trim().length > 0) return true;
-            if (typeof c.externalUrl === "string" && c.externalUrl.trim().length > 0) return true;
-            if (c.data !== null && c.data !== undefined) {
-              if (typeof c.data === "object" && Object.keys(c.data).length > 0) return true;
-              if (typeof c.data === "string" && c.data.trim().length > 0) return true;
-            }
-            return false;
-          });
-          if (!hasContent) {
-            errors.push({
-              code: "EMPTY_LESSON",
-              field: `modules[${mIdx}].lessons[${lIdx}].contents`,
-              message: `Lesson "${lesson.title || `Lesson ${lIdx + 1}`}" in module "${mod.title}" must contain usable content.`
-            });
-          }
-        }
-      }
-    }
-  }
-
-  return {
-    canPublish: errors.length === 0,
-    errors
-  };
-};
-
-/**
  * Publishes a course (DRAFT -> PUBLISHED).
  */
 const publishCourse = async (courseId, userId, userRole) => {
@@ -754,14 +689,6 @@ const publishCourse = async (courseId, userId, userRole) => {
 
   if (userRole !== "ADMIN" && course.creatorId !== userId) {
     throw new ApiError(403, "Forbidden: You do not own this course.");
-  }
-
-  const validation = await validateCourseForPublish(courseId);
-  if (!validation.canPublish) {
-    const error = new ApiError(400, "Course is not ready to be published.");
-    error.code = "COURSE_NOT_READY_TO_PUBLISH";
-    error.errors = validation.errors;
-    throw error;
   }
 
   const updatedCourse = await prisma.$transaction(async (tx) => {
@@ -807,7 +734,7 @@ const publishCourse = async (courseId, userId, userRole) => {
 
 /**
  * Unpublishes a course (PUBLISHED -> DRAFT).
- * Student learning data (enrollments, quiz attempts) is strictly PRESERVED.
+ * Student learning data (enrollments, progress, quiz attempts) is strictly PRESERVED.
  */
 const unpublishCourse = async (courseId, userId, userRole) => {
   const course = await prisma.course.findUnique({ where: { id: courseId } });
@@ -914,6 +841,7 @@ const deleteCourse = async (courseId, userId, userRole) => {
   const [
     quizSubmissionsCount,
     assignmentSubmissionsCount,
+    progressCount,
     lessonQueriesCount,
     stickyNotesCount,
     batchesCount,
@@ -921,6 +849,7 @@ const deleteCourse = async (courseId, userId, userRole) => {
   ] = await Promise.all([
     prisma.quizSubmission.count({ where: { quiz: { courseId } } }),
     prisma.assignmentSubmission.count({ where: { assignment: { courseId } } }),
+    prisma.progress.count({ where: { lesson: { module: { courseId } } } }),
     prisma.lessonQuery.count({ where: { lesson: { module: { courseId } } } }),
     prisma.stickyNote.count({ where: { lesson: { module: { courseId } } } }),
     prisma.batch.count({ where: { courseId } }),
@@ -933,6 +862,7 @@ const deleteCourse = async (courseId, userId, userRole) => {
     course._count.certificates > 0 ||
     quizSubmissionsCount > 0 ||
     assignmentSubmissionsCount > 0 ||
+    progressCount > 0 ||
     lessonQueriesCount > 0 ||
     stickyNotesCount > 0 ||
     batchesCount > 0 ||
@@ -1166,12 +1096,31 @@ const getCourseStudents = async (courseId) => {
 
   const studentIds = enrollments.map((e) => e.studentId);
 
-  const submissionRows = studentIds.length > 0
-    ? await prisma.quizSubmission.findMany({
-        where: { studentId: { in: studentIds }, quiz: { courseId } },
-        select: { studentId: true, percentage: true }
-      })
-    : [];
+  const lessons = await prisma.lesson.findMany({
+    where: { module: { courseId } },
+    select: { id: true }
+  });
+  const lessonIds = lessons.map((l) => l.id);
+
+  const [progressRows, submissionRows] = await Promise.all([
+    lessonIds.length > 0 && studentIds.length > 0
+      ? prisma.progress.findMany({
+          where: { studentId: { in: studentIds }, lessonId: { in: lessonIds }, completed: true },
+          select: { studentId: true }
+        })
+      : [],
+    studentIds.length > 0
+      ? prisma.quizSubmission.findMany({
+          where: { studentId: { in: studentIds }, quiz: { courseId } },
+          select: { studentId: true, percentage: true }
+        })
+      : []
+  ]);
+
+  const completedCountByStudent = {};
+  progressRows.forEach((p) => {
+    completedCountByStudent[p.studentId] = (completedCountByStudent[p.studentId] || 0) + 1;
+  });
 
   const scoresByStudent = {};
   submissionRows.forEach((s) => {
@@ -1181,6 +1130,8 @@ const getCourseStudents = async (courseId) => {
 
   return enrollments.map((enrollment) => {
     const studentId = enrollment.studentId;
+    const completed = completedCountByStudent[studentId] || 0;
+    const progress = lessonIds.length > 0 ? Math.round((completed / lessonIds.length) * 100) : 0;
 
     const scores = scoresByStudent[studentId] || [];
     const avgGrade =
@@ -1192,6 +1143,7 @@ const getCourseStudents = async (courseId) => {
       name: enrollment.student.user.name,
       email: enrollment.student.user.email,
       enrolledAt: enrollment.enrolledAt,
+      progress,
       avgGrade
     };
   });
@@ -1307,7 +1259,6 @@ module.exports = {
   updateCourse,
   updateStatus,
   deleteCourse,
-  validateCourseForPublish,
   publishCourse,
   unpublishCourse,
   archiveCourse,

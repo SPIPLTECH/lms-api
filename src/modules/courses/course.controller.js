@@ -127,20 +127,6 @@ const updateCourse = async (
   }
 };
 
-const validatePublish = async (req, res, next) => {
-  try {
-    const validation = await courseService.validateCourseForPublish(
-      req.params.courseId
-    );
-    res.json({
-      success: true,
-      data: validation
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 const publishCourse = async (req, res, next) => {
   try {
     const course = await courseService.publishCourse(
@@ -344,7 +330,6 @@ module.exports = {
   updateCourse,
   updateStatus,
   deleteCourse,
-  validatePublish,
   publishCourse,
   unpublishCourse,
   archiveCourse,

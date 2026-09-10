@@ -63,6 +63,81 @@ const getStudents = async (user) => {
     },
   });
 
+  // Completion is content-based (ContentProgress), not lesson-based — the
+  // Progress model this used to read is gone. Content can hang off a course at
+  // any of four levels, so every level is counted; missing one silently
+  // undercounts the denominator and inflates everyone's percentage.
+  //
+  // Loaded in bulk rather than per student: three queries total regardless of
+  // how many students come back.
+  const studentIds = students.map((s) => s.id);
+  const courseIds = [
+    ...new Set(
+      students.flatMap((s) => s.enrollments.map((e) => e.course?.id).filter(Boolean))
+    ),
+  ];
+
+  const contents = courseIds.length
+    ? await prisma.content.findMany({
+        where: {
+          OR: [
+            { courseId: { in: courseIds } },
+            { module: { courseId: { in: courseIds } } },
+            { lesson: { module: { courseId: { in: courseIds } } } },
+            { topic: { lesson: { module: { courseId: { in: courseIds } } } } },
+          ],
+        },
+        select: {
+          id: true,
+          courseId: true,
+          module: { select: { id: true, courseId: true } },
+          lesson: { select: { module: { select: { id: true, courseId: true } } } },
+          topic: {
+            select: {
+              lesson: { select: { module: { select: { id: true, courseId: true } } } },
+            },
+          },
+        },
+      })
+    : [];
+
+  // contentId -> owning course, and contentId -> owning module (null for
+  // content attached straight to the course).
+  const courseContentIds = new Map();
+  const moduleContentIds = new Map();
+  for (const c of contents) {
+    const owner =
+      c.topic?.lesson?.module || c.lesson?.module || c.module || null;
+    const cid = owner?.courseId || c.courseId;
+    if (!cid) continue;
+    if (!courseContentIds.has(cid)) courseContentIds.set(cid, new Set());
+    courseContentIds.get(cid).add(c.id);
+    if (owner?.id) {
+      if (!moduleContentIds.has(owner.id)) moduleContentIds.set(owner.id, new Set());
+      moduleContentIds.get(owner.id).add(c.id);
+    }
+  }
+
+  const visitRows = studentIds.length
+    ? await prisma.contentProgress.findMany({
+        where: { studentId: { in: studentIds } },
+        select: { studentId: true, contentId: true },
+      })
+    : [];
+
+  const visitsByStudent = new Map();
+  for (const v of visitRows) {
+    if (!visitsByStudent.has(v.studentId)) visitsByStudent.set(v.studentId, new Set());
+    visitsByStudent.get(v.studentId).add(v.contentId);
+  }
+
+  const countVisited = (visited, ids) => {
+    if (!ids) return 0;
+    let n = 0;
+    for (const id of ids) if (visited.has(id)) n += 1;
+    return n;
+  };
+
   return students.map((student) => {
     // Scope this student's per-course data (enrollments, assignments,
     // certificates) to the requesting instructor's own courses, since a

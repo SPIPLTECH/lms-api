@@ -239,6 +239,18 @@ const getInstructorAssignments = async (instructorId, filter = {}) => {
                 select: {
                     submissions: { where: { grade: null } }
                 }
+            },
+            // The newest submissions per assignment, so a caller showing a
+            // "recent submissions" feed has a student and a timestamp to
+            // render. Capped here; the caller sorts and trims across them.
+            submissions: {
+                orderBy: { submittedAt: "desc" },
+                take: 5,
+                include: {
+                    student: {
+                        select: { id: true, user: { select: { id: true, name: true } } }
+                    }
+                }
             }
         },
         orderBy: {
@@ -246,9 +258,17 @@ const getInstructorAssignments = async (instructorId, filter = {}) => {
         }
     });
 
-    return assignments.map(({ _count, ...assignment }) => ({
+    return assignments.map(({ _count, submissions, ...assignment }) => ({
         ...assignment,
-        pendingSubmissionsCount: _count.submissions
+        pendingSubmissionsCount: _count.submissions,
+        submissions: submissions.map((sub) => ({
+            id: sub.id,
+            studentId: sub.studentId,
+            studentName: sub.student?.user?.name || "Student",
+            status: sub.status,
+            grade: sub.grade,
+            submittedAt: sub.submittedAt
+        }))
     }));
 };
 
