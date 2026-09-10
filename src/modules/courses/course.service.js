@@ -394,7 +394,7 @@ const getCourses = async (
  * is the right tool; the instructor id is parameterised, never interpolated.
  */
 const getCourseStatusCounts = async (instructorId) => {
-  const [total, published, draft, archived, activeQuizzes, studentRows] =
+  const [total, published, draft, archived, activeQuizzes, lessons, studentRows] =
     await Promise.all([
       prisma.course.count({ where: { creatorId: instructorId } }),
       prisma.course.count({ where: { creatorId: instructorId, status: "PUBLISHED" } }),
@@ -402,6 +402,11 @@ const getCourseStatusCounts = async (instructorId) => {
       prisma.course.count({ where: { creatorId: instructorId, status: "ARCHIVED" } }),
       prisma.quiz.count({
         where: { isPublished: true, course: { creatorId: instructorId } },
+      }),
+      // Lessons hang off the course through Module, so the filter walks
+      // lesson -> module -> course rather than counting a fetched list.
+      prisma.lesson.count({
+        where: { module: { course: { creatorId: instructorId } } },
       }),
       prisma.$queryRaw`
         SELECT COUNT(DISTINCT e."studentId")::int AS count
@@ -417,6 +422,7 @@ const getCourseStatusCounts = async (instructorId) => {
     draft,
     archived,
     activeQuizzes,
+    lessons,
     students: Number(studentRows?.[0]?.count ?? 0),
   };
 };
