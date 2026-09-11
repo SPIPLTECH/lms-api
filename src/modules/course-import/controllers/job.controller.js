@@ -328,7 +328,11 @@ const applyAiEntity = async (req, res, next) => {
       context,
       instructorId: req.user.id,
     });
-    res.status(200).json({ success: true, data: result, message: "AI entity generated structure applied successfully." });
+    const skipped = result?.skippedQuestionCount || 0;
+    const message = skipped > 0
+      ? `AI entity generated structure applied successfully. ${skipped} question${skipped === 1 ? "" : "s"} ${skipped === 1 ? "was" : "were"} skipped because ${skipped === 1 ? "it had" : "they had"} no correct answer.`
+      : "AI entity generated structure applied successfully.";
+    res.status(200).json({ success: true, data: result, message });
   } catch (error) {
     next(error);
   }

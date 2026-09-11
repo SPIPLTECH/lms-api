@@ -421,15 +421,18 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
     // MCQ_MULTI is graded by an order-independent array match
     // (quiz.service.js evaluateAnswer) and therefore needs correctAnswer to
     // be an array of correct option strings; MCQ_SINGLE needs a single
-    // string. Defensively reshapes whatever the AI returned to match.
-    const normalizeCorrectAnswer = (qDef, questionType, options) => {
+    // string. Returns null when the AI/import data supplied no usable key —
+    // callers MUST skip the question rather than invent option 1 as correct.
+    const normalizeCorrectAnswer = (qDef, questionType) => {
       if (questionType === "MCQ_MULTI") {
         if (Array.isArray(qDef.correctAnswer) && qDef.correctAnswer.length > 0) return qDef.correctAnswer;
-        if (qDef.correctAnswer) return [qDef.correctAnswer];
-        return [options[0]];
+        // An empty array is truthy — guard against it explicitly so [] isn't
+        // wrapped into [[]] and mistaken for a real key.
+        if (qDef.correctAnswer && !Array.isArray(qDef.correctAnswer)) return [qDef.correctAnswer];
+        return null;
       }
-      if (Array.isArray(qDef.correctAnswer)) return qDef.correctAnswer[0] ?? options[0];
-      return qDef.correctAnswer || options[0];
+      if (Array.isArray(qDef.correctAnswer)) return qDef.correctAnswer[0] ?? null;
+      return qDef.correctAnswer || null;
     };
 
     // Collects one AI-generated quiz + its questions into the flat batch
@@ -461,10 +464,19 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
       batch.quizRows.push(quizRow);
 
       const questions = Array.isArray(quizDef.questions) ? quizDef.questions : [];
+      let savedCount = 0;
       questions.forEach((qDef, qIdx) => {
-        const questionId = crypto.randomUUID();
         const questionType = normalizeQuestionType(qDef.questionType);
         const options = qDef.options || ["Option 1", "Option 2", "Option 3", "Option 4"];
+        const correctAnswer = normalizeCorrectAnswer(qDef, questionType);
+
+        if (correctAnswer === null) {
+          batch.skippedQuestions += 1;
+          return;
+        }
+
+        const questionId = crypto.randomUUID();
+        savedCount += 1;
 
         batch.questionRows.push({
           id: questionId,
@@ -473,7 +485,7 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
           question: qDef.question || `Question ${qIdx + 1}`,
           questionType,
           options,
-          correctAnswer: normalizeCorrectAnswer(qDef, questionType, options),
+          correctAnswer,
           explanation: qDef.explanation ?? null,
           marks: qDef.marks ? Number(qDef.marks) : 1,
           negativeMarks: qDef.negativeMarks ? Number(qDef.negativeMarks) : 0,
@@ -485,7 +497,7 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
           id: crypto.randomUUID(),
           quizId,
           questionId,
-          order: qIdx + 1,
+          order: savedCount,
           marks: qDef.marks ? Number(qDef.marks) : 1,
           isMandatory: true,
         });
@@ -494,7 +506,7 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
       return quizRow;
     };
 
-    const newBatch = () => ({ contentRows: [], quizRows: [], questionRows: [], quizQuestionRows: [] });
+    const newBatch = () => ({ contentRows: [], quizRows: [], questionRows: [], quizQuestionRows: [], skippedQuestions: 0 });
 
     // Persists everything collected in `batch` with the minimum number of
     // round trips, in FK-safe order: Content only needs its topic to already
@@ -606,6 +618,7 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
             })),
         })),
         quizzes: batch.quizRows.filter((q) => q.moduleId === createdModule.id && !q.lessonId && !q.topicId),
+        skippedQuestionCount: batch.skippedQuestions,
       };
     } else if (scopeUpper === "LESSON") {
       const targetModuleId = moduleId;
@@ -656,7 +669,7 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
 
       await flushBatch(batch);
 
-      return createdLesson;
+      return { ...createdLesson, skippedQuestionCount: batch.skippedQuestions };
     } else if (scopeUpper === "TOPIC") {
       const targetLessonId = lessonId;
       if (!targetLessonId) throw new ApiError(400, "lessonId is required to create a Topic.");
@@ -686,7 +699,7 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
 
       await flushBatch(batch);
 
-      return createdTopic;
+      return { ...createdTopic, skippedQuestionCount: batch.skippedQuestions };
     } else if (scopeUpper === "CONTENT") {
       const targetTopicId = topicId;
       if (!targetTopicId) throw new ApiError(400, "topicId is required to create Content blocks.");
@@ -724,10 +737,19 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
           const questions = Array.isArray(generatedData.questions) ? generatedData.questions : [];
           const existingCount = await tx.quizQuestion.count({ where: { quizId: targetQuizId } });
 
+          let savedCount = 0;
           questions.forEach((qDef, qIdx) => {
-            const questionId = crypto.randomUUID();
             const questionType = normalizeQuestionType(qDef.questionType);
             const options = qDef.options || ["Option 1", "Option 2", "Option 3", "Option 4"];
+            const correctAnswer = normalizeCorrectAnswer(qDef, questionType);
+
+            if (correctAnswer === null) {
+              batch.skippedQuestions += 1;
+              return;
+            }
+
+            const questionId = crypto.randomUUID();
+            savedCount += 1;
 
             batch.questionRows.push({
               id: questionId,
@@ -736,7 +758,7 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
               question: qDef.question || `Question ${existingCount + qIdx + 1}`,
               questionType,
               options,
-              correctAnswer: normalizeCorrectAnswer(qDef, questionType, options),
+              correctAnswer,
               explanation: qDef.explanation ?? null,
               marks: qDef.marks ? Number(qDef.marks) : 1,
               negativeMarks: qDef.negativeMarks ? Number(qDef.negativeMarks) : 0,
@@ -748,14 +770,14 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
               id: crypto.randomUUID(),
               quizId: targetQuizId,
               questionId,
-              order: existingCount + qIdx + 1,
+              order: existingCount + savedCount,
               marks: qDef.marks ? Number(qDef.marks) : 1,
               isMandatory: true,
             });
           });
 
           await flushBatch(batch);
-          return existingQuiz;
+          return { ...existingQuiz, skippedQuestionCount: batch.skippedQuestions };
         }
       }
 
@@ -772,7 +794,7 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
 
       await flushBatch(batch);
 
-      return { ...quizRow, createdAt: new Date(), updatedAt: new Date() };
+      return { ...quizRow, createdAt: new Date(), updatedAt: new Date(), skippedQuestionCount: batch.skippedQuestions };
     } else {
       throw new ApiError(400, `Unsupported scope '${scope}' for AI entity application.`);
     }
