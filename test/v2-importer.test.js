@@ -510,4 +510,33 @@ test("V2 Importer Module Tests", async (t) => {
     await prisma.courseImportJob.delete({ where: { id: dbJob.id } });
   });
 
+  await t.test("9. Manifest with missing settings or top-level title is auto-normalized and passes validation", () => {
+    const rawManifest = {
+      title: "Course Without Metadata Object",
+      modules: [{ title: "Module 1", lessons: [] }]
+    };
+
+    const res = v2Importer.validateV2Manifest(rawManifest);
+    assert.strictEqual(res.isValid, true);
+    assert.strictEqual(rawManifest.metadata.title, "Course Without Metadata Object");
+    assert.strictEqual(rawManifest.settings.visibility, "PUBLIC");
+  });
+
+  await t.test("10. Missing local asset file logs warning instead of failing package processing", async () => {
+    const manifestWithMissingAsset = {
+      $schema: "https://orangetree.lms/schemas/course-v2.json",
+      version: "2.0",
+      metadata: {
+        title: "Course With Missing Asset Reference",
+        thumbnail: "non_existent_thumb.png"
+      },
+      settings: { visibility: "PUBLIC" },
+      modules: [{ title: "Mod 1", order: 1, lessons: [] }]
+    };
+
+    const result = await v2Importer.processV2Package(testJobDir, "job_missing_asset_test", manifestWithMissingAsset);
+    assert.strictEqual(result.canonicalJson.version, "2.0");
+    assert.strictEqual(result.validationReport.isValid, true);
+  });
+
 });

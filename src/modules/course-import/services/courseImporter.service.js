@@ -79,6 +79,28 @@ const getJob = async (jobId) => prisma.courseImportJob.findUnique({ where: { id:
 
 const listJobs = async (instructorId) => prisma.courseImportJob.findMany({ where: { instructorId }, orderBy: { createdAt: "desc" } });
 
+const findCourseJsonInDirectory = (startDir) => {
+  const directPath = path.join(startDir, "course.json");
+  if (fs.existsSync(directPath)) {
+    return { courseJsonPath: directPath, effectiveJobDir: startDir };
+  }
+
+  try {
+    const entries = fs.readdirSync(startDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const subDir = path.join(startDir, entry.name);
+        const subJsonPath = path.join(subDir, "course.json");
+        if (fs.existsSync(subJsonPath)) {
+          return { courseJsonPath: subJsonPath, effectiveJobDir: subDir };
+        }
+      }
+    }
+  } catch (err) {}
+
+  return { courseJsonPath: null, effectiveJobDir: startDir };
+};
+
 const processJob = async (jobId, baseUrl) => {
   const job = await getJob(jobId);
   if (!job) throw new ApiError(404, "Import job not found.");
@@ -87,9 +109,9 @@ const processJob = async (jobId, baseUrl) => {
 
   const jobDir = path.join(UPLOAD_ROOT, jobId);
 
-  // Check for V2 Canonical Package Manifest (course.json)
-  const courseJsonPath = path.join(jobDir, "course.json");
-  if (fs.existsSync(courseJsonPath)) {
+  // Check for V2 Canonical Package Manifest (course.json), even if nested inside a root subfolder
+  const { courseJsonPath, effectiveJobDir } = findCourseJsonInDirectory(jobDir);
+  if (courseJsonPath && fs.existsSync(courseJsonPath)) {
     let rawCourseJson;
     try {
       rawCourseJson = JSON.parse(fs.readFileSync(courseJsonPath, "utf8"));
@@ -100,10 +122,20 @@ const processJob = async (jobId, baseUrl) => {
       });
     }
 
-    if (rawCourseJson && (rawCourseJson.version === "2.0" || rawCourseJson.$schema?.includes("course-v2.json"))) {
+    if (
+      rawCourseJson &&
+      (rawCourseJson.version === "2.0" ||
+        rawCourseJson.$schema?.includes("course-v2.json") ||
+        rawCourseJson.metadata ||
+        rawCourseJson.modules ||
+        rawCourseJson.title)
+    ) {
+      if (!rawCourseJson.version) rawCourseJson.version = "2.0";
+      if (!rawCourseJson.$schema) rawCourseJson.$schema = "https://orangetree.lms/schemas/course-v2.json";
+
       await prisma.courseImportJob.update({ where: { id: jobId }, data: { status: "ANALYZING" } });
       try {
-        const v2Result = await v2PackageImporter.processV2Package(jobDir, jobId, rawCourseJson);
+        const v2Result = await v2PackageImporter.processV2Package(effectiveJobDir, jobId, rawCourseJson);
         return await prisma.courseImportJob.update({
           where: { id: jobId },
           data: { status: "READY", canonicalJson: v2Result.canonicalJson, validationReport: v2Result.validationReport },
