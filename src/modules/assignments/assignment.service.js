@@ -15,6 +15,10 @@ const getAssignments = async (studentId) => {
                     title: true,
                 }
             },
+            // Where in the course it sits, for the "Course · Module" line.
+            module: { select: { title: true } },
+            lesson: { select: { module: { select: { title: true } } } },
+            topic: { select: { lesson: { select: { module: { select: { title: true } } } } } },
             submissions: {
                 where: { studentId },
             }
@@ -40,6 +44,8 @@ const getAssignments = async (studentId) => {
             resources: a.resources,
             status,
             course: a.course,
+            moduleTitle: a.module?.title || a.lesson?.module?.title || a.topic?.lesson?.module?.title || null,
+            marks: a.marks ?? null,
             grade: submission?.grade || null,
             feedback: submission?.feedback || null,
             submittedAt: submission?.submittedAt || null,
@@ -64,9 +70,9 @@ const getAssignments = async (studentId) => {
         },
         include: {
             course: COURSE,
-            module: { select: { course: COURSE } },
-            lesson: { select: { module: { select: { course: COURSE } } } },
-            topic: { select: { lessonId: true, lesson: { select: { module: { select: { course: COURSE } } } } } },
+            module: { select: { title: true, course: COURSE } },
+            lesson: { select: { module: { select: { title: true, course: COURSE } } } },
+            topic: { select: { lessonId: true, lesson: { select: { module: { select: { title: true, course: COURSE } } } } } },
             submissions: { where: { studentId } },
         },
         orderBy: { createdAt: "desc" },
@@ -88,6 +94,7 @@ const getAssignments = async (studentId) => {
                 c.lesson?.module?.course ||
                 c.topic?.lesson?.module?.course ||
                 null,
+            moduleTitle: c.module?.title || c.lesson?.module?.title || c.topic?.lesson?.module?.title || null,
             // The course player deep-links by lesson; a topic's lesson works too.
             lessonId: c.lessonId || c.topic?.lessonId || null,
             grade: submission?.grade || null,

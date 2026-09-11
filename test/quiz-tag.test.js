@@ -187,3 +187,155 @@ test("validation — the tag is required on create and constrained to two values
     assert.ok(error, "expected a validation error");
   });
 });
+
+// Attempts follow the tag too: a Self-Test is always unlimited, a Final
+// defaults to one attempt and keeps whatever limit the instructor sets.
+
+test("createQuiz — attempts follow the tag", async (t) => {
+  const originals = {
+    courseFindUnique: prisma.course.findUnique,
+    contentFindFirst: prisma.content.findFirst,
+    quizFindFirst: prisma.quiz.findFirst,
+    quizFindUnique: prisma.quiz.findUnique,
+    quizCreate: prisma.quiz.create,
+  };
+
+  t.after(() => {
+    prisma.course.findUnique = originals.courseFindUnique;
+    prisma.content.findFirst = originals.contentFindFirst;
+    prisma.quiz.findFirst = originals.quizFindFirst;
+    prisma.quiz.findUnique = originals.quizFindUnique;
+    prisma.quiz.create = originals.quizCreate;
+  });
+
+  prisma.course.findUnique = async () => ({ id: "c1" });
+  prisma.content.findFirst = async () => null;
+  prisma.quiz.findFirst = async () => null;
+  prisma.quiz.findUnique = async () => ({ id: "q1", quizQuestions: [] });
+
+  const captureCreate = () => {
+    const box = {};
+    prisma.quiz.create = async ({ data }) => {
+      box.data = data;
+      return { id: "q1", ...data };
+    };
+    return box;
+  };
+
+  const base = { title: "Q", courseId: "c1", passingScore: 50 };
+
+  await t.test("SELF_TEST is stored unlimited even when a limit is sent", async () => {
+    const box = captureCreate();
+    await quizService.createQuiz({ ...base, quizTag: "SELF_TEST", attempts: 3 });
+    assert.strictEqual(box.data.attempts, 0);
+  });
+
+  await t.test("FINAL keeps the limit the instructor set", async () => {
+    const box = captureCreate();
+    await quizService.createQuiz({ ...base, quizTag: "FINAL", attempts: 3 });
+    assert.strictEqual(box.data.attempts, 3);
+  });
+
+  await t.test("FINAL without a limit is left to the schema default of one", async () => {
+    const box = captureCreate();
+    await quizService.createQuiz({ ...base, quizTag: "FINAL" });
+    assert.strictEqual(box.data.attempts, undefined);
+  });
+
+  await t.test("FINAL cannot be saved unlimited", async () => {
+    const box = captureCreate();
+    await quizService.createQuiz({ ...base, quizTag: "FINAL", attempts: 0 });
+    assert.strictEqual(box.data.attempts, 1);
+  });
+});
+
+test("updateQuiz — attempts follow the effective tag", async (t) => {
+  const originals = {
+    quizFindUnique: prisma.quiz.findUnique,
+    quizUpdate: prisma.quiz.update,
+  };
+
+  t.after(() => {
+    prisma.quiz.findUnique = originals.quizFindUnique;
+    prisma.quiz.update = originals.quizUpdate;
+  });
+
+  const stubExisting = (row) => {
+    prisma.quiz.findUnique = async () => row;
+  };
+
+  const captureUpdate = () => {
+    const box = {};
+    prisma.quiz.update = async ({ data }) => {
+      box.data = data;
+      return { id: "q1", ...data };
+    };
+    return box;
+  };
+
+  await t.test("FINAL -> SELF_TEST becomes unlimited with no attempts in the payload", async () => {
+    stubExisting({ id: "q1", quizTag: "FINAL", attempts: 2 });
+    const box = captureUpdate();
+    await quizService.updateQuiz("q1", { quizTag: "SELF_TEST" });
+    assert.strictEqual(box.data.attempts, 0);
+  });
+
+  await t.test("SELF_TEST -> FINAL starts at one attempt", async () => {
+    stubExisting({ id: "q1", quizTag: "SELF_TEST", attempts: 0 });
+    const box = captureUpdate();
+    await quizService.updateQuiz("q1", { quizTag: "FINAL" });
+    assert.strictEqual(box.data.attempts, 1);
+  });
+
+  await t.test("an instructor can raise a Final's limit", async () => {
+    stubExisting({ id: "q1", quizTag: "FINAL", attempts: 1 });
+    const box = captureUpdate();
+    await quizService.updateQuiz("q1", { attempts: 3 });
+    assert.strictEqual(box.data.attempts, 3);
+  });
+
+  await t.test("an unrelated edit leaves a Final's limit alone", async () => {
+    stubExisting({ id: "q1", quizTag: "FINAL", attempts: 3 });
+    const box = captureUpdate();
+    await quizService.updateQuiz("q1", { title: "Renamed" });
+    assert.strictEqual(box.data.attempts, undefined);
+  });
+});
+
+test("attempt allowance — a Self-Test is unlimited whatever is stored", async (t) => {
+  const originals = {
+    quizFindUnique: prisma.quiz.findUnique,
+    quizAttemptCount: prisma.quizAttempt.count,
+  };
+
+  t.after(() => {
+    prisma.quiz.findUnique = originals.quizFindUnique;
+    prisma.quizAttempt.count = originals.quizAttemptCount;
+  });
+
+  const allowanceFor = async (row, used) => {
+    prisma.quiz.findUnique = async () => ({ id: "q1", quizQuestions: [], ...row });
+    prisma.quizAttempt.count = async () => used;
+    const quiz = await quizService.getQuizById("q1", "STUDENT", "s1");
+    return quiz.attemptStatus;
+  };
+
+  await t.test("a SELF_TEST still stored with the old default of 1 allows another attempt", async () => {
+    const status = await allowanceFor({ quizTag: "SELF_TEST", attempts: 1 }, 4);
+    assert.strictEqual(status.unlimitedAttempts, true);
+    assert.strictEqual(status.canAttempt, true);
+  });
+
+  await t.test("a FINAL stops at its limit", async () => {
+    const status = await allowanceFor({ quizTag: "FINAL", attempts: 2 }, 2);
+    assert.strictEqual(status.maxAttempts, 2);
+    assert.strictEqual(status.attemptsRemaining, 0);
+    assert.strictEqual(status.canAttempt, false);
+  });
+
+  await t.test("a FINAL with attempts left can be retaken", async () => {
+    const status = await allowanceFor({ quizTag: "FINAL", attempts: 3 }, 1);
+    assert.strictEqual(status.attemptsRemaining, 2);
+    assert.strictEqual(status.canAttempt, true);
+  });
+});

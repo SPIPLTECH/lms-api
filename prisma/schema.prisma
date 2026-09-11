@@ -86,6 +86,7 @@ model StudentProfile {
   certificates                Certificate[]
   enrollments                 Enrollment[]
   quizSubmissions             QuizSubmission[]
+  quizAttempts                QuizAttempt[]
   reviews                     Review[]
   stickyNotes                 StickyNote[]
   notes                       Note[]
@@ -512,6 +513,7 @@ model Quiz {
   lesson           Lesson?          @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   topic            Topic?           @relation(fields: [topicId], references: [id], onDelete: Cascade)
   quizSubmissions  QuizSubmission[]
+  quizAttempts     QuizAttempt[]
   quizProgresses   QuizProgress[]
   lessonQueries    LessonQuery[]
   instructions     String?          @db.Text
@@ -620,6 +622,34 @@ model QuizSubmission {
 
   @@unique([studentId, quizId])
   @@index([studentId])
+}
+
+// One row per quiz attempt — the student's full attempt history. QuizSubmission
+// above stays the single "latest attempt" row that progress, dashboards and the
+// instructor views read; this table is what makes earlier attempts reviewable
+// and what Quiz.attempts is enforced against.
+model QuizAttempt {
+  id               String         @id @default(cuid())
+  quizId           String
+  studentId        String
+  attemptNumber    Int
+  answers          Json
+  score            Int
+  totalMarks       Int
+  percentage       Int
+  passed           Boolean        @default(false)
+  correctCount     Int            @default(0)
+  incorrectCount   Int            @default(0)
+  unansweredCount  Int            @default(0)
+  // Reported by the attempt UI; null when it wasn't measured.
+  timeTakenSeconds Int?
+  submittedAt      DateTime       @default(now())
+  quiz             Quiz           @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  student          StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, quizId, attemptNumber])
+  @@index([studentId])
+  @@index([quizId])
 }
 
 model Certificate {
