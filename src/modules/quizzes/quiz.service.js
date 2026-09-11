@@ -757,20 +757,11 @@ const submitQuiz = async (studentId, quizId, answers = []) => {
           courseId: quiz.courseId,
           quizId,
           ...(evidence.moduleId ? { moduleId: evidence.moduleId } : {}),
-          // Tier 1 (Phase 7A): reuses the EXISTING misconceptionHypothesis
-          // field on the EXISTING recordEvidence/evaluateAndDetectMisconception
-          // call chain — misconception.service.js is untouched. The resolved
-          // taxonomy type becomes `concept`/the hypothesis identity, exactly
-          // as any other caller-supplied hypothesis would.
           ...(evidence.misconceptionTag ? { misconceptionHypothesis: evidence.misconceptionTag } : {}),
           metadata: { questionId: evidence.questionId, quizSubmissionId: submission.id }
         }
       });
 
-      // Narrow, additive follow-up: attach taxonomy metadata to the SAME
-      // KnowledgeGap row misconception.service.js just created/updated,
-      // scoped strictly to the new columns (kc/type/description/confidence/
-      // evidence). Severity and status were already set above, untouched.
       if (evidence.misconceptionTag && recordResult.recordedMisconception) {
         const taxonomyEntry = MISCONCEPTION_TAXONOMY[evidence.misconceptionTag];
         await prisma.knowledgeGap.update({
@@ -784,13 +775,6 @@ const submitQuiz = async (studentId, quizId, answers = []) => {
           }
         });
       } else if (!evidence.isCorrect) {
-        // Tier 2 (Phase 7B): the answer was wrong and Tier 1 found no
-        // authored tag for the selected distractor. Fire-and-forget —
-        // deliberately NOT awaited, so an LLM call can never add latency to
-        // (or fail) this response. Any outcome (a new/continued
-        // KnowledgeGap, or any of the classifier's own discard/failure
-        // paths) is applied strictly after this function has already
-        // returned to the HTTP caller.
         const classificationPromise = misconceptionClassifier
           .classifyAndApply({
             studentId,
