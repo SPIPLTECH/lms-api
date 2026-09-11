@@ -39,3 +39,5 @@ backup/
 
 # Git worktrees for isolated agent work
 .worktrees/
+
+.worktrees/
