@@ -24,6 +24,16 @@ const processJob = async (req, res, next) => {
   try {
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const job = await courseImporterService.processJob(req.params.jobId, baseUrl);
+
+    if (job.status === "FAILED") {
+      return res.status(400).json({
+        success: false,
+        message: job.errorMessage || "Failed to process course ZIP package.",
+        errors: job.validationReport?.errors || [job.errorMessage],
+        data: job,
+      });
+    }
+
     res.json({ success: true, data: job });
   } catch (error) {
     next(error);
