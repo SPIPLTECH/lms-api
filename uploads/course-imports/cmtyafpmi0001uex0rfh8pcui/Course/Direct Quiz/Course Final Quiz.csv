@@ -1,0 +1,3 @@
+quizTag,passingScore,timeLimit,question,optionA,optionB,optionC,optionD,correctAnswer,marks,difficulty,explanation
+FINAL,60,30,Which header file is required to use printf()?,<stdio.h>,<stdlib.h>,<string.h>,<math.h>,<stdio.h>,1,EASY,printf() is declared in stdio.h.
+FINAL,60,30,Which operator returns the address of a variable?,*,&,->,%,&,2,MEDIUM,The & operator yields the address of its operand.

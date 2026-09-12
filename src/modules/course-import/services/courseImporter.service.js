@@ -11,6 +11,7 @@ const composerMapper = require("./composerMapper.service");
 const serverQuizMapper = require("./serverQuizMapper.service");
 
 const v2PackageImporter = require("./v2PackageImporter.service");
+const physicalPackageImporter = require("./physicalPackageImporter.service");
 const courseService = require("../../courses/course.service");
 const moduleService = require("../../modules/module.service");
 const lessonService = require("../../lessons/lesson.service");
@@ -149,6 +150,41 @@ const processJob = async (jobId, baseUrl) => {
     }
   }
 
+  // No course.json: a package whose folders spell out the course hierarchy is
+  // parsed structurally rather than guessed at by the V1 heuristic scanner.
+  const physical = physicalPackageImporter.detectPhysicalPackage(jobDir);
+  if (physical.isPhysical) {
+    await prisma.courseImportJob.update({ where: { id: jobId }, data: { status: "ANALYZING" } });
+    try {
+      const result = await physicalPackageImporter.processPhysicalPackage(physical.rootDir, {
+        sourceFileName: job.sourceFileName,
+        courseTitleHint: physical.courseTitleHint,
+      });
+      return await prisma.courseImportJob.update({
+        where: { id: jobId },
+        data: {
+          status: "READY",
+          canonicalJson: result.canonicalJson,
+          validationReport: result.validationReport,
+        },
+      });
+    } catch (physicalErr) {
+      return prisma.courseImportJob.update({
+        where: { id: jobId },
+        data: {
+          status: "FAILED",
+          errorMessage: physicalErr.message,
+          validationReport: {
+            isValid: false,
+            errors: physicalErr.errors || [physicalErr.message],
+            warnings: [],
+            info: [],
+          },
+        },
+      });
+    }
+  }
+
   // Fallback to V1 folder/file scanning processing path
   const files = scanDirectory(jobDir);
 
@@ -215,6 +251,13 @@ const importJob = async (jobId, instructorId, fallbackCanonicalJson = null) => {
   }
   if (job.status === "IMPORTING") {
     return job;
+  }
+
+  // Physical packages carry their own marker and must be matched before the V2
+  // check below, whose `metadata` test would otherwise claim them.
+  if (job.canonicalJson?.packageFormat === "PHYSICAL_V1") {
+    await prisma.courseImportJob.update({ where: { id: jobId }, data: { status: "IMPORTING" } });
+    return await physicalPackageImporter.importPhysicalJob(job, instructorId);
   }
 
   // Check for V2 Package canonicalJson (has metadata, modules, or version)

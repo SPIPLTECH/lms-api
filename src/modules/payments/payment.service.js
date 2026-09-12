@@ -298,6 +298,7 @@ const activateEnrollment = async (userId, courseId) => {
         message: `${enrollment.student?.user?.name || "A student"} enrolled in your course "${enrollment.course?.title || ""}".`,
         type: "ENROLLMENT",
         link: `/courses/${courseId}/students`,
+        eventId: `enrollment_${enrollment.id}`
       });
     }
   } catch (err) {

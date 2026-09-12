@@ -641,23 +641,15 @@ model QuizAttempt {
   correctCount     Int            @default(0)
   incorrectCount   Int            @default(0)
   unansweredCount  Int            @default(0)
-<<<<<<< HEAD
-=======
   // Reported by the attempt UI; null when it wasn't measured.
->>>>>>> a1760bce39db08c6b19ff6c867084aa7aac5fe0c
   timeTakenSeconds Int?
   submittedAt      DateTime       @default(now())
   quiz             Quiz           @relation(fields: [quizId], references: [id], onDelete: Cascade)
   student          StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, quizId, attemptNumber])
-<<<<<<< HEAD
   @@index([quizId])
   @@index([studentId])
-=======
-  @@index([studentId])
-  @@index([quizId])
->>>>>>> a1760bce39db08c6b19ff6c867084aa7aac5fe0c
 }
 
 model Certificate {
@@ -1011,12 +1003,15 @@ model Notification {
   message   String
   type      String
   link      String?
+  eventId   String?
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([userId, eventId])
+  @@unique([userId, eventId])
 }
 
 model StudentState {

@@ -564,12 +564,17 @@ const createQuiz = async (
     });
 
     if (course && quiz.isPublished) {
-      await notificationService.notifyEnrolledStudents(quiz.courseId, {
-        title: "New Quiz Available 📝",
-        message: `A new quiz "${quiz.title}" has been added to your course "${course.title}".`,
-        type: "QUIZ_PUBLISHED",
-        link: `/courses/${quiz.courseId}/quizzes`
-      });
+      await notificationService.notifyEnrolledStudents(
+        quiz.courseId,
+        {
+          title: "New Quiz Available 📝",
+          message: `A new quiz "${quiz.title}" has been added to your course "${course.title}".`,
+          type: "QUIZ_PUBLISHED",
+          link: `/courses/${quiz.courseId}/quizzes`
+        },
+        null,
+        `quiz_published_${quiz.id}`
+      );
     }
   } catch (error) {
     console.error("Error sending quiz creation notification:", error.message);
@@ -1046,7 +1051,8 @@ const submitQuiz = async (studentId, quizId, answers = [], timeTakenSeconds = nu
           title: "Quiz Submitted 📝",
           message: `${student.user.name} submitted the quiz "${quiz.title}" for "${course.title}" (Score: ${result.percentage}%).`,
           type: "QUIZ_SUBMISSION",
-          link: `/courses/${quiz.courseId}/quizzes`
+          link: `/courses/${quiz.courseId}/quizzes`,
+          eventId: `quiz_submission_${submission.id}`
         });
       }
     } catch (error) {

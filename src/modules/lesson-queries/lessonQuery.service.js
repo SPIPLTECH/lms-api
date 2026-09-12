@@ -1,5 +1,6 @@
 const prisma = require("../../config/database");
 const ApiError = require("../../utils/ApiError");
+const notificationService = require("../notifications/notification.service");
 
 const getQueriesForLesson = async (lessonId) => {
   return prisma.lessonQuery.findMany({
@@ -45,7 +46,10 @@ const PARENT_SELECT = {
 };
 
 const createQuery = async (userId, data) => {
-  const student = await prisma.studentProfile.findUnique({ where: { userId } });
+  const student = await prisma.studentProfile.findUnique({
+    where: { userId },
+    include: { user: { select: { id: true, name: true } } }
+  });
 
   if (!student) {
     throw new ApiError(404, "Student profile not found");
@@ -83,7 +87,21 @@ const createQuery = async (userId, data) => {
 
   const lesson = await prisma.lesson.findUnique({
     where: { id: lessonId },
-    select: { id: true, module: { select: { courseId: true } } }
+    select: {
+      id: true,
+      module: {
+        select: {
+          courseId: true,
+          course: {
+            select: {
+              id: true,
+              title: true,
+              creatorId: true
+            }
+          }
+        }
+      }
+    }
   });
 
   if (!lesson) {
@@ -102,7 +120,7 @@ const createQuery = async (userId, data) => {
     throw new ApiError(403, "Forbidden: you must be enrolled in this course to ask a question");
   }
 
-  return prisma.lessonQuery.create({
+  const newQuery = await prisma.lessonQuery.create({
     data: {
       lessonId,
       studentId: student.id,
@@ -113,6 +131,25 @@ const createQuery = async (userId, data) => {
       assignmentId: targetField === "assignmentId" ? data.assignmentId : null
     }
   });
+
+  // Notify the course instructor after successful query creation
+  const instructorUserId = lesson?.module?.course?.creatorId;
+  if (instructorUserId) {
+    const studentName = student?.user?.name || "A student";
+    const courseTitle = lesson?.module?.course?.title || "Course";
+    try {
+      await notificationService.createNotification(instructorUserId, {
+        title: `New question from ${studentName} in ${courseTitle}`,
+        message: data.question.trim(),
+        type: "QA",
+        eventId: `qa_question_${newQuery.id}`
+      });
+    } catch (err) {
+      console.error("Failed to deliver Q&A question notification:", err.message);
+    }
+  }
+
+  return newQuery;
 };
 
 /** Doubts across every course the instructor owns, filterable for the Q&A page. */
@@ -220,7 +257,16 @@ const findQueryWithCourseOwner = async (queryId) => {
   const query = await prisma.lessonQuery.findUnique({
     where: { id: queryId },
     include: {
-      lesson: { include: { module: { include: { course: { select: { creatorId: true } } } } } }
+      student: { select: { userId: true } },
+      lesson: {
+        include: {
+          module: {
+            include: {
+              course: { select: { id: true, title: true, creatorId: true } }
+            }
+          }
+        }
+      }
     }
   });
 
@@ -244,10 +290,28 @@ const replyToQuery = async (queryId, user, reply) => {
   const query = await findQueryWithCourseOwner(queryId);
   assertInstructorOwnsQuery(query, user);
 
-  return prisma.lessonQuery.update({
+  const updatedQuery = await prisma.lessonQuery.update({
     where: { id: queryId },
-    data: { reply, status: "ANSWERED", answeredAt: new Date() }
+    data: { reply: reply.trim(), status: "ANSWERED", answeredAt: new Date() }
   });
+
+  // Notify the original student after successful reply creation
+  const studentUserId = query?.student?.userId;
+  if (studentUserId) {
+    const courseTitle = query?.lesson?.module?.course?.title || "Course";
+    try {
+      await notificationService.createNotification(studentUserId, {
+        title: `Instructor replied to your question in ${courseTitle}`,
+        message: reply.trim(),
+        type: "QA",
+        eventId: `qa_reply_${query.id}_${updatedQuery.answeredAt ? new Date(updatedQuery.answeredAt).getTime() : Date.now()}`
+      });
+    } catch (err) {
+      console.error("Failed to deliver Q&A reply notification:", err.message);
+    }
+  }
+
+  return updatedQuery;
 };
 
 const updateStatus = async (queryId, user, status) => {
