@@ -2,7 +2,14 @@ const prisma = require("../../config/database");
 const { getIO } = require("../../socket");
 
 const createNotification = async (userId, data) => {
-  const { title, message, type, link, eventId } = data || {};
+  const { title, message, type, link, eventId, actorId } = data || {};
+
+  // 0. Nobody is notified about something they did themselves. Callers that
+  // know who performed the action pass `actorId`; callers that don't are
+  // unaffected, so student-triggered notifications still reach the instructor.
+  if (actorId && String(actorId) === String(userId)) {
+    return null;
+  }
 
   // 1. If eventId is provided, check if a notification already exists for this (userId, eventId)
   if (eventId) {
@@ -90,11 +97,13 @@ const clearAll = async (userId) => {
   });
 };
 
-const notifyEnrolledStudents = async (courseId, notificationData, batchId = null, eventIdPrefix = null) => {
+const notifyEnrolledStudents = async (courseId, notificationData, batchId = null, eventIdPrefix = null, actorId = null) => {
   try {
+    const effectiveActorId = actorId || notificationData?.actorId || null;
+
     // When a batchId is given, only notify that batch's roster instead of
     // every student enrolled in the course.
-    const userIds = batchId
+    const rawUserIds = batchId
       ? (
           await prisma.batch.findUnique({
             where: { id: batchId },
@@ -110,6 +119,8 @@ const notifyEnrolledStudents = async (courseId, notificationData, batchId = null
           .map((e) => e.student?.userId)
           .filter(Boolean);
 
+    const userIds = rawUserIds.filter((id) => !effectiveActorId || String(id) !== String(effectiveActorId));
+
     for (const userId of userIds) {
       const eventId = eventIdPrefix || notificationData.eventId
         ? `${eventIdPrefix || notificationData.eventId}_${userId}`
@@ -121,6 +132,7 @@ const notifyEnrolledStudents = async (courseId, notificationData, batchId = null
         type: notificationData.type || "ANNOUNCEMENT",
         link: notificationData.link || `/student/dashboard`,
         eventId,
+        actorId: effectiveActorId,
       });
     }
   } catch (error) {

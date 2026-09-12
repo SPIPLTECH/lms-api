@@ -151,7 +151,8 @@ const createReview = async (
       message: `${review.student.user.name} reviewed your course "${review.course.title}" with a rating of ${review.rating}/5.`,
       type: "COURSE_REVIEW",
       link: `/courses/${review.courseId}/reviews`,
-      eventId: `review_${review.id}`
+      eventId: `review_${review.id}`,
+      actorId: review.student.userId
     });
   } catch (error) {
     console.error("Error creating course review notification:", error.message);

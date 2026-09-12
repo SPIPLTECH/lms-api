@@ -291,7 +291,13 @@ const sendAnnouncement = async (req, res, next) => {
       title,
       message
     });
-    await notificationService.notifyEnrolledStudents(req.params.courseId, { title, message });
+    await notificationService.notifyEnrolledStudents(
+      req.params.courseId,
+      { title, message, actorId: req.user.id },
+      null,
+      null,
+      req.user.id
+    );
     res.json({
       success: true,
       message: "Announcement broadcasted successfully."

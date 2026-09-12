@@ -576,10 +576,12 @@ const createQuiz = async (
           title: "New Quiz Available 📝",
           message: `A new quiz "${quiz.title}" has been added to your course "${course.title}".`,
           type: "QUIZ_PUBLISHED",
-          link: `/courses/${quiz.courseId}/quizzes`
+          link: `/courses/${quiz.courseId}/quizzes`,
+          actorId: userId
         },
         null,
-        `quiz_published_${quiz.id}`
+        `quiz_published_${quiz.id}`,
+        userId
       );
     }
   } catch (error) {
@@ -1061,7 +1063,8 @@ const submitQuiz = async (studentId, quizId, answers = [], timeTakenSeconds = nu
           message: `${student.user.name} submitted the quiz "${quiz.title}" for "${course.title}" (Score: ${result.percentage}%).`,
           type: "QUIZ_SUBMISSION",
           link: `/courses/${quiz.courseId}/quizzes`,
-          eventId: `quiz_submission_${submission.id}`
+          eventId: `quiz_submission_${submission.id}`,
+          actorId: student.userId
         });
       }
     } catch (error) {

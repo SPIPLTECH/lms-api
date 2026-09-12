@@ -112,7 +112,8 @@ const createEnrollment = async (
       message: `${enrollment.student.user.name} enrolled in your course "${enrollment.course.title}".`,
       type: "ENROLLMENT",
       link: `/courses/${courseId}/students`,
-      eventId: `enrollment_${enrollment.id}`
+      eventId: `enrollment_${enrollment.id}`,
+      actorId: enrollment.student.userId
     });
   } catch (error) {
     console.error("Error creating enrollment notification:", error.message);

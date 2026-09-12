@@ -680,6 +680,107 @@ const updateCourse = async (courseId, data) => {
     data
   });
 };
+/**
+ * Validates whether a course is ready to be published.
+ * Returns structured validation details: { canPublish: boolean, errors: Array<{ code, field, message }> }
+ */
+const validateCourseForPublish = async (courseId) => {
+  const course = await prisma.course.findUnique({
+    where: { id: courseId },
+    include: {
+      modules: {
+        orderBy: { order: "asc" },
+        include: {
+          lessons: {
+            orderBy: { order: "asc" },
+            include: {
+              contents: { orderBy: { order: "asc" } },
+              topics: {
+                orderBy: { order: "asc" },
+                include: {
+                  contents: { orderBy: { order: "asc" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  if (!course) {
+    throw new ApiError(404, "Course not found");
+  }
+
+  const errors = [];
+
+  if (!course.title || course.title.trim() === "") {
+    errors.push({
+      code: "MISSING_TITLE",
+      field: "title",
+      message: "Course title is required."
+    });
+  }
+
+  if (!course.description || course.description.trim() === "") {
+    errors.push({
+      code: "MISSING_DESCRIPTION",
+      field: "description",
+      message: "Course description is required before publishing."
+    });
+  }
+
+  if (!course.modules || course.modules.length === 0) {
+    errors.push({
+      code: "NO_MODULES",
+      field: "modules",
+      message: "Course must contain at least one module."
+    });
+  } else {
+    for (let mIdx = 0; mIdx < course.modules.length; mIdx++) {
+      const mod = course.modules[mIdx];
+      if (!mod.lessons || mod.lessons.length === 0) {
+        errors.push({
+          code: "EMPTY_MODULE",
+          field: `modules[${mIdx}].lessons`,
+          message: `Module "${mod.title || `Module ${mIdx + 1}`}" must contain at least one lesson.`
+        });
+      } else {
+        for (let lIdx = 0; lIdx < mod.lessons.length; lIdx++) {
+          const lesson = mod.lessons[lIdx];
+          const candidateContents = [
+            ...(lesson.contents || []),
+            ...(lesson.topics || []).flatMap((t) => t.contents || [])
+          ];
+          const hasContent = candidateContents.some((c) => {
+            if (!c) return false;
+            if (typeof c.htmlContent === "string" && c.htmlContent.trim().length > 0) return true;
+            if (typeof c.videoUrl === "string" && c.videoUrl.trim().length > 0) return true;
+            if (typeof c.fileUrl === "string" && c.fileUrl.trim().length > 0) return true;
+            if (typeof c.externalUrl === "string" && c.externalUrl.trim().length > 0) return true;
+            if (c.data !== null && c.data !== undefined) {
+              if (typeof c.data === "object" && Object.keys(c.data).length > 0) return true;
+              if (typeof c.data === "string" && c.data.trim().length > 0) return true;
+            }
+            return false;
+          });
+          if (!hasContent) {
+            errors.push({
+              code: "EMPTY_LESSON",
+              field: `modules[${mIdx}].lessons[${lIdx}].contents`,
+              message: `Lesson "${lesson.title || `Lesson ${lIdx + 1}`}" in module "${mod.title}" must contain usable content.`
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    canPublish: errors.length === 0,
+    errors
+  };
+};
 
 /**
  * Publishes a course (DRAFT -> PUBLISHED).
@@ -728,13 +829,41 @@ const publishCourse = async (courseId, userId, userRole) => {
   });
 
   try {
-    await notificationService.createNotification(updatedCourse.creatorId, {
-      title: "Course Published 🚀",
-      message: `Your course "${updatedCourse.title}" is now published and active.`,
-      type: "COURSE_STATUS",
-      link: `/courses/${courseId}`,
-      eventId: `course_published_${courseId}_${updatedCourse.updatedAt ? new Date(updatedCourse.updatedAt).getTime() : Date.now()}`
-    });
+    const eventTimestamp = updatedCourse.updatedAt ? new Date(updatedCourse.updatedAt).getTime() : Date.now();
+    const eventIdPrefix = `course_published_${courseId}_${eventTimestamp}`;
+
+    // 1. Notify enrolled students (actor is excluded inside notifyEnrolledStudents)
+    await notificationService.notifyEnrolledStudents(
+      courseId,
+      {
+        title: "Course Published 🚀",
+        message: `Course "${updatedCourse.title}" is now published and active.`,
+        type: "COURSE_STATUS",
+        link: `/courses/${courseId}`,
+        actorId: userId
+      },
+      null,
+      eventIdPrefix,
+      userId
+    );
+
+    // 2. Notify course creator if different from actor (e.g. when Admin publishes creator's course)
+    // The creator notification exists only to tell the owner that somebody
+    // ELSE changed their course. When the actor IS the owner there is nobody
+    // left to inform, so the row is never produced. This is deliberately a
+    // call-site condition and not only the actorId guard inside
+    // createNotification: a future refactor that drops actorId must not be
+    // able to silently resurrect self-notifications.
+    if (updatedCourse.creatorId !== userId) {
+      await notificationService.createNotification(updatedCourse.creatorId, {
+        title: "Course Published 🚀",
+        message: `Your course "${updatedCourse.title}" is now published and active.`,
+        type: "COURSE_STATUS",
+        link: `/courses/${courseId}`,
+        eventId: eventIdPrefix,
+        actorId: userId
+      });
+    }
   } catch (err) {
     console.error("Error sending publish notification:", err.message);
   }
@@ -764,13 +893,22 @@ const unpublishCourse = async (courseId, userId, userRole) => {
   });
 
   try {
-    await notificationService.createNotification(updatedCourse.creatorId, {
-      title: "Course Unpublished ✏️",
-      message: `Your course "${updatedCourse.title}" has been unpublished and set back to DRAFT.`,
-      type: "COURSE_STATUS",
-      link: `/courses/${courseId}`,
-      eventId: `course_unpublished_${courseId}_${updatedCourse.updatedAt ? new Date(updatedCourse.updatedAt).getTime() : Date.now()}`
-    });
+    // The creator notification exists only to tell the owner that somebody
+    // ELSE changed their course. When the actor IS the owner there is nobody
+    // left to inform, so the row is never produced. This is deliberately a
+    // call-site condition and not only the actorId guard inside
+    // createNotification: a future refactor that drops actorId must not be
+    // able to silently resurrect self-notifications.
+    if (updatedCourse.creatorId !== userId) {
+      await notificationService.createNotification(updatedCourse.creatorId, {
+        title: "Course Unpublished ✏️",
+        message: `Your course "${updatedCourse.title}" has been unpublished and set back to DRAFT.`,
+        type: "COURSE_STATUS",
+        link: `/courses/${courseId}`,
+        eventId: `course_unpublished_${courseId}_${updatedCourse.updatedAt ? new Date(updatedCourse.updatedAt).getTime() : Date.now()}`,
+        actorId: userId
+      });
+    }
   } catch (err) {
     console.error("Error sending unpublish notification:", err.message);
   }
@@ -799,13 +937,22 @@ const archiveCourse = async (courseId, userId, userRole) => {
   });
 
   try {
-    await notificationService.createNotification(updatedCourse.creatorId, {
-      title: "Course Archived 📦",
-      message: `Your course "${updatedCourse.title}" has been archived by an admin.`,
-      type: "COURSE_STATUS",
-      link: `/courses/${courseId}`,
-      eventId: `course_archived_${courseId}_${updatedCourse.updatedAt ? new Date(updatedCourse.updatedAt).getTime() : Date.now()}`
-    });
+    // The creator notification exists only to tell the owner that somebody
+    // ELSE changed their course. When the actor IS the owner there is nobody
+    // left to inform, so the row is never produced. This is deliberately a
+    // call-site condition and not only the actorId guard inside
+    // createNotification: a future refactor that drops actorId must not be
+    // able to silently resurrect self-notifications.
+    if (updatedCourse.creatorId !== userId) {
+      await notificationService.createNotification(updatedCourse.creatorId, {
+        title: "Course Archived 📦",
+        message: `Your course "${updatedCourse.title}" has been archived by an admin.`,
+        type: "COURSE_STATUS",
+        link: `/courses/${courseId}`,
+        eventId: `course_archived_${courseId}_${updatedCourse.updatedAt ? new Date(updatedCourse.updatedAt).getTime() : Date.now()}`,
+        actorId: userId
+      });
+    }
   } catch (err) {
     console.error("Error sending archive notification:", err.message);
   }
@@ -1255,12 +1402,21 @@ const restoreCourse = async (courseId, userId, userRole) => {
   });
 
   try {
-    await notificationService.createNotification(updatedCourse.creatorId, {
-      title: "Course Restored 🔄",
-      message: `Your archived course "${updatedCourse.title}" has been restored to DRAFT.`,
-      type: "COURSE_STATUS",
-      link: `/courses/${courseId}`
-    });
+    // The creator notification exists only to tell the owner that somebody
+    // ELSE changed their course. When the actor IS the owner there is nobody
+    // left to inform, so the row is never produced. This is deliberately a
+    // call-site condition and not only the actorId guard inside
+    // createNotification: a future refactor that drops actorId must not be
+    // able to silently resurrect self-notifications.
+    if (updatedCourse.creatorId !== userId) {
+      await notificationService.createNotification(updatedCourse.creatorId, {
+        title: "Course Restored 🔄",
+        message: `Your archived course "${updatedCourse.title}" has been restored to DRAFT.`,
+        type: "COURSE_STATUS",
+        link: `/courses/${courseId}`,
+        actorId: userId
+      });
+    }
   } catch (err) {
     console.error("Error sending restore notification:", err.message);
   }
@@ -1282,5 +1438,6 @@ module.exports = {
   duplicateCourse,
   getCourseStudents,
   getCourseStatusCounts,
-  exportCourse
+  exportCourse,
+  validateCourseForPublish
 };

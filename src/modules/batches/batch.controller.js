@@ -234,7 +234,13 @@ const createBatchAnnouncement = async (req, res, next) => {
       message,
       batchId,
     });
-    await notificationService.notifyEnrolledStudents(courseId, { title, message }, batchId);
+    await notificationService.notifyEnrolledStudents(
+      courseId,
+      { title, message, actorId: req.user.id },
+      batchId,
+      null,
+      req.user.id
+    );
 
     res.status(201).json({
       success: true,

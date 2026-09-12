@@ -62,7 +62,8 @@ const getLessonById = async (
 };
 
 const createLesson = async (
-  data
+  data,
+  actorUserId = null
 ) => {
   const lastLesson = await prisma.lesson.findFirst({
     where: { moduleId: data.moduleId },
@@ -103,10 +104,12 @@ const createLesson = async (
           title: "New Lesson Published 📚",
           message: `A new lesson "${lesson.title}" has been added to your course "${moduleRecord.course.title}".`,
           type: "LESSON_PUBLISHED",
-          link: `/courses/${moduleRecord.courseId}`
+          link: `/courses/${moduleRecord.courseId}`,
+          actorId: actorUserId
         },
         null,
-        `lesson_published_${lesson.id}`
+        `lesson_published_${lesson.id}`,
+        actorUserId
       ).catch(err => console.error("Error sending lesson notification:", err.message));
     }
   }
@@ -116,7 +119,8 @@ const createLesson = async (
 
 const updateLesson = async (
   lessonId,
-  data
+  data,
+  actorUserId = null
 ) => {
   const oldLesson = await prisma.lesson.findUnique({
     where: { id: lessonId }
@@ -154,10 +158,12 @@ const updateLesson = async (
           title: "New Lesson Published 📚",
           message: `A new lesson "${lesson.title}" has been added to your course "${moduleRecord.course.title}".`,
           type: "LESSON_PUBLISHED",
-          link: `/courses/${moduleRecord.courseId}`
+          link: `/courses/${moduleRecord.courseId}`,
+          actorId: actorUserId
         },
         null,
-        `lesson_published_${lesson.id}`
+        `lesson_published_${lesson.id}`,
+        actorUserId
       ).catch(err => console.error("Error sending lesson notification:", err.message));
     }
   }
