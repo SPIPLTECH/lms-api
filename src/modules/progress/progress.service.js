@@ -2,16 +2,38 @@ const prisma = require('../../config/database');
 const { recomputeCourseProgress, ensureProgressInitialized } = require('../../utils/progressRollup');
 
 /**
- * Marks a single Content item as complete/incomplete for a student
- * and triggers bottom-up course progress rollup.
+ * Marks one or more Content items (same studentId) complete/incomplete and
+ * triggers bottom-up course progress rollup — once per distinct course, not
+ * once per content id.
  *
- * When `requestingUser` is supplied (always, from the HTTP layer) the caller's
- * access to the owning course is verified before any progress row is written,
- * so an unenrolled student cannot seed progress rows for a course.
+ * A single player block can stand for several real Content rows (a merged
+ * "document" view — see the frontend's groupLessonContentForDocumentView).
+ * Recomputing the whole course roll-up separately for each row used to mean
+ * N parallel reads-then-writes of the same Topic/Lesson/Module/Course
+ * progress rows: whichever call's read happened before another call's write
+ * committed would then persist a rollup that doesn't yet include that
+ * other row's completion, silently reverting it (a lost update) — the
+ * behavior behind "mark as complete" needing several clicks to stick. All
+ * ContentProgress upserts now happen first, then one rollup per course reads
+ * the fully-updated state.
+ *
+ * `contentId` may be a single id (existing single-item callers keep working
+ * unchanged) or an array. When `requestingUser` is supplied (always, from
+ * the HTTP layer) the caller's access to each owning course is verified
+ * before any progress row for it is written, so an unenrolled student
+ * cannot seed progress rows for a course.
  */
 async function completeContent(studentId, contentId, completed = true, requestingUser = null) {
-  const content = await prisma.content.findUnique({
-    where: { id: contentId },
+  const contentIds = [...new Set((Array.isArray(contentId) ? contentId : [contentId]).filter(Boolean))];
+
+  if (contentIds.length === 0) {
+    const error = new Error('contentId is required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const contents = await prisma.content.findMany({
+    where: { id: { in: contentIds } },
     include: {
       topic: {
         include: {
@@ -31,41 +53,57 @@ async function completeContent(studentId, contentId, completed = true, requestin
     }
   });
 
-  if (!content) {
+  if (contents.length !== contentIds.length) {
     const error = new Error('Content not found');
     error.statusCode = 404;
     throw error;
   }
 
-  const courseId =
+  const courseIdOf = (content) =>
     content.topic?.lesson?.module?.courseId ||
     content.lesson?.module?.courseId ||
     content.module?.courseId ||
     content.courseId;
 
-  if (requestingUser && courseId) {
-    await assertCourseProgressAccess(requestingUser, studentId, courseId);
+  const courseIds = new Set();
+  for (const content of contents) {
+    const courseId = courseIdOf(content);
+    if (courseId) courseIds.add(courseId);
   }
 
-  const existing = await prisma.contentProgress.findUnique({
-    where: { studentId_contentId: { studentId, contentId } }
+  if (requestingUser) {
+    for (const courseId of courseIds) {
+      await assertCourseProgressAccess(requestingUser, studentId, courseId);
+    }
+  }
+
+  const existingRows = await prisma.contentProgress.findMany({
+    where: { studentId, contentId: { in: contentIds } }
   });
+  const existingByContentId = new Map(existingRows.map((row) => [row.contentId, row]));
   const now = new Date();
-  const completedAt = completed ? (existing?.completed && existing?.completedAt ? existing.completedAt : now) : null;
 
-  await prisma.contentProgress.upsert({
-    where: { studentId_contentId: { studentId, contentId } },
-    create: { studentId, contentId, completed, completedAt: completed ? now : null },
-    update: { completed, completedAt }
-  });
+  await Promise.all(
+    contentIds.map((id) => {
+      const existing = existingByContentId.get(id);
+      const completedAt = completed ? (existing?.completed && existing?.completedAt ? existing.completedAt : now) : null;
+      return prisma.contentProgress.upsert({
+        where: { studentId_contentId: { studentId, contentId: id } },
+        create: { studentId, contentId: id, completed, completedAt: completed ? now : null },
+        update: { completed, completedAt }
+      });
+    })
+  );
 
+  // One rollup per distinct course (almost always exactly one — a merged
+  // block's rows all come from the same lesson) instead of one per content id.
   let rollup = null;
-  if (courseId) {
+  for (const courseId of courseIds) {
     rollup = await recomputeCourseProgress(studentId, courseId);
   }
 
   return {
-    contentId,
+    contentId: contentIds.length === 1 ? contentIds[0] : contentIds,
     studentId,
     completed,
     courseProgress: rollup

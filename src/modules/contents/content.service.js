@@ -232,7 +232,7 @@ const submitContentAssignment = async (contentId, studentId, data, requestingUse
   return toSubmissionDto(submission);
 };
 
-const COURSE_SUMMARY = { select: { id: true, title: true } };
+const COURSE_SUMMARY = { select: { id: true, title: true, status: true } };
 
 /**
  * Every lesson-composer Assignment block (Content type ASSIGNMENT) in the

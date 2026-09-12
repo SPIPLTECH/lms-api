@@ -300,6 +300,7 @@ const getInstructorAssignments = async (instructorId, filter = {}) => {
                 select: {
                     id: true,
                     title: true,
+                    status: true,
                 }
             },
             // Ungraded submissions only — this is what "pending review" means for
