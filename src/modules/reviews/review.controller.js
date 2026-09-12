@@ -1,15 +1,37 @@
+const prisma = require("../../config/database");
 const reviewService = require("./review.service");
 
 const getReviews = async (req, res, next) => {
   try {
+    const studentId = req.query.studentId;
+
     const reviews = await reviewService.getReviews(
-      req.query.userId,
+      studentId,
       req.query.courseId
     );
 
     res.json({
       success: true,
       data: reviews
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getMyReviews = async (req, res, next) => {
+  try {
+    const { courseId, rating, startDate, endDate } = req.query;
+    const result = await reviewService.getInstructorReviews(req.user.id, {
+      courseId,
+      rating,
+      startDate,
+      endDate
+    });
+
+    res.json({
+      success: true,
+      data: result
     });
   } catch (error) {
     next(error);
@@ -37,6 +59,7 @@ const getReviewById = async (req, res, next) => {
     next(error);
   }
 };
+
 const getCourseReviewStats = async (
   req,
   res,
@@ -56,11 +79,26 @@ const getCourseReviewStats = async (
     next(error);
   }
 };
+
 const createReview = async (req, res, next) => {
   try {
+    const student =
+      await prisma.studentProfile.findUnique({
+        where: {
+          userId: req.user.id
+        }
+      });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found"
+      });
+    }
+
     const review = await reviewService.createReview(
       req.body,
-      req.user.id
+      student.id
     );
 
     res.status(201).json({
@@ -91,7 +129,9 @@ const updateReview = async (req, res, next) => {
 
 const deleteReview = async (req, res, next) => {
   try {
-    await reviewService.deleteReview(req.params.reviewId);
+    await reviewService.deleteReview(
+      req.params.reviewId
+    );
 
     res.json({
       success: true,
@@ -104,6 +144,7 @@ const deleteReview = async (req, res, next) => {
 
 module.exports = {
   getReviews,
+  getMyReviews,
   getReviewById,
   createReview,
   updateReview,

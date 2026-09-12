@@ -1,52 +1,39 @@
-const prisma =
-  require("../config/database");
+const prisma = require("../config/database");
+const { buildOwnershipCheck } = require("./ownership.middleware");
 
-const verifyContentOwnership =
-  async (req, res, next) => {
-    try {
-      const content =
-        await prisma.content.findUnique({
-          where: {
-            id: req.params.contentId
+const findContentById = (id) =>
+  prisma.content.findUnique({
+    where: { id },
+    include: {
+      course: { select: { creatorId: true } },
+      module: { include: { course: { select: { creatorId: true } } } },
+      lesson: { include: { module: { include: { course: { select: { creatorId: true } } } } } },
+      topic: {
+        include: {
+          lesson: {
+            include: {
+              module: { include: { course: { select: { creatorId: true } } } },
+            },
           },
-          include: {
-            lesson: {
-              include: {
-                module: {
-                  include: {
-                    course: true
-                  }
-                }
-              }
-            }
-          }
-        });
+        },
+      },
+    },
+  });
 
-      if (!content) {
-        return res.status(404).json({
-          message:
-            "Content not found"
-        });
-      }
+const getCourseCreatorId = (content) =>
+  content.course?.creatorId ??
+  content.module?.course?.creatorId ??
+  content.lesson?.module?.course?.creatorId ??
+  content.topic?.lesson?.module?.course?.creatorId;
 
-      if (
-        req.user.role !==
-          "ADMIN" &&
-        content.lesson.module.course
-          .creatorId !==
-          req.user.id
-      ) {
-        return res.status(403).json({
-          message:
-            "Access denied"
-        });
-      }
+const verifyContentOwnership = buildOwnershipCheck({
+  getResourceId: (req) => req.params.contentId,
+  findResource: findContentById,
+  getCourseCreatorId,
+  notFoundMessage: "Content not found",
+  missingIdMessage: "contentId is required",
+  attachAs: "content",
+});
 
-      next();
-    } catch (error) {
-      next(error);
-    }
-  };
-
-module.exports =
-  verifyContentOwnership;
+module.exports = verifyContentOwnership;
+module.exports.verifyContentOwnership = verifyContentOwnership;

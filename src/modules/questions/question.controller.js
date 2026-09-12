@@ -1,102 +1,246 @@
-const questionService = require(
-  "./question.service"
-);
+const questionService = require("./question.service");
+const questionRepositoryService = require("./services/questionRepository.service");
 
-const getQuestions = async (
-  req,
-  res,
-  next
-) => {
+/** Creating a "single question" is repository-only unless a quizId was supplied — mirrors how bulkCreateQuestions/importQuestions already attach their inserted questions via the QuizQuestion join table, which this path was missing entirely. */
+const attachIfQuizProvided = async (question, quizId) => {
+  if (!quizId) return;
+  await questionService.attachQuestionsToQuiz(quizId, [question.id]);
+};
+
+// =========================
+// Get Repository Questions (Paginated & Filtered)
+// =========================
+const getQuestions = async (req, res, next) => {
   try {
-    const questions =
-      await questionService.getQuestions(
-        req.query.quizId
-      );
+    const result = await questionRepositoryService.getQuestions(req.query, req.user || {});
 
     res.json({
       success: true,
-      data: questions
+      data: result.data,
+      pagination: result.pagination,
     });
   } catch (error) {
     next(error);
   }
 };
 
-const getQuestionById = async (
-  req,
-  res,
-  next
-) => {
+// =========================
+// Get Questions By Quiz
+// =========================
+const getQuestionsByQuizId = async (req, res, next) => {
+  const id = req.params.quizId;
   try {
-    const question =
-      await questionService.getQuestionById(
-        req.params.questionId
-      );
+    const question = await questionRepositoryService.getQuestionById(id, req.user || {});
+    if (question) {
+      return res.json({
+        success: true,
+        data: question,
+      });
+    }
+  } catch (error) {
+    // Fallback to quiz questions list
+  }
+
+  try {
+    const questions = await questionService.getQuestionsByQuizId(id);
+    return res.json({
+      success: true,
+      data: questions,
+    });
+  } catch (quizError) {
+    next(quizError);
+  }
+};
+
+// =========================
+// Get Question By ID
+// =========================
+const getQuestionById = async (req, res, next) => {
+  try {
+    const question = await questionRepositoryService.getQuestionById(
+      req.params.questionId,
+      req.user || {}
+    );
+
+    if (!question) {
+      return res.status(404).json({
+        success: false,
+        message: "Question not found",
+      });
+    }
 
     res.json({
       success: true,
-      data: question
+      data: question,
     });
   } catch (error) {
     next(error);
   }
 };
 
-const createQuestion = async (
-  req,
-  res,
-  next
-) => {
+// =========================
+// Create Single Question
+// =========================
+const createQuestion = async (req, res, next) => {
   try {
-    const question =
-      await questionService.createQuestion(
-        req.body
-      );
+    const userId = req.user ? req.user.id : null;
+
+    // Repository creation
+    const question = await questionRepositoryService.createQuestion(req.body, userId);
+    await attachIfQuizProvided(question, req.body.quizId);
 
     res.status(201).json({
       success: true,
-      data: question
+      data: question,
     });
   } catch (error) {
     next(error);
   }
 };
 
-const updateQuestion = async (
-  req,
-  res,
-  next
-) => {
+// =========================
+// Bulk Upload Questions (Excel, CSV, JSON)
+// =========================
+const uploadQuestions = async (req, res, next) => {
   try {
-    const question =
-      await questionService.updateQuestion(
-        req.params.questionId,
-        req.body
-      );
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({
+        success: false,
+        message: "Please upload an Excel (.xlsx), CSV (.csv), or JSON (.json) file.",
+      });
+    }
 
-    res.json({
+    const userId = req.user ? req.user.id : null;
+    const result = await questionRepositoryService.bulkUploadQuestions(
+      req.file.buffer,
+      req.file.originalname,
+      userId
+    );
+
+    res.status(201).json({
       success: true,
-      data: question
+      message: `Processed ${result.total} questions. Successfully imported ${result.importedCount}.`,
+      data: result,
     });
   } catch (error) {
     next(error);
   }
 };
 
-const deleteQuestion = async (
-  req,
-  res,
-  next
-) => {
+// =========================
+// Bulk Create Questions (JSON payload, optionally attached to a quiz)
+// =========================
+const bulkCreateQuestions = async (req, res, next) => {
   try {
-    await questionService.deleteQuestion(
-      req.params.questionId
+    const { quizId, questions } = req.body;
+    const result = await questionService.bulkCreateQuestions(questions, quizId || null);
+
+    res.status(201).json({
+      success: true,
+      message: `Processed ${result.total} questions. Inserted ${result.inserted}.`,
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// =========================
+// Import Questions From File (optionally attached to a quiz)
+// =========================
+const importQuestionsFile = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Please upload an Excel (.xlsx), CSV (.csv), or JSON (.json) file.",
+      });
+    }
+
+    const result = await questionService.importQuestions(req.file, req.body.quizId || null);
+
+    res.status(201).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// =========================
+// Update Question
+// =========================
+const updateQuestion = async (req, res, next) => {
+  try {
+    const question = await questionRepositoryService.updateQuestion(
+      req.params.questionId,
+      req.body,
+      req.user || {}
     );
 
     res.json({
       success: true,
-      message:
-        "Question deleted successfully"
+      data: question,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// =========================
+// Delete Question
+// =========================
+const deleteQuestion = async (req, res, next) => {
+  try {
+    await questionRepositoryService.deleteQuestion(
+      req.params.questionId,
+      req.user || {}
+    );
+
+    res.json({
+      success: true,
+      message: "Question deleted or archived successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// =========================
+// Archive Question
+// =========================
+const archiveQuestion = async (req, res, next) => {
+  try {
+    const question = await questionRepositoryService.archiveQuestion(
+      req.params.questionId,
+      req.user || {}
+    );
+
+    res.json({
+      success: true,
+      message: "Question archived successfully",
+      data: question,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// =========================
+// Duplicate Question
+// =========================
+const duplicateQuestion = async (req, res, next) => {
+  try {
+    const question = await questionRepositoryService.duplicateQuestion(
+      req.params.questionId,
+      req.user || {}
+    );
+
+    res.status(201).json({
+      success: true,
+      message: "Question duplicated successfully",
+      data: question,
     });
   } catch (error) {
     next(error);
@@ -105,8 +249,14 @@ const deleteQuestion = async (
 
 module.exports = {
   getQuestions,
+  getQuestionsByQuizId,
   getQuestionById,
   createQuestion,
+  bulkCreateQuestions,
+  importQuestionsFile,
+  uploadQuestions,
   updateQuestion,
-  deleteQuestion
+  deleteQuestion,
+  archiveQuestion,
+  duplicateQuestion,
 };

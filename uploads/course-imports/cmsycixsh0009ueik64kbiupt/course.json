@@ -1,0 +1,86 @@
+{
+  "$schema": "https://orangetree.lms/schemas/course-v2.json",
+  "version": "2.0",
+  "metadata": {
+    "title": "Full Stack Architecture Mastery",
+    "description": "<p>Comprehensive Course</p>",
+    "category": "Software Engineering",
+    "level": "ADVANCED",
+    "thumbnail": "roundtrip_cover.png",
+    "language": "English",
+    "tags": [
+      "Architecture",
+      "System Design"
+    ],
+    "estimatedLearningHours": 40
+  },
+  "settings": {
+    "visibility": "PUBLIC",
+    "certificatesEnabled": true,
+    "discussionEnabled": true,
+    "dripContentEnabled": false
+  },
+  "modules": [
+    {
+      "title": "Module 1: System Design",
+      "description": "System Design Foundations",
+      "order": 1,
+      "isPublished": true,
+      "lessons": [
+        {
+          "title": "Lesson 1: Scalability",
+          "description": "High Availability Patterns",
+          "order": 1,
+          "isPublished": true,
+          "topics": [
+            {
+              "title": "Topic 1.1: Load Balancing",
+              "description": "L4 vs L7 Balancers",
+              "order": 1,
+              "isPublished": true,
+              "contents": [
+                {
+                  "type": "VIDEO",
+                  "title": "Load Balancers Deep Dive",
+                  "order": 1,
+                  "duration": 600,
+                  "htmlContent": null,
+                  "mediaFile": "contents/roundtrip_video.mp4",
+                  "videoUrl": null,
+                  "externalUrl": null,
+                  "data": null
+                },
+                {
+                  "type": "LINK",
+                  "title": "System Design Primer",
+                  "order": 2,
+                  "duration": null,
+                  "htmlContent": null,
+                  "mediaFile": null,
+                  "videoUrl": null,
+                  "externalUrl": "https://github.com/donnemartin/system-design-primer",
+                  "data": null
+                },
+                {
+                  "type": "TEXT",
+                  "title": "Summary & Notes",
+                  "order": 3,
+                  "duration": null,
+                  "htmlContent": "<h3>Key Takeaways</h3>",
+                  "mediaFile": null,
+                  "videoUrl": null,
+                  "externalUrl": null,
+                  "data": {
+                    "quizLink": {
+                      "id": "q123"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

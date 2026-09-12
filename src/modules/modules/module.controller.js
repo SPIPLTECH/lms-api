@@ -10,7 +10,9 @@ const getModules = async (
   try {
     const modules =
       await moduleService.getModules(
-        req.query.courseId
+        req.query.courseId,
+        req.user.role,
+        req.user.id
       );
 
     res.json(modules);
@@ -27,7 +29,8 @@ const getModuleById = async (
   try {
     const module =
       await moduleService.getModuleById(
-        req.params.moduleId
+        req.params.moduleId,
+        req.user.role
       );
 
     res.json(module);
@@ -68,10 +71,7 @@ const updateModule = async (
     req.body
   );
 
-res.json({
-  success: true,
-  data: module,
-});
+   res.json(module);
   } catch (error) {
     next(error);
   }
@@ -105,6 +105,7 @@ const reorderModules = async (
   try {
     const result =
       await moduleService.reorderModules(
+        req.body.courseId,
         req.body.modules
       );
 

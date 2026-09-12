@@ -1,3 +1,43 @@
-/src/generated/prisma
-node_modules
-/frontend
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Build
+dist/
+build/
+
+# Coverage
+coverage/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Frontend (if it is inside this repository)
+/frontend/
+
+# Scratch folder for temporary scripts
+scratch/
+
+# AI agent removal backup/restoration package (contains raw DB data exports)
+backup/
+
+# Git worktrees for isolated agent work
+.worktrees/
+
+.worktrees/

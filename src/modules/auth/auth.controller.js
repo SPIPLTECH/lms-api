@@ -21,33 +21,29 @@ const register = async (
       data: user
     });
   } catch (error) {
-    // next(error);
-  
-  if (error.code === "P2002") {
-    const field =
-      error.meta?.target?.[0];
+    // Translate Prisma unique constraint violations (P2002) into
+    // user-friendly 409 Conflict responses before passing to the
+    // global error handler via next(). Using bare throw inside catch
+    // causes unhandled promise rejections in Express 4 and is
+    // fragile in Express 5.
+    if (error.code === "P2002") {
+      const field = error.meta?.target?.[0];
+      const message =
+        field === "email"
+          ? "Email already registered."
+          : field === "phoneNumber"
+          ? "Phone number already registered."
+          : "User already exists.";
 
-    if (field === "email") {
-      throw new Error(
-        "Email already registered."
-      );
+      const conflictError = new Error(message);
+      conflictError.statusCode = 409;
+      return next(conflictError);
     }
 
-    if (field === "phoneNumber") {
-      throw new Error(
-        "Phone number already registered."
-      );
-    }
-
-    throw new Error(
-      "User already exists."
-    );
-  }
-
-  throw error;
-
+    next(error);
   }
 };
+
 
 /**
  * Login
@@ -81,20 +77,36 @@ const login = async (
 /**
  * Logout
  */
-const logout = async (
-  req,
-  res,
-  next
-) => {
+const logout = async (req, res) => {
   try {
-    const result =
-      await authService.logout(
-        req.user.id
-      );
+    const userId = req.user?.id;
+    const refreshToken = req.body?.refreshToken;
+
+    await authService.logout(userId, refreshToken);
+
+    return res.status(200).json({
+      success: true,
+      message: "Logged out successfully"
+    });
+  } catch (error) {
+    console.error("Logout error in controller:", error);
+    return res.status(200).json({
+      success: true,
+      message: "Logged out successfully"
+    });
+  }
+};
+
+/**
+ * Profile
+ */
+const profile = async (req, res, next) => {
+  try {
+    const user = await authService.getProfile(req.user.id);
 
     res.json({
       success: true,
-      message: result.message
+      data: user,
     });
   } catch (error) {
     next(error);
@@ -102,63 +114,20 @@ const logout = async (
 };
 
 /**
- * Profile
- */
-const profile = async (
-  req,
-  res
-) => {
-  res.json({
-    success: true,
-    data: req.user
-  });
-};
-
-/**
- * Verify Email
- */
-// const verifyEmail =
-//   async (
-//     req,
-//     res,
-//     next
-//   ) => {
-//     try {
-//       const { token } =
-//         req.params;
-
-//       const result =
-//         await authService.verifyEmail(
-//           token
-//         );
-
-//       res.json({
-//         success: true,
-//         message:
-//           result.message
-//       });
-//     } catch (error) {
-//       next(error);
-//     }
-//   };
-
-/**
  * Forgot Password
  */
 const verifyOtp = async (req, res, next) => {
   try {
-    const result = await authService.verifyOtp(req.body);
+    const { email, otp } = req.body;
+
+    const result = await authService.verifyOtp(email, otp);
+
     res.status(200).json(result);
   } catch (error) {
     next(error);
   }
 };
 
-module.exports = {
-  register,
-  login,
-  verifyOtp
-};
 const forgotPassword =
   async (
     req,
@@ -196,13 +165,15 @@ const resetPassword =
   ) => {
     try {
       const {
-        token,
+        otp,
+        email,
         newPassword
       } = req.body;
 
       const result =
         await authService.resetPassword(
-          token,
+          otp,
+          email,
           newPassword
         );
 
@@ -268,15 +239,36 @@ const changePassword = async (
     next(error);
   }
 };
+const resendVerification = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const { email } = req.body;
+
+    const result =
+      await authService.resendVerification(
+        email
+      );
+
+    res.status(200).json({
+      success: true,
+      message: result.message
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 module.exports = {
   register,
   login,
   logout,
   profile,
-  //verifyEmail,
   forgotPassword,
   resetPassword,
   refreshToken,
   changePassword,
-  verifyOtp
+  verifyOtp,
+  resendVerification
 };
