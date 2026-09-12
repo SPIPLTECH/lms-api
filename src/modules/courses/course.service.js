@@ -732,7 +732,8 @@ const publishCourse = async (courseId, userId, userRole) => {
       title: "Course Published 🚀",
       message: `Your course "${updatedCourse.title}" is now published and active.`,
       type: "COURSE_STATUS",
-      link: `/courses/${courseId}`
+      link: `/courses/${courseId}`,
+      eventId: `course_published_${courseId}_${updatedCourse.updatedAt ? new Date(updatedCourse.updatedAt).getTime() : Date.now()}`
     });
   } catch (err) {
     console.error("Error sending publish notification:", err.message);
@@ -767,7 +768,8 @@ const unpublishCourse = async (courseId, userId, userRole) => {
       title: "Course Unpublished ✏️",
       message: `Your course "${updatedCourse.title}" has been unpublished and set back to DRAFT.`,
       type: "COURSE_STATUS",
-      link: `/courses/${courseId}`
+      link: `/courses/${courseId}`,
+      eventId: `course_unpublished_${courseId}_${updatedCourse.updatedAt ? new Date(updatedCourse.updatedAt).getTime() : Date.now()}`
     });
   } catch (err) {
     console.error("Error sending unpublish notification:", err.message);
@@ -801,7 +803,8 @@ const archiveCourse = async (courseId, userId, userRole) => {
       title: "Course Archived 📦",
       message: `Your course "${updatedCourse.title}" has been archived by an admin.`,
       type: "COURSE_STATUS",
-      link: `/courses/${courseId}`
+      link: `/courses/${courseId}`,
+      eventId: `course_archived_${courseId}_${updatedCourse.updatedAt ? new Date(updatedCourse.updatedAt).getTime() : Date.now()}`
     });
   } catch (err) {
     console.error("Error sending archive notification:", err.message);
@@ -990,7 +993,8 @@ const duplicateCourse = async (courseId, instructorId) => {
           fileUrl: content.fileUrl,
           htmlContent: content.htmlContent,
           externalUrl: content.externalUrl,
-          duration: content.duration
+          duration: content.duration,
+          data: content.data
         }))
       });
     }
@@ -1017,7 +1021,8 @@ const duplicateCourse = async (courseId, instructorId) => {
             fileUrl: content.fileUrl,
             htmlContent: content.htmlContent,
             externalUrl: content.externalUrl,
-            duration: content.duration
+            duration: content.duration,
+            data: content.data
           }))
         });
       }
@@ -1044,7 +1049,8 @@ const duplicateCourse = async (courseId, instructorId) => {
               fileUrl: content.fileUrl,
               htmlContent: content.htmlContent,
               externalUrl: content.externalUrl,
-              duration: content.duration
+              duration: content.duration,
+              data: content.data
             }))
           });
         }
@@ -1071,7 +1077,8 @@ const duplicateCourse = async (courseId, instructorId) => {
                 fileUrl: content.fileUrl,
                 htmlContent: content.htmlContent,
                 externalUrl: content.externalUrl,
-                duration: content.duration
+                duration: content.duration,
+                data: content.data
               }))
             });
           }

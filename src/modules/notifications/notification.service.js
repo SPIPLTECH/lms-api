@@ -2,17 +2,44 @@ const prisma = require("../../config/database");
 const { getIO } = require("../../socket");
 
 const createNotification = async (userId, data) => {
-  const notification = await prisma.notification.create({
-    data: {
-      userId,
-      title: data.title,
-      message: data.message,
-      type: data.type,
-      link: data.link || null,
-    },
-  });
+  const { title, message, type, link, eventId } = data || {};
 
-  // Real-time Push via Socket.io
+  // 1. If eventId is provided, check if a notification already exists for this (userId, eventId)
+  if (eventId) {
+    const existing = await prisma.notification.findFirst({
+      where: { userId, eventId },
+    });
+    if (existing) {
+      // DO NOT create DB row, DO NOT emit socket event
+      return existing;
+    }
+  }
+
+  // 2. Insert atomically with fallback for potential unique constraint race conditions
+  let notification;
+  try {
+    notification = await prisma.notification.create({
+      data: {
+        userId,
+        title,
+        message,
+        type,
+        link: link || null,
+        eventId: eventId || null,
+      },
+    });
+  } catch (err) {
+    // If unique constraint error (P2002) occurs on race condition
+    if (err.code === "P2002" && eventId) {
+      const existing = await prisma.notification.findFirst({
+        where: { userId, eventId },
+      });
+      if (existing) return existing;
+    }
+    throw err;
+  }
+
+  // 3. Emit Real-time Push via Socket.io ONLY when a new record is created
   try {
     const io = getIO();
     io.to(`user_${userId}`).emit("new_notification", notification);
@@ -63,7 +90,7 @@ const clearAll = async (userId) => {
   });
 };
 
-const notifyEnrolledStudents = async (courseId, notificationData, batchId = null) => {
+const notifyEnrolledStudents = async (courseId, notificationData, batchId = null, eventIdPrefix = null) => {
   try {
     // When a batchId is given, only notify that batch's roster instead of
     // every student enrolled in the course.
@@ -84,11 +111,16 @@ const notifyEnrolledStudents = async (courseId, notificationData, batchId = null
           .filter(Boolean);
 
     for (const userId of userIds) {
+      const eventId = eventIdPrefix || notificationData.eventId
+        ? `${eventIdPrefix || notificationData.eventId}_${userId}`
+        : null;
+
       await createNotification(userId, {
         title: notificationData.title || "New Announcement 📢",
         message: notificationData.message,
-        type: "ANNOUNCEMENT",
+        type: notificationData.type || "ANNOUNCEMENT",
         link: notificationData.link || `/student/dashboard`,
+        eventId,
       });
     }
   } catch (error) {

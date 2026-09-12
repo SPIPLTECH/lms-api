@@ -1,0 +1,53 @@
+{
+  "$schema": "https://orangetree.lms/schemas/course-v2.json",
+  "version": "2.0",
+  "metadata": {
+    "title": "Back Compat V2 Course"
+  },
+  "settings": {
+    "visibility": "PUBLIC"
+  },
+  "quizzes": [
+    {
+      "title": "V2 Course Quiz",
+      "quizTag": "FINAL",
+      "passingScore": 60,
+      "timeLimit": 10,
+      "questions": [
+        {
+          "question": "q?",
+          "questionType": "MCQ_SINGLE",
+          "options": [
+            "a",
+            "b"
+          ],
+          "correctAnswer": "a",
+          "marks": 1
+        }
+      ]
+    }
+  ],
+  "modules": [
+    {
+      "title": "V2 Module",
+      "lessons": [
+        {
+          "title": "V2 Lesson",
+          "topics": [
+            {
+              "title": "V2 Topic",
+              "contents": [
+                {
+                  "type": "HTML",
+                  "title": "V2 Content",
+                  "order": 1,
+                  "htmlContent": "<p>hi</p>"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
