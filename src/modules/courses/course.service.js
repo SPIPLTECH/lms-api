@@ -299,6 +299,7 @@ const SORT_MAP = {
   newest: { createdAt: "desc" },
   oldest: { createdAt: "asc" },
   recently_updated: { updatedAt: "desc" },
+  recently_viewed: { lastViewedAt: { sort: "desc", nulls: "last" } },
   most_students: { enrollments: { _count: "desc" } },
   alphabetical: { title: "asc" },
 };
@@ -1268,6 +1269,26 @@ const restoreCourse = async (courseId, userId, userRole) => {
   return updatedCourse;
 };
 
+/**
+ * Stamps lastViewedAt on a course the instructor just opened — backs the My
+ * Courses "Recently Viewed" row, mirroring how Enrollment.lastAccessedAt
+ * tracks a student opening a course (see enrollment.service.js).
+ * Scoped to creatorId in the query itself (rather than a separate ownership
+ * lookup) so it silently no-ops for a course this instructor doesn't own.
+ */
+const trackCourseView = async (courseId, instructorId) => {
+  if (!courseId || !instructorId) return null;
+  try {
+    return await prisma.course.update({
+      where: { id: courseId, creatorId: instructorId },
+      data: { lastViewedAt: new Date() },
+    });
+  } catch (error) {
+    if (error.code === "P2025") return null;
+    throw error;
+  }
+};
+
 module.exports = {
   getCourses,
   getCourseById,
@@ -1282,5 +1303,6 @@ module.exports = {
   duplicateCourse,
   getCourseStudents,
   getCourseStatusCounts,
-  exportCourse
+  exportCourse,
+  trackCourseView
 };

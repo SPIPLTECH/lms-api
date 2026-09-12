@@ -172,6 +172,14 @@ router.get(
   controller.exportCourse
 );
 
+router.patch(
+  "/:courseId/view",
+  verifyToken,
+  checkRole(["INSTRUCTOR"]),
+  verifyCourseOwnership,
+  controller.trackCourseView
+);
+
 router.post(
   "/:courseId/announcements",
   verifyToken,

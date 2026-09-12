@@ -156,6 +156,7 @@ model Course {
   creatorId              String
   createdAt              DateTime         @default(now())
   updatedAt              DateTime         @updatedAt
+  lastViewedAt           DateTime?
   certificates           Certificate[]
   creator                User             @relation(fields: [creatorId], references: [id], onDelete: Cascade)
   enrollments            Enrollment[]

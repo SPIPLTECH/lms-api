@@ -323,6 +323,15 @@ const exportCourse = async (req, res, next) => {
   }
 };
 
+const trackCourseView = async (req, res, next) => {
+  try {
+    await courseService.trackCourseView(req.params.courseId, req.user.id);
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getCourses,
   getCourseById,
@@ -338,5 +347,6 @@ module.exports = {
   getCourseStudents,
   sendAnnouncement,
   getCourseStatusCounts,
-  exportCourse
+  exportCourse,
+  trackCourseView
 };
