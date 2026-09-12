@@ -15,8 +15,23 @@ const { getNextOrder } = require("../contents/contentOrder.util");
 // gone. Does not change response timing for real requests.
 const pendingMisconceptionClassifications = new Set();
 
-const flushPendingMisconceptionClassifications = () =>
-  Promise.allSettled([...pendingMisconceptionClassifications]);
+// Tracks the post-submission side-effect chains dispatched by submitQuiz --
+// the progress rollup, learner-model evidence and instructor notification it
+// answers the HTTP caller without waiting for. Same purpose as the set above:
+// give tests (and a graceful shutdown) a deterministic way to wait for work
+// that a real request intentionally does not.
+const pendingSubmissionSideEffects = new Set();
+
+const flushPendingSubmissionSideEffects = () =>
+  Promise.allSettled([...pendingSubmissionSideEffects]);
+
+// Awaits the side-effect chains first: the classifier is dispatched from
+// inside them, so flushing only the classifier set could return before a
+// classification has even been queued.
+const flushPendingMisconceptionClassifications = async () => {
+  await flushPendingSubmissionSideEffects();
+  return Promise.allSettled([...pendingMisconceptionClassifications]);
+};
 
 const evaluateAnswer = (answer, correctAnswer, questionType) => {
   if (answer === undefined || answer === null || answer === "") {
@@ -881,149 +896,172 @@ const submitQuiz = async (studentId, quizId, answers = [], timeTakenSeconds = nu
     throw error;
   }
 
-  // Synchronize QuizProgress when quiz is passed authoritatively
-  if (result.passed) {
-    try {
-      const existingQp = await prisma.quizProgress.findUnique({
-        where: { studentId_quizId: { studentId, quizId } }
-      });
-      await prisma.quizProgress.upsert({
-        where: { studentId_quizId: { studentId, quizId } },
-        create: {
-          studentId,
-          quizId,
-          completed: true,
-          completedAt: new Date()
-        },
-        update: {
-          completed: true,
-          completedAt: existingQp?.completedAt || new Date()
-        }
-      });
-    } catch (qpErr) {
-      console.error("QuizProgress sync failed after quiz submission:", qpErr);
-    }
-  }
-
-  // Recompute course progress after quiz submission
-  try {
-    const { recomputeCourseProgress } = require("../../utils/progressRollup");
-    await recomputeCourseProgress(studentId, quiz.courseId);
-  } catch (err) {
-    console.error("Progress rollup recalculation failed after quiz submission:", err);
-  }
-
-  // Feed each answered question into the existing learner-model evidence
-  // pipeline (BKT + misconception detection) as its own observation, so
-  // multiple questions on the same KC aren't collapsed into one data point.
-  // This is a best-effort side effect: the QuizSubmission above is already
-  // committed and is the source of truth for the student's score, so a
-  // failure here is logged loudly rather than rolling back the submission
-  // or silently claiming an adaptive update that didn't happen.
-  for (const evidence of result.questionEvidence) {
-    try {
-      const recordResult = await learnerModelService.recordEvidence({
-        callingUser: { role: "ADMIN" },
-        data: {
-          studentId,
-          kc: evidence.kc,
-          score: evidence.score,
-          isCorrect: evidence.isCorrect,
-          courseId: quiz.courseId,
-          quizId,
-          ...(evidence.moduleId ? { moduleId: evidence.moduleId } : {}),
-          // Tier 1 (Phase 7A): reuses the EXISTING misconceptionHypothesis
-          // field on the EXISTING recordEvidence/evaluateAndDetectMisconception
-          // call chain — misconception.service.js is untouched. The resolved
-          // taxonomy type becomes `concept`/the hypothesis identity, exactly
-          // as any other caller-supplied hypothesis would.
-          ...(evidence.misconceptionTag ? { misconceptionHypothesis: evidence.misconceptionTag } : {}),
-          metadata: { questionId: evidence.questionId, quizSubmissionId: submission.id }
-        }
-      });
-
-      // Narrow, additive follow-up: attach taxonomy metadata to the SAME
-      // KnowledgeGap row misconception.service.js just created/updated,
-      // scoped strictly to the new columns (kc/type/description/confidence/
-      // evidence). Severity and status were already set above, untouched.
-      if (evidence.misconceptionTag && recordResult.recordedMisconception) {
-        const taxonomyEntry = MISCONCEPTION_TAXONOMY[evidence.misconceptionTag];
-        await prisma.knowledgeGap.update({
-          where: { id: recordResult.recordedMisconception.id },
-          data: {
-            kc: evidence.kc,
-            type: evidence.misconceptionTag,
-            description: taxonomyEntry.description,
-            confidence: 1.0,
-            evidence: `Selected "${evidence.studentAnswer}" for question: "${evidence.questionText}"`
+  // Everything below is a side effect of a submission that is already
+  // committed above: the progress rollup, the per-question learner-model
+  // evidence, and the instructor's notification. None of it changes what
+  // the student gets back, and all of it is slow — the rollup alone fans
+  // out into ~16 relation queries plus one upsert per topic, and the
+  // database is remote (~100ms a round trip). Awaiting it inline pushed
+  // the response past the client's 15s timeout, so the browser reported a
+  // failed submission for answers that had in fact been recorded, and the
+  // student resubmitted — spending another real attempt. So it is
+  // dispatched here and deliberately NOT awaited. Each step already logs
+  // and swallows its own failures; the catch below is a backstop so a
+  // throw between them can't surface as an unhandled rejection.
+  const sideEffects = (async () => {
+    // Synchronize QuizProgress when quiz is passed authoritatively
+    if (result.passed) {
+      try {
+        const existingQp = await prisma.quizProgress.findUnique({
+          where: { studentId_quizId: { studentId, quizId } }
+        });
+        await prisma.quizProgress.upsert({
+          where: { studentId_quizId: { studentId, quizId } },
+          create: {
+            studentId,
+            quizId,
+            completed: true,
+            completedAt: new Date()
+          },
+          update: {
+            completed: true,
+            completedAt: existingQp?.completedAt || new Date()
           }
         });
-      } else if (!evidence.isCorrect) {
-        // Tier 2 (Phase 7B): the answer was wrong and Tier 1 found no
-        // authored tag for the selected distractor. Fire-and-forget —
-        // deliberately NOT awaited, so an LLM call can never add latency to
-        // (or fail) this response. Any outcome (a new/continued
-        // KnowledgeGap, or any of the classifier's own discard/failure
-        // paths) is applied strictly after this function has already
-        // returned to the HTTP caller.
-        const classificationPromise = misconceptionClassifier
-          .classifyAndApply({
+      } catch (qpErr) {
+        console.error("QuizProgress sync failed after quiz submission:", qpErr);
+      }
+    }
+
+    // Recompute course progress after quiz submission
+    try {
+      const { recomputeCourseProgress } = require("../../utils/progressRollup");
+      await recomputeCourseProgress(studentId, quiz.courseId);
+    } catch (err) {
+      console.error("Progress rollup recalculation failed after quiz submission:", err);
+    }
+
+    // Feed each answered question into the existing learner-model evidence
+    // pipeline (BKT + misconception detection) as its own observation, so
+    // multiple questions on the same KC aren't collapsed into one data point.
+    // This is a best-effort side effect: the QuizSubmission above is already
+    // committed and is the source of truth for the student's score, so a
+    // failure here is logged loudly rather than rolling back the submission
+    // or silently claiming an adaptive update that didn't happen.
+    for (const evidence of result.questionEvidence) {
+      try {
+        const recordResult = await learnerModelService.recordEvidence({
+          callingUser: { role: "ADMIN" },
+          data: {
             studentId,
             kc: evidence.kc,
-            questionText: evidence.questionText,
-            options: evidence.optionsDisplay,
-            correctAnswer: evidence.correctAnswerDisplay,
-            studentAnswer: evidence.studentAnswerDisplay,
+            score: evidence.score,
             isCorrect: evidence.isCorrect,
-            score: evidence.score
-          })
-          .catch((error) => {
-            console.error(
-              `Misconception classifier dispatch failed (student=${studentId}, quiz=${quizId}, question=${evidence.questionId}, kc=${evidence.kc}):`,
-              error
-            );
-          })
-          .finally(() => pendingMisconceptionClassifications.delete(classificationPromise));
+            courseId: quiz.courseId,
+            quizId,
+            ...(evidence.moduleId ? { moduleId: evidence.moduleId } : {}),
+            // Tier 1 (Phase 7A): reuses the EXISTING misconceptionHypothesis
+            // field on the EXISTING recordEvidence/evaluateAndDetectMisconception
+            // call chain — misconception.service.js is untouched. The resolved
+            // taxonomy type becomes `concept`/the hypothesis identity, exactly
+            // as any other caller-supplied hypothesis would.
+            ...(evidence.misconceptionTag ? { misconceptionHypothesis: evidence.misconceptionTag } : {}),
+            metadata: { questionId: evidence.questionId, quizSubmissionId: submission.id }
+          }
+        });
 
-        pendingMisconceptionClassifications.add(classificationPromise);
+        // Narrow, additive follow-up: attach taxonomy metadata to the SAME
+        // KnowledgeGap row misconception.service.js just created/updated,
+        // scoped strictly to the new columns (kc/type/description/confidence/
+        // evidence). Severity and status were already set above, untouched.
+        if (evidence.misconceptionTag && recordResult.recordedMisconception) {
+          const taxonomyEntry = MISCONCEPTION_TAXONOMY[evidence.misconceptionTag];
+          await prisma.knowledgeGap.update({
+            where: { id: recordResult.recordedMisconception.id },
+            data: {
+              kc: evidence.kc,
+              type: evidence.misconceptionTag,
+              description: taxonomyEntry.description,
+              confidence: 1.0,
+              evidence: `Selected "${evidence.studentAnswer}" for question: "${evidence.questionText}"`
+            }
+          });
+        } else if (!evidence.isCorrect) {
+          // Tier 2 (Phase 7B): the answer was wrong and Tier 1 found no
+          // authored tag for the selected distractor. Fire-and-forget —
+          // deliberately NOT awaited, so an LLM call can never add latency to
+          // (or fail) this response. Any outcome (a new/continued
+          // KnowledgeGap, or any of the classifier's own discard/failure
+          // paths) is applied strictly after this function has already
+          // returned to the HTTP caller.
+          const classificationPromise = misconceptionClassifier
+            .classifyAndApply({
+              studentId,
+              kc: evidence.kc,
+              questionText: evidence.questionText,
+              options: evidence.optionsDisplay,
+              correctAnswer: evidence.correctAnswerDisplay,
+              studentAnswer: evidence.studentAnswerDisplay,
+              isCorrect: evidence.isCorrect,
+              score: evidence.score
+            })
+            .catch((error) => {
+              console.error(
+                `Misconception classifier dispatch failed (student=${studentId}, quiz=${quizId}, question=${evidence.questionId}, kc=${evidence.kc}):`,
+                error
+              );
+            })
+            .finally(() => pendingMisconceptionClassifications.delete(classificationPromise));
+
+          pendingMisconceptionClassifications.add(classificationPromise);
+        }
+      } catch (error) {
+        console.error(
+          `Learner-model evidence recording failed (student=${studentId}, quiz=${quizId}, question=${evidence.questionId}, kc=${evidence.kc}):`,
+          error
+        );
       }
-    } catch (error) {
-      console.error(
-        `Learner-model evidence recording failed (student=${studentId}, quiz=${quizId}, question=${evidence.questionId}, kc=${evidence.kc}):`,
-        error
-      );
     }
-  }
 
-  // Notify the instructor
-  try {
-    const course = await prisma.course.findUnique({
-      where: { id: quiz.courseId },
-      select: { title: true, creatorId: true }
-    });
+    // Notify the instructor
+    try {
+      const course = await prisma.course.findUnique({
+        where: { id: quiz.courseId },
+        select: { title: true, creatorId: true }
+      });
 
-    const student = await prisma.studentProfile.findUnique({
-      where: { id: studentId },
-      include: {
-        user: {
-          select: {
-            name: true
+      const student = await prisma.studentProfile.findUnique({
+        where: { id: studentId },
+        include: {
+          user: {
+            select: {
+              name: true
+            }
           }
         }
-      }
-    });
-
-    if (course && student) {
-      await notificationService.createNotification(course.creatorId, {
-        title: "Quiz Submitted 📝",
-        message: `${student.user.name} submitted the quiz "${quiz.title}" for "${course.title}" (Score: ${result.percentage}%).`,
-        type: "QUIZ_SUBMISSION",
-        link: `/courses/${quiz.courseId}/quizzes`
       });
+
+      if (course && student) {
+        await notificationService.createNotification(course.creatorId, {
+          title: "Quiz Submitted 📝",
+          message: `${student.user.name} submitted the quiz "${quiz.title}" for "${course.title}" (Score: ${result.percentage}%).`,
+          type: "QUIZ_SUBMISSION",
+          link: `/courses/${quiz.courseId}/quizzes`
+        });
+      }
+    } catch (error) {
+      console.error("Error creating quiz submission notification:", error.message);
     }
-  } catch (error) {
-    console.error("Error creating quiz submission notification:", error.message);
-  }
+  })()
+    .catch((error) => {
+      console.error(
+        `Post-submission side effects failed (student=${studentId}, quiz=${quizId}):`,
+        error
+      );
+    })
+    .finally(() => pendingSubmissionSideEffects.delete(sideEffects));
+
+  pendingSubmissionSideEffects.add(sideEffects);
 
   return {
     ...submission,
@@ -1384,5 +1422,6 @@ module.exports = {
   getBatchQuizzes,
   generateSelfAssessmentQuiz,
   flushPendingMisconceptionClassifications,
+  flushPendingSubmissionSideEffects,
   reorderQuizzes
 };
