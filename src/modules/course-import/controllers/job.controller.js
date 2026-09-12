@@ -252,9 +252,9 @@ const getTemplate = async (req, res, next) => {
             },
             {
               question: "Is C a compiled programming language?",
-              questionType: "TRUE_FALSE",
-              options: ["True", "False"],
-              correctAnswer: "True",
+              questionType: "MCQ_SINGLE",
+              options: ["Yes, it compiles to machine code", "No, it is interpreted"],
+              correctAnswer: "Yes, it compiles to machine code",
               explanation: "C code is directly compiled into machine executable binaries.",
               marks: 1,
               difficulty: "EASY"

@@ -225,7 +225,11 @@ const attachQuestionsToQuiz = async (quizId, questionIds) => {
 // =========================
 // Bulk Create Questions
 // =========================
-const bulkCreateQuestions = async (questionsPayload, quizId = null) => {
+// createdBy is not cosmetic: the repository lists an instructor only their
+// own questions, so a row inserted without an author belongs to nobody and is
+// invisible to the person who just created it. Every insert here takes the
+// caller's id.
+const bulkCreateQuestions = async (questionsPayload, quizId = null, userId = null) => {
     let rawQuestions = questionsPayload;
     if (questionsPayload && !Array.isArray(questionsPayload) && Array.isArray(questionsPayload.questions)) {
         rawQuestions = questionsPayload.questions;
@@ -293,7 +297,8 @@ const bulkCreateQuestions = async (questionsPayload, quizId = null) => {
             isRequired: q.isRequired,
             isPublished: q.isPublished,
             order: q.order,
-            topic: q.topic || null
+            topic: q.topic || null,
+            createdBy: userId,
         })),
         skipDuplicates: true,
         select: { id: true },
@@ -312,7 +317,7 @@ const bulkCreateQuestions = async (questionsPayload, quizId = null) => {
 // =========================
 // Import Questions
 // =========================
-const importQuestions = async (file, quizId = null) => {
+const importQuestions = async (file, quizId = null, userId = null) => {
     if (quizId) {
         await verifyQuizExists(quizId);
     }
@@ -341,7 +346,8 @@ const importQuestions = async (file, quizId = null) => {
             isRequired: q.isRequired,
             isPublished: q.isPublished,
             order: q.order,
-            topic: q.topic || null
+            topic: q.topic || null,
+            createdBy: userId,
         })),
         skipDuplicates: true,
         select: { id: true },

@@ -486,8 +486,13 @@ const applyTagAttemptRule = (effectiveTag, quizData, existingAttempts) => {
   return quizData;
 };
 
+// userId: the instructor building the quiz. Questions typed straight into the
+// builder are real repository rows, and the repository shows an instructor only
+// their own — a row inserted here without an author would belong to nobody and
+// would never appear in the bank of the person who just wrote it.
 const createQuiz = async (
-  data
+  data,
+  userId = null
 ) => {
   await validateQuizScope(data);
 
@@ -540,6 +545,7 @@ const createQuiz = async (
             marks: Number(q.marks) || 1,
             difficulty: (q.difficulty || "MEDIUM").toUpperCase(),
             isRequired: q.isMandatory !== false,
+            createdBy: userId,
           },
         });
         questionId = createdQ.id;
@@ -580,7 +586,8 @@ const createQuiz = async (
 
 const updateQuiz = async (
   quizId,
-  data
+  data,
+  userId = null
 ) => {
   const existing = await prisma.quiz.findUnique({ where: { id: quizId } });
   if (!existing) {
@@ -631,6 +638,7 @@ const updateQuiz = async (
             marks: Number(q.marks) || 1,
             difficulty: (q.difficulty || "MEDIUM").toUpperCase(),
             isRequired: q.isMandatory !== false,
+            createdBy: userId,
           },
         });
         questionId = createdQ.id;
@@ -666,6 +674,7 @@ const updateQuiz = async (
               marks: Number(q.marks) || 1,
               difficulty: (q.difficulty || "MEDIUM").toUpperCase(),
               isRequired: q.isMandatory !== false,
+              createdBy: userId,
             },
           });
           questionId = createdQ.id;
