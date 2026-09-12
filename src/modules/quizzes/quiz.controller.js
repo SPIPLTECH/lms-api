@@ -34,7 +34,17 @@ const getQuizzes = async (req, res, next) => {
 
 const getQuizById = async (req, res, next) => {
   try {
-    const quiz = await quizService.getQuizById(req.params.quizId, req.user?.role);
+    // A student also gets their attempt allowance, so the attempt UI can
+    // refuse to start a quiz the server would refuse to accept.
+    let studentId = null;
+    if (req.user?.role === "STUDENT") {
+      const student = await require("../../config/database").studentProfile.findUnique({
+        where: { userId: req.user.id },
+      });
+      studentId = student?.id ?? null;
+    }
+
+    const quiz = await quizService.getQuizById(req.params.quizId, req.user?.role, studentId);
 
     if (!quiz) {
       return res.status(404).json({
@@ -109,7 +119,8 @@ const submitQuiz = async (req, res, next) => {
     const submission = await quizService.submitQuiz(
       student.id,
       req.params.quizId,
-      req.body.answers || []
+      req.body.answers || [],
+      req.body.timeTakenSeconds ?? null
     );
 
     res.status(201).json({
@@ -136,9 +147,11 @@ const getQuizResult = async (req, res, next) => {
       });
     }
 
+    // ?attempt=<id> opens one specific earlier attempt; without it, the latest.
     const submission = await quizService.getQuizResult(
       student.id,
-      req.params.quizId
+      req.params.quizId,
+      typeof req.query.attempt === "string" ? req.query.attempt : null
     );
 
     if (!submission) {
@@ -151,6 +164,32 @@ const getQuizResult = async (req, res, next) => {
     res.json({
       success: true,
       data: submission,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getMyQuizSubmissions = async (req, res, next) => {
+  try {
+    const student = await require("../../config/database").studentProfile.findUnique({
+      where: {
+        userId: req.user.id,
+      },
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found",
+      });
+    }
+
+    const submissions = await quizService.getMyQuizSubmissions(student.id);
+
+    res.json({
+      success: true,
+      data: submissions,
     });
   } catch (error) {
     next(error);
@@ -258,6 +297,7 @@ module.exports = {
   deleteQuiz,
   submitQuiz,
   getQuizResult,
+  getMyQuizSubmissions,
   generateSelfAssessmentQuiz,
   importQuestionsToQuiz,
   removeQuestionFromQuiz,

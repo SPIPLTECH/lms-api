@@ -624,6 +624,10 @@ model QuizSubmission {
   @@index([studentId])
 }
 
+// One row per quiz attempt — the student's full attempt history. QuizSubmission
+// above stays the single "latest attempt" row that progress, dashboards and the
+// instructor views read; this table is what makes earlier attempts reviewable
+// and what Quiz.attempts is enforced against.
 model QuizAttempt {
   id               String         @id @default(cuid())
   quizId           String
@@ -637,14 +641,23 @@ model QuizAttempt {
   correctCount     Int            @default(0)
   incorrectCount   Int            @default(0)
   unansweredCount  Int            @default(0)
+<<<<<<< HEAD
+=======
+  // Reported by the attempt UI; null when it wasn't measured.
+>>>>>>> a1760bce39db08c6b19ff6c867084aa7aac5fe0c
   timeTakenSeconds Int?
   submittedAt      DateTime       @default(now())
   quiz             Quiz           @relation(fields: [quizId], references: [id], onDelete: Cascade)
   student          StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, quizId, attemptNumber])
+<<<<<<< HEAD
   @@index([quizId])
   @@index([studentId])
+=======
+  @@index([studentId])
+  @@index([quizId])
+>>>>>>> a1760bce39db08c6b19ff6c867084aa7aac5fe0c
 }
 
 model Certificate {

@@ -40,5 +40,4 @@ backup/
 # Git worktrees for isolated agent work
 .worktrees/
 
-# Local DB backups (contain student data - never commit)
-backups/
+.worktrees/

@@ -15,6 +15,9 @@ const createQuizSchema = Joi.object({
   quizTag: Joi.string().valid(...QUIZ_TAGS).required(),
   passingScore: Joi.number().integer().min(0).max(100).optional(),
   timeLimit: Joi.number().integer().min(0).optional().allow(null),
+  // Attempts each student gets on a Final (1 by default). The service stores
+  // every Self-Test as unlimited (0) and never saves a Final below 1.
+  attempts: Joi.number().integer().min(0).max(100).optional(),
   isPublished: Joi.boolean().optional(),
   order: Joi.number().integer().min(1).optional(),
   questions: Joi.array().optional(),
@@ -29,6 +32,9 @@ const updateQuizSchema = Joi.object({
   // service nulls it instead (see applyTagTimerRule). Rejecting would hand the
   // client an error it cannot act on when it is merely echoing a stale field.
   timeLimit: Joi.number().integer().min(0).optional().allow(null),
+  // Attempts each student gets on a Final (1 by default). The service stores
+  // every Self-Test as unlimited (0) and never saves a Final below 1.
+  attempts: Joi.number().integer().min(0).max(100).optional(),
   isPublished: Joi.boolean().optional(),
   order: Joi.number().integer().min(1).optional(),
   questions: Joi.array().optional(),
@@ -51,7 +57,10 @@ const submitQuizSchema = Joi.object({
       questionId: Joi.string().required(),
       answer: answerValueSchema.required()
     })
-  ).required()
+  ).required(),
+  // How long the attempt took, as measured by the attempt UI. Informational
+  // only (shown on the result page); capped at a day to reject garbage.
+  timeTakenSeconds: Joi.number().integer().min(0).max(86400).optional().allow(null)
 });
 
 const importQuestionsToQuizSchema = Joi.object({

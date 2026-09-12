@@ -210,19 +210,28 @@ const getStudents = async (user) => {
     })
   );
 
-  // What each student has done per course — items, not whole modules.
+  // What each student has done per course — items, not whole modules. Still
+  // used for module-by-module breakdown, "started", and assignment counts;
+  // the headline progress number below comes from Enrollment.progressPercent
+  // instead (see progressOf), so the directory always agrees with the
+  // student's own stored course progress.
   const standings = new Map(); // `${studentId}:${courseId}` -> treeStats
   for (const [key, rollup] of rollups) {
     standings.set(key, { courseId: rollup.courseId, ...treeStats(rollup.hierarchy) });
   }
 
-  // Each course's average progress, for "Behind Average".
-  const courseAverages = new Map(); // courseId -> { average, count }
-  for (const standing of standings.values()) {
-    const entry = courseAverages.get(standing.courseId) || { sum: 0, count: 0 };
-    entry.sum += standing.progress;
-    entry.count += 1;
-    courseAverages.set(standing.courseId, entry);
+  // The same Enrollment.progressPercent the student's own My Courses card
+  // reads (src/utils/progressRollup.js) — authoritative per (student, course).
+  const progressOf = new Map(); // `${studentId}:${courseId}` -> progressPercent
+  const courseAverages = new Map(); // courseId -> { average, count }, for "Behind Average"
+  for (const student of students) {
+    for (const e of enrollmentsOf(student)) {
+      progressOf.set(`${student.id}:${e.courseId}`, e.progressPercent);
+      const entry = courseAverages.get(e.courseId) || { sum: 0, count: 0 };
+      entry.sum += e.progressPercent;
+      entry.count += 1;
+      courseAverages.set(e.courseId, entry);
+    }
   }
   for (const entry of courseAverages.values()) entry.average = entry.sum / entry.count;
 
@@ -258,25 +267,28 @@ const getStudents = async (user) => {
     for (const enrollment of enrollments) {
       const key = `${student.id}:${enrollment.courseId}`;
       const stats = standings.get(key);
+      const progress = progressOf.get(key) ?? enrollment.progressPercent ?? 0;
+
       if (!stats) {
-        courseProgress[enrollment.courseId] = { progress: 0, status: "Not Started" };
+        courseProgress[enrollment.courseId] = { progress, status: "Not Started" };
         statuses.push("Not Started");
+        progressSum += progress;
         continue;
       }
 
       const classAverage = courseAverages.get(enrollment.courseId) || { average: 0, count: 1 };
       const final = finalTotals.get(key);
       const status = classifyStudent({
-        progress: stats.progress,
+        progress,
         started: stats.started,
         finalAverage: final ? final.sum / final.count : null,
         courseAverage: classAverage.average,
         classmates: classAverage.count,
       });
 
-      courseProgress[enrollment.courseId] = { progress: stats.progress, status };
+      courseProgress[enrollment.courseId] = { progress, status };
       statuses.push(status);
-      progressSum += stats.progress;
+      progressSum += progress;
 
       assignmentsTotal += stats.assignmentsTotal;
       assignmentsDone += stats.assignmentsDone;

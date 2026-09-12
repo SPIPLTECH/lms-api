@@ -15,8 +15,23 @@ const { getNextOrder } = require("../contents/contentOrder.util");
 // gone. Does not change response timing for real requests.
 const pendingMisconceptionClassifications = new Set();
 
-const flushPendingMisconceptionClassifications = () =>
-  Promise.allSettled([...pendingMisconceptionClassifications]);
+// Tracks the post-submission side-effect chains dispatched by submitQuiz --
+// the progress rollup, learner-model evidence and instructor notification it
+// answers the HTTP caller without waiting for. Same purpose as the set above:
+// give tests (and a graceful shutdown) a deterministic way to wait for work
+// that a real request intentionally does not.
+const pendingSubmissionSideEffects = new Set();
+
+const flushPendingSubmissionSideEffects = () =>
+  Promise.allSettled([...pendingSubmissionSideEffects]);
+
+// Awaits the side-effect chains first: the classifier is dispatched from
+// inside them, so flushing only the classifier set could return before a
+// classification has even been queued.
+const flushPendingMisconceptionClassifications = async () => {
+  await flushPendingSubmissionSideEffects();
+  return Promise.allSettled([...pendingMisconceptionClassifications]);
+};
 
 const evaluateAnswer = (answer, correctAnswer, questionType) => {
   if (answer === undefined || answer === null || answer === "") {
@@ -311,7 +326,8 @@ const getQuizzes = async (
 
 const getQuizById = async (
   quizId,
-  role
+  role,
+  studentId = null
 ) => {
   const quiz = await prisma.quiz.findUnique({
     where: {
@@ -344,9 +360,16 @@ const getQuizById = async (
     );
   }
 
+  // A student also gets how many attempts they have left, so the attempt UI
+  // can stop them before they answer instead of the submit being refused.
+  const attemptStatus = studentId
+    ? buildAttemptAllowance(effectiveMaxAttempts(quiz), await countAttemptsUsed(studentId, quizId))
+    : undefined;
+
   return {
     ...quiz,
-    questions: allQuestions
+    questions: allQuestions,
+    ...(attemptStatus && { attemptStatus })
   };
 };
 
@@ -448,6 +471,21 @@ const resolveQuizParentField = (data) => QUIZ_PARENT_PRECEDENCE.find((f) => data
 const applyTagTimerRule = (effectiveTag, quizData) =>
   effectiveTag === "SELF_TEST" ? { ...quizData, timeLimit: null } : quizData;
 
+/** Attempts follow the tag the same way. A Self-Test is practice and is
+ * stored as unlimited (0). A Final always carries a real limit of at least
+ * one: a blank or 0 request, or a quiz that was a Self-Test until this edit,
+ * becomes 1. An edit that doesn't touch attempts leaves a Final's limit alone. */
+const applyTagAttemptRule = (effectiveTag, quizData, existingAttempts) => {
+  if (effectiveTag === "SELF_TEST") return { ...quizData, attempts: 0 };
+  if (quizData.attempts !== undefined) {
+    return { ...quizData, attempts: Math.max(1, Math.round(Number(quizData.attempts)) || 1) };
+  }
+  if (existingAttempts !== undefined && !(Number(existingAttempts) > 0)) {
+    return { ...quizData, attempts: 1 };
+  }
+  return quizData;
+};
+
 const createQuiz = async (
   data
 ) => {
@@ -471,7 +509,7 @@ const createQuiz = async (
 
   const quiz = await prisma.quiz.create({
     data: {
-      ...applyTagTimerRule(quizData.quizTag, quizData),
+      ...applyTagAttemptRule(quizData.quizTag, applyTagTimerRule(quizData.quizTag, quizData)),
       moduleId: quizData.moduleId || null,
       lessonId: quizData.lessonId || null
     }
@@ -562,7 +600,7 @@ const updateQuiz = async (
     where: {
       id: quizId
     },
-    data: applyTagTimerRule(effectiveTag, quizData)
+    data: applyTagAttemptRule(effectiveTag, applyTagTimerRule(effectiveTag, quizData), existing.attempts)
   });
 
   if (Array.isArray(questions)) {
@@ -666,7 +704,96 @@ const deleteQuiz = async (
   });
 };
 
-const submitQuiz = async (studentId, quizId, answers = []) => {
+/** Quiz.attempts is how many attempts each student gets; 0 means unlimited. */
+const isUnlimitedAttempts = (maxAttempts) => !(Number(maxAttempts) > 0);
+
+/**
+ * The limit that actually applies. A Self-Test can always be retaken whatever
+ * is stored — rows saved before that rule still hold the schema default of 1.
+ * A Final uses its stored limit (1 unless the instructor changed it).
+ */
+const effectiveMaxAttempts = (quiz) => (quiz.quizTag === "SELF_TEST" ? 0 : quiz.attempts);
+
+/** Where a student stands against a quiz's attempt limit. */
+const buildAttemptAllowance = (maxAttempts, attemptsUsed) => {
+  const unlimited = isUnlimitedAttempts(maxAttempts);
+  return {
+    attemptsUsed,
+    maxAttempts: unlimited ? null : maxAttempts,
+    unlimitedAttempts: unlimited,
+    attemptsRemaining: unlimited ? null : Math.max(0, maxAttempts - attemptsUsed),
+    canAttempt: unlimited || attemptsUsed < maxAttempts
+  };
+};
+
+/** Correct / incorrect / unanswered tallies for one graded attempt. */
+const countAnswerOutcomes = (quiz, result) => {
+  const totalQuestions = quiz.quizQuestions?.length ?? 0;
+  const answered = result.questionEvidence.length;
+  const correctCount = result.questionEvidence.filter((e) => e.isCorrect).length;
+  return {
+    correctCount,
+    incorrectCount: answered - correctCount,
+    unansweredCount: Math.max(0, totalQuestions - answered)
+  };
+};
+
+const parseStoredAnswers = (answers) => {
+  if (Array.isArray(answers)) return answers;
+  if (typeof answers === "string") {
+    try {
+      const parsed = JSON.parse(answers);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
+/**
+ * A QuizSubmission made before the QuizAttempt log existed, shaped as the
+ * attempt-1 row it stands in for. It keeps the submission's id, so a link to
+ * it keeps working once it's copied into the log. Answer tallies need the
+ * quiz's questions (with quizQuestions.question); without them they're null.
+ */
+const legacySubmissionAsAttempt = (submission, quiz = null) => {
+  const outcomes = quiz
+    ? countAnswerOutcomes(quiz, calculateSubmissionResult(quiz, parseStoredAnswers(submission.answers)))
+    : { correctCount: null, incorrectCount: null, unansweredCount: null };
+
+  return {
+    id: submission.id,
+    quizId: submission.quizId,
+    studentId: submission.studentId,
+    attemptNumber: 1,
+    answers: submission.answers,
+    score: submission.score,
+    totalMarks: submission.totalMarks,
+    percentage: submission.percentage,
+    passed: submission.passed,
+    ...outcomes,
+    timeTakenSeconds: null,
+    submittedAt: submission.submittedAt
+  };
+};
+
+/**
+ * How many attempts a student has used on a quiz: the QuizAttempt log, or 1
+ * for a submission that predates the log.
+ */
+const countAttemptsUsed = async (studentId, quizId) => {
+  const logged = await prisma.quizAttempt.count({ where: { studentId, quizId } });
+  if (logged > 0) return logged;
+
+  const legacy = await prisma.quizSubmission.findUnique({
+    where: { studentId_quizId: { studentId, quizId } },
+    select: { id: true }
+  });
+  return legacy ? 1 : 0;
+};
+
+const submitQuiz = async (studentId, quizId, answers = [], timeTakenSeconds = null) => {
   const quiz = await prisma.quiz.findUnique({
     where: { id: quizId },
     include: { quizQuestions: { include: { question: true } } }
@@ -679,191 +806,331 @@ const submitQuiz = async (studentId, quizId, answers = []) => {
   }
 
   const result = calculateSubmissionResult(quiz, answers);
+  const outcomes = countAnswerOutcomes(quiz, result);
 
-  const submission = await prisma.quizSubmission.upsert({
-    where: {
-      studentId_quizId: {
-        studentId,
-        quizId
-      }
-    },
-    update: {
-      answers,
-      score: result.score,
-      totalMarks: result.totalMarks,
-      percentage: result.percentage,
-      passed: result.passed,
-      submittedAt: new Date()
-    },
-    create: {
-      studentId,
-      quizId,
-      answers,
-      score: result.score,
-      totalMarks: result.totalMarks,
-      percentage: result.percentage,
-      passed: result.passed
-    }
-  });
-
-  // Synchronize QuizProgress when quiz is passed authoritatively
-  if (result.passed) {
-    try {
-      const existingQp = await prisma.quizProgress.findUnique({
+  // The attempt-log row and the latest-attempt QuizSubmission are written in
+  // one transaction, with the attempt limit checked inside it, so a double
+  // submit can neither exceed Quiz.attempts nor leave the two out of step.
+  // Two racing submits compute the same attemptNumber, and the unique
+  // (studentId, quizId, attemptNumber) index rejects the second.
+  let submission;
+  let attempt;
+  try {
+    ({ submission, attempt } = await prisma.$transaction(async (tx) => {
+      const lastLogged = await tx.quizAttempt.findFirst({
+        where: { studentId, quizId },
+        orderBy: { attemptNumber: "desc" },
+        select: { attemptNumber: true }
+      });
+      const existing = await tx.quizSubmission.findUnique({
         where: { studentId_quizId: { studentId, quizId } }
       });
-      await prisma.quizProgress.upsert({
-        where: { studentId_quizId: { studentId, quizId } },
+
+      let attemptsUsed = lastLogged?.attemptNumber ?? 0;
+
+      // A submission from before the log existed is the student's first
+      // attempt — copy it in before the upsert below overwrites it.
+      if (attemptsUsed === 0 && existing) {
+        await tx.quizAttempt.create({ data: legacySubmissionAsAttempt(existing, quiz) });
+        attemptsUsed = 1;
+      }
+
+      if (!buildAttemptAllowance(effectiveMaxAttempts(quiz), attemptsUsed).canAttempt) {
+        const error = new Error(
+          `You have used all ${quiz.attempts} attempt${quiz.attempts === 1 ? "" : "s"} allowed for this quiz.`
+        );
+        error.statusCode = 403;
+        throw error;
+      }
+
+      const createdAttempt = await tx.quizAttempt.create({
+        data: {
+          studentId,
+          quizId,
+          attemptNumber: attemptsUsed + 1,
+          answers,
+          score: result.score,
+          totalMarks: result.totalMarks,
+          percentage: result.percentage,
+          passed: result.passed,
+          ...outcomes,
+          timeTakenSeconds
+        }
+      });
+
+      const latest = await tx.quizSubmission.upsert({
+        where: {
+          studentId_quizId: {
+            studentId,
+            quizId
+          }
+        },
+        update: {
+          answers,
+          score: result.score,
+          totalMarks: result.totalMarks,
+          percentage: result.percentage,
+          passed: result.passed,
+          submittedAt: createdAttempt.submittedAt
+        },
         create: {
           studentId,
           quizId,
-          completed: true,
-          completedAt: new Date()
-        },
-        update: {
-          completed: true,
-          completedAt: existingQp?.completedAt || new Date()
+          answers,
+          score: result.score,
+          totalMarks: result.totalMarks,
+          percentage: result.percentage,
+          passed: result.passed,
+          submittedAt: createdAttempt.submittedAt
         }
       });
-    } catch (qpErr) {
-      console.error("QuizProgress sync failed after quiz submission:", qpErr);
+
+      return { submission: latest, attempt: createdAttempt };
+    }, { timeout: 15000 }));
+  } catch (error) {
+    if (error.code === "P2002") {
+      const conflict = new Error("This attempt has already been submitted.");
+      conflict.statusCode = 409;
+      throw conflict;
     }
+    throw error;
   }
 
-  // Recompute course progress after quiz submission
-  try {
-    const { recomputeCourseProgress } = require("../../utils/progressRollup");
-    await recomputeCourseProgress(studentId, quiz.courseId);
-  } catch (err) {
-    console.error("Progress rollup recalculation failed after quiz submission:", err);
-  }
-
-  // Feed each answered question into the existing learner-model evidence
-  // pipeline (BKT + misconception detection) as its own observation, so
-  // multiple questions on the same KC aren't collapsed into one data point.
-  // This is a best-effort side effect: the QuizSubmission above is already
-  // committed and is the source of truth for the student's score, so a
-  // failure here is logged loudly rather than rolling back the submission
-  // or silently claiming an adaptive update that didn't happen.
-  for (const evidence of result.questionEvidence) {
-    try {
-      const recordResult = await learnerModelService.recordEvidence({
-        callingUser: { role: "ADMIN" },
-        data: {
-          studentId,
-          kc: evidence.kc,
-          score: evidence.score,
-          isCorrect: evidence.isCorrect,
-          courseId: quiz.courseId,
-          quizId,
-          ...(evidence.moduleId ? { moduleId: evidence.moduleId } : {}),
-          ...(evidence.misconceptionTag ? { misconceptionHypothesis: evidence.misconceptionTag } : {}),
-          metadata: { questionId: evidence.questionId, quizSubmissionId: submission.id }
-        }
-      });
-
-      if (evidence.misconceptionTag && recordResult.recordedMisconception) {
-        const taxonomyEntry = MISCONCEPTION_TAXONOMY[evidence.misconceptionTag];
-        await prisma.knowledgeGap.update({
-          where: { id: recordResult.recordedMisconception.id },
-          data: {
-            kc: evidence.kc,
-            type: evidence.misconceptionTag,
-            description: taxonomyEntry.description,
-            confidence: 1.0,
-            evidence: `Selected "${evidence.studentAnswer}" for question: "${evidence.questionText}"`
+  // Everything below is a side effect of a submission that is already
+  // committed above: the progress rollup, the per-question learner-model
+  // evidence, and the instructor's notification. None of it changes what
+  // the student gets back, and all of it is slow — the rollup alone fans
+  // out into ~16 relation queries plus one upsert per topic, and the
+  // database is remote (~100ms a round trip). Awaiting it inline pushed
+  // the response past the client's 15s timeout, so the browser reported a
+  // failed submission for answers that had in fact been recorded, and the
+  // student resubmitted — spending another real attempt. So it is
+  // dispatched here and deliberately NOT awaited. Each step already logs
+  // and swallows its own failures; the catch below is a backstop so a
+  // throw between them can't surface as an unhandled rejection.
+  const sideEffects = (async () => {
+    // Synchronize QuizProgress when quiz is passed authoritatively
+    if (result.passed) {
+      try {
+        const existingQp = await prisma.quizProgress.findUnique({
+          where: { studentId_quizId: { studentId, quizId } }
+        });
+        await prisma.quizProgress.upsert({
+          where: { studentId_quizId: { studentId, quizId } },
+          create: {
+            studentId,
+            quizId,
+            completed: true,
+            completedAt: new Date()
+          },
+          update: {
+            completed: true,
+            completedAt: existingQp?.completedAt || new Date()
           }
         });
-      } else if (!evidence.isCorrect) {
-        const classificationPromise = misconceptionClassifier
-          .classifyAndApply({
+      } catch (qpErr) {
+        console.error("QuizProgress sync failed after quiz submission:", qpErr);
+      }
+    }
+
+    // Recompute course progress after quiz submission
+    try {
+      const { recomputeCourseProgress } = require("../../utils/progressRollup");
+      await recomputeCourseProgress(studentId, quiz.courseId);
+    } catch (err) {
+      console.error("Progress rollup recalculation failed after quiz submission:", err);
+    }
+
+    // Feed each answered question into the existing learner-model evidence
+    // pipeline (BKT + misconception detection) as its own observation, so
+    // multiple questions on the same KC aren't collapsed into one data point.
+    // This is a best-effort side effect: the QuizSubmission above is already
+    // committed and is the source of truth for the student's score, so a
+    // failure here is logged loudly rather than rolling back the submission
+    // or silently claiming an adaptive update that didn't happen.
+    for (const evidence of result.questionEvidence) {
+      try {
+        const recordResult = await learnerModelService.recordEvidence({
+          callingUser: { role: "ADMIN" },
+          data: {
             studentId,
             kc: evidence.kc,
-            questionText: evidence.questionText,
-            options: evidence.optionsDisplay,
-            correctAnswer: evidence.correctAnswerDisplay,
-            studentAnswer: evidence.studentAnswerDisplay,
+            score: evidence.score,
             isCorrect: evidence.isCorrect,
-            score: evidence.score
-          })
-          .catch((error) => {
-            console.error(
-              `Misconception classifier dispatch failed (student=${studentId}, quiz=${quizId}, question=${evidence.questionId}, kc=${evidence.kc}):`,
-              error
-            );
-          })
-          .finally(() => pendingMisconceptionClassifications.delete(classificationPromise));
+            courseId: quiz.courseId,
+            quizId,
+            ...(evidence.moduleId ? { moduleId: evidence.moduleId } : {}),
+            // Tier 1 (Phase 7A): reuses the EXISTING misconceptionHypothesis
+            // field on the EXISTING recordEvidence/evaluateAndDetectMisconception
+            // call chain — misconception.service.js is untouched. The resolved
+            // taxonomy type becomes `concept`/the hypothesis identity, exactly
+            // as any other caller-supplied hypothesis would.
+            ...(evidence.misconceptionTag ? { misconceptionHypothesis: evidence.misconceptionTag } : {}),
+            metadata: { questionId: evidence.questionId, quizSubmissionId: submission.id }
+          }
+        });
 
-        pendingMisconceptionClassifications.add(classificationPromise);
+        // Narrow, additive follow-up: attach taxonomy metadata to the SAME
+        // KnowledgeGap row misconception.service.js just created/updated,
+        // scoped strictly to the new columns (kc/type/description/confidence/
+        // evidence). Severity and status were already set above, untouched.
+        if (evidence.misconceptionTag && recordResult.recordedMisconception) {
+          const taxonomyEntry = MISCONCEPTION_TAXONOMY[evidence.misconceptionTag];
+          await prisma.knowledgeGap.update({
+            where: { id: recordResult.recordedMisconception.id },
+            data: {
+              kc: evidence.kc,
+              type: evidence.misconceptionTag,
+              description: taxonomyEntry.description,
+              confidence: 1.0,
+              evidence: `Selected "${evidence.studentAnswer}" for question: "${evidence.questionText}"`
+            }
+          });
+        } else if (!evidence.isCorrect) {
+          // Tier 2 (Phase 7B): the answer was wrong and Tier 1 found no
+          // authored tag for the selected distractor. Fire-and-forget —
+          // deliberately NOT awaited, so an LLM call can never add latency to
+          // (or fail) this response. Any outcome (a new/continued
+          // KnowledgeGap, or any of the classifier's own discard/failure
+          // paths) is applied strictly after this function has already
+          // returned to the HTTP caller.
+          const classificationPromise = misconceptionClassifier
+            .classifyAndApply({
+              studentId,
+              kc: evidence.kc,
+              questionText: evidence.questionText,
+              options: evidence.optionsDisplay,
+              correctAnswer: evidence.correctAnswerDisplay,
+              studentAnswer: evidence.studentAnswerDisplay,
+              isCorrect: evidence.isCorrect,
+              score: evidence.score
+            })
+            .catch((error) => {
+              console.error(
+                `Misconception classifier dispatch failed (student=${studentId}, quiz=${quizId}, question=${evidence.questionId}, kc=${evidence.kc}):`,
+                error
+              );
+            })
+            .finally(() => pendingMisconceptionClassifications.delete(classificationPromise));
+
+          pendingMisconceptionClassifications.add(classificationPromise);
+        }
+      } catch (error) {
+        console.error(
+          `Learner-model evidence recording failed (student=${studentId}, quiz=${quizId}, question=${evidence.questionId}, kc=${evidence.kc}):`,
+          error
+        );
       }
-    } catch (error) {
-      console.error(
-        `Learner-model evidence recording failed (student=${studentId}, quiz=${quizId}, question=${evidence.questionId}, kc=${evidence.kc}):`,
-        error
-      );
     }
-  }
 
-  // Notify the instructor
-  try {
-    const course = await prisma.course.findUnique({
-      where: { id: quiz.courseId },
-      select: { title: true, creatorId: true }
-    });
+    // Notify the instructor
+    try {
+      const course = await prisma.course.findUnique({
+        where: { id: quiz.courseId },
+        select: { title: true, creatorId: true }
+      });
 
-    const student = await prisma.studentProfile.findUnique({
-      where: { id: studentId },
-      include: {
-        user: {
-          select: {
-            name: true
+      const student = await prisma.studentProfile.findUnique({
+        where: { id: studentId },
+        include: {
+          user: {
+            select: {
+              name: true
+            }
           }
         }
-      }
-    });
-
-    if (course && student) {
-      await notificationService.createNotification(course.creatorId, {
-        title: "Quiz Submitted 📝",
-        message: `${student.user.name} submitted the quiz "${quiz.title}" for "${course.title}" (Score: ${result.percentage}%).`,
-        type: "QUIZ_SUBMISSION",
-        link: `/courses/${quiz.courseId}/quizzes`
       });
-    }
-  } catch (error) {
-    console.error("Error creating quiz submission notification:", error.message);
-  }
 
-  return submission;
+      if (course && student) {
+        await notificationService.createNotification(course.creatorId, {
+          title: "Quiz Submitted 📝",
+          message: `${student.user.name} submitted the quiz "${quiz.title}" for "${course.title}" (Score: ${result.percentage}%).`,
+          type: "QUIZ_SUBMISSION",
+          link: `/courses/${quiz.courseId}/quizzes`
+        });
+      }
+    } catch (error) {
+      console.error("Error creating quiz submission notification:", error.message);
+    }
+  })()
+    .catch((error) => {
+      console.error(
+        `Post-submission side effects failed (student=${studentId}, quiz=${quizId}):`,
+        error
+      );
+    })
+    .finally(() => pendingSubmissionSideEffects.delete(sideEffects));
+
+  pendingSubmissionSideEffects.add(sideEffects);
+
+  return {
+    ...submission,
+    attemptId: attempt.id,
+    attemptNumber: attempt.attemptNumber
+  };
 };
 
+/** One attempt as it appears in an attempt-history list. */
+const toAttemptSummary = (attempt) => ({
+  id: attempt.id,
+  attemptNumber: attempt.attemptNumber,
+  score: attempt.score,
+  totalMarks: attempt.totalMarks,
+  percentage: attempt.percentage,
+  passed: attempt.passed,
+  timeTakenSeconds: attempt.timeTakenSeconds ?? null,
+  submittedAt: attempt.submittedAt
+});
+
 /**
- * A student's submission for a quiz, plus the quiz's full question set
- * (including answer keys) for the result-review page. Unlike getQuizById,
- * this always includes correctAnswer/explanation — the student has already
- * submitted, so there's nothing left to protect.
+ * A student's result for a quiz — the latest attempt, or the one named by
+ * attemptId — plus the quiz's full question set (including answer keys) for
+ * the result-review page, the student's whole attempt history, and their
+ * remaining allowance. Unlike getQuizById, this always includes
+ * correctAnswer/explanation — the student has already submitted, so there's
+ * nothing left to protect. Null when there is no such attempt.
  */
-const getQuizResult = async (studentId, quizId) => {
-  const submission = await prisma.quizSubmission.findUnique({
-    where: {
-      studentId_quizId: {
-        studentId,
-        quizId
+const getQuizResult = async (studentId, quizId, attemptId = null) => {
+  const [submission, logged, quiz] = await Promise.all([
+    prisma.quizSubmission.findUnique({
+      where: {
+        studentId_quizId: {
+          studentId,
+          quizId
+        }
       }
-    }
-  });
-
-  if (!submission) return null;
-
-  const quiz = await prisma.quiz.findUnique({
-    where: { id: quizId },
-    include: {
-      quizQuestions: {
-        orderBy: { order: "asc" },
-        include: { question: true }
+    }),
+    prisma.quizAttempt.findMany({
+      where: { studentId, quizId },
+      orderBy: { attemptNumber: "asc" }
+    }),
+    prisma.quiz.findUnique({
+      where: { id: quizId },
+      include: {
+        // Titles for the result page header.
+        course: { select: { id: true, title: true } },
+        module: { select: { id: true, title: true } },
+        quizQuestions: {
+          orderBy: { order: "asc" },
+          include: { question: true }
+        }
       }
-    }
-  });
+    })
+  ]);
+
+  const history =
+    logged.length > 0
+      ? logged
+      : submission
+        ? [legacySubmissionAsAttempt(submission, quiz)]
+        : [];
+
+  if (history.length === 0) return null;
+
+  const latest = history[history.length - 1];
+  const selected = attemptId ? history.find((a) => a.id === attemptId) : latest;
+
+  if (!selected) return null;
 
   const questions = (quiz?.quizQuestions || []).map((qq) => ({
     ...qq.question,
@@ -872,9 +1139,117 @@ const getQuizResult = async (studentId, quizId) => {
   }));
 
   return {
-    ...submission,
+    id: selected.id,
+    quizId,
+    studentId,
+    answers: selected.answers,
+    score: selected.score,
+    totalMarks: selected.totalMarks,
+    percentage: selected.percentage,
+    passed: selected.passed,
+    submittedAt: selected.submittedAt,
+    // Concept scores are only ever kept on the latest-attempt row.
+    conceptScores: selected === latest ? submission?.conceptScores ?? null : null,
+    attemptId: selected.id,
+    attemptNumber: selected.attemptNumber,
+    isLatestAttempt: selected === latest,
+    timeTakenSeconds: selected.timeTakenSeconds ?? null,
+    correctCount: selected.correctCount,
+    incorrectCount: selected.incorrectCount,
+    unansweredCount: selected.unansweredCount,
+    totalQuestions: questions.length,
+    attempts: history.map(toAttemptSummary),
+    ...buildAttemptAllowance(quiz ? effectiveMaxAttempts(quiz) : 0, history.length),
     quiz: quiz ? { ...quiz, questions } : null
   };
+};
+
+/**
+ * Every quiz a student has attempted, one entry per quiz, most recent
+ * activity first — the quiz half of the student Submissions page. Each
+ * entry carries the latest attempt, the best percentage, the attempt
+ * history and the student's remaining allowance.
+ */
+const getMyQuizSubmissions = async (studentId) => {
+  const [logged, submissions] = await Promise.all([
+    prisma.quizAttempt.findMany({
+      where: { studentId },
+      orderBy: { attemptNumber: "asc" },
+      select: {
+        id: true,
+        quizId: true,
+        attemptNumber: true,
+        score: true,
+        totalMarks: true,
+        percentage: true,
+        passed: true,
+        timeTakenSeconds: true,
+        submittedAt: true
+      }
+    }),
+    prisma.quizSubmission.findMany({ where: { studentId } })
+  ]);
+
+  const historyByQuiz = new Map();
+  for (const attempt of logged) {
+    if (!historyByQuiz.has(attempt.quizId)) historyByQuiz.set(attempt.quizId, []);
+    historyByQuiz.get(attempt.quizId).push(attempt);
+  }
+  // Quizzes last submitted before the attempt log existed.
+  for (const submission of submissions) {
+    if (!historyByQuiz.has(submission.quizId)) {
+      historyByQuiz.set(submission.quizId, [legacySubmissionAsAttempt(submission)]);
+    }
+  }
+
+  if (historyByQuiz.size === 0) return [];
+
+  const quizzes = await prisma.quiz.findMany({
+    where: { id: { in: [...historyByQuiz.keys()] } },
+    select: {
+      id: true,
+      title: true,
+      quizTag: true,
+      passingScore: true,
+      attempts: true,
+      lessonId: true,
+      course: { select: { id: true, title: true } },
+      module: { select: { title: true } },
+      lesson: { select: { title: true, module: { select: { title: true } } } },
+      topic: {
+        select: {
+          lessonId: true,
+          lesson: { select: { title: true, module: { select: { title: true } } } }
+        }
+      },
+      _count: { select: { quizQuestions: true } }
+    }
+  });
+
+  return quizzes
+    .map((quiz) => {
+      const history = historyByQuiz.get(quiz.id).map(toAttemptSummary);
+      return {
+        id: quiz.id,
+        kind: "quiz",
+        title: quiz.title,
+        quizTag: quiz.quizTag,
+        course: quiz.course,
+        moduleTitle:
+          quiz.module?.title || quiz.lesson?.module?.title || quiz.topic?.lesson?.module?.title || null,
+        lessonTitle: quiz.lesson?.title || quiz.topic?.lesson?.title || null,
+        lessonId: quiz.lessonId || quiz.topic?.lessonId || null,
+        passingScore: quiz.passingScore,
+        totalQuestions: quiz._count.quizQuestions,
+        latestAttempt: history[history.length - 1],
+        bestPercentage: Math.max(...history.map((a) => a.percentage)),
+        attempts: history,
+        ...buildAttemptAllowance(effectiveMaxAttempts(quiz), history.length)
+      };
+    })
+    .sort(
+      (a, b) => new Date(b.latestAttempt.submittedAt) - new Date(a.latestAttempt.submittedAt)
+    );
 };
 
 /**
@@ -1043,8 +1418,10 @@ module.exports = {
   deleteQuiz,
   submitQuiz,
   getQuizResult,
+  getMyQuizSubmissions,
   getBatchQuizzes,
   generateSelfAssessmentQuiz,
   flushPendingMisconceptionClassifications,
+  flushPendingSubmissionSideEffects,
   reorderQuizzes
 };

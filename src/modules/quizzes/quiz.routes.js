@@ -27,6 +27,16 @@ router.get(
   controller.getQuizzes
 );
 
+// The signed-in student's own quiz attempt history, one entry per quiz —
+// feeds the student Submissions page. Defined before GET /:quizId so the
+// literal segment isn't captured as a quiz id.
+router.get(
+  "/my-submissions",
+  verifyToken,
+  checkRole(["STUDENT"]),
+  controller.getMyQuizSubmissions
+);
+
 router.get("/:quizId/result", verifyToken, controller.getQuizResult);
 
 router.get(

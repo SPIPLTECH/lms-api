@@ -24,6 +24,16 @@ const processJob = async (req, res, next) => {
   try {
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const job = await courseImporterService.processJob(req.params.jobId, baseUrl);
+
+    if (job.status === "FAILED") {
+      return res.status(400).json({
+        success: false,
+        message: job.errorMessage || "Failed to process course ZIP package.",
+        errors: job.validationReport?.errors || [job.errorMessage],
+        data: job,
+      });
+    }
+
     res.json({ success: true, data: job });
   } catch (error) {
     next(error);
@@ -328,7 +338,11 @@ const applyAiEntity = async (req, res, next) => {
       context,
       instructorId: req.user.id,
     });
-    res.status(200).json({ success: true, data: result, message: "AI entity generated structure applied successfully." });
+    const skipped = result?.skippedQuestionCount || 0;
+    const message = skipped > 0
+      ? `AI entity generated structure applied successfully. ${skipped} question${skipped === 1 ? "" : "s"} ${skipped === 1 ? "was" : "were"} skipped because ${skipped === 1 ? "it had" : "they had"} no correct answer.`
+      : "AI entity generated structure applied successfully.";
+    res.status(200).json({ success: true, data: result, message });
   } catch (error) {
     next(error);
   }
