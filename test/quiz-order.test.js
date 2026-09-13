@@ -168,6 +168,42 @@ test("createQuiz — order computation lands in the Quiz zone", async (t) => {
 
     assert.strictEqual(capturedData.order, QUIZ_ORDER_BASE + 9);
   });
+
+  await t.test("a negative or zero explicit order clamps to the first local-index slot, never escaping below the zone", async () => {
+    prisma.quiz.findFirst = async () => null;
+    let capturedData;
+    prisma.quiz.create = async ({ data }) => {
+      capturedData = data;
+      return { ...data, id: "new-quiz-id" };
+    };
+    prisma.quiz.findUnique = async () => ({ id: "new-quiz-id", quizQuestions: [] });
+    prisma.course.findUnique = async () => ({ title: "Some Course" });
+
+    await quizService.createQuiz({
+      title: "Negative Order Quiz", passingScore: 70, courseId: "c1", order: -5,
+    });
+
+    assert.strictEqual(capturedData.order, QUIZ_ORDER_BASE + 1);
+    assert.ok(capturedData.order >= QUIZ_ORDER_BASE);
+  });
+
+  await t.test("an explicit order past the Assignment zone clamps back inside the Quiz zone", async () => {
+    prisma.quiz.findFirst = async () => null;
+    let capturedData;
+    prisma.quiz.create = async ({ data }) => {
+      capturedData = data;
+      return { ...data, id: "new-quiz-id" };
+    };
+    prisma.quiz.findUnique = async () => ({ id: "new-quiz-id", quizQuestions: [] });
+    prisma.course.findUnique = async () => ({ title: "Some Course" });
+
+    await quizService.createQuiz({
+      title: "Overflow Order Quiz", passingScore: 70, courseId: "c1", order: 5_000_000,
+    });
+
+    assert.ok(capturedData.order < ASSIGNMENT_ORDER_BASE, `expected ${capturedData.order} to stay under ASSIGNMENT_ORDER_BASE`);
+    assert.ok(capturedData.order >= QUIZ_ORDER_BASE);
+  });
 });
 
 test("reorderQuizzes — two-phase batch update avoids swap collisions", async (t) => {

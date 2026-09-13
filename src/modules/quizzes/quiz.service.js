@@ -3,7 +3,7 @@ const notificationService = require("../notifications/notification.service");
 const learnerModelService = require("../learner-model/learnerModel.service");
 const { MISCONCEPTION_TAXONOMY, isKnownMisconceptionType } = require("../learner-model/misconceptionTaxonomy.config");
 const misconceptionClassifier = require("../learner-model/misconceptionClassifier.service");
-const { getNextQuizOrder, QUIZ_ORDER_BASE } = require("../contents/contentOrder.util");
+const { getNextQuizOrder, QUIZ_ORDER_BASE, ASSIGNMENT_ORDER_BASE } = require("../contents/contentOrder.util");
 
 // Tracks classifyAndApply() calls dispatched below fire-and-forget (never
 // awaited by the HTTP response, by design — see the dispatch site). Exists
@@ -502,14 +502,22 @@ const createQuiz = async (
   if (quizData.order === undefined || quizData.order === null) {
     quizData.order = await getNextQuizOrder(orderField, quizData[orderField]);
   } else {
-    // An explicit order is always treated as a position inside the Quiz
-    // zone. A caller sending a small "local index" (1, 2, 3, ...) — the
-    // pre-existing convention — is rebased into the zone; a caller that
-    // already sends a zone-banded value (e.g. a value read back from another
-    // quiz) is used as-is. Either way the result can never land in the
-    // Normal or Assignment zone.
     const requested = Number(quizData.order);
-    quizData.order = requested >= QUIZ_ORDER_BASE ? requested : QUIZ_ORDER_BASE + requested;
+    if (!Number.isInteger(requested)) {
+      const error = new Error("Quiz order must be an integer.");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (requested >= QUIZ_ORDER_BASE && requested < ASSIGNMENT_ORDER_BASE) {
+      // Already a valid zone-banded value (e.g. resent from another quiz's order) — use as-is.
+      quizData.order = requested;
+    } else {
+      // Treat as a local index (1-based position among quizzes in this scope).
+      // Clamp so neither a non-positive index nor an absurdly large one can
+      // rebase outside the Quiz zone in either direction.
+      const localIndex = Math.min(Math.max(requested, 1), ASSIGNMENT_ORDER_BASE - QUIZ_ORDER_BASE - 1);
+      quizData.order = QUIZ_ORDER_BASE + localIndex;
+    }
   }
 
   const quiz = await prisma.quiz.create({
