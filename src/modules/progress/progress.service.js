@@ -2,6 +2,136 @@ const prisma = require('../../config/database');
 const { recomputeCourseProgress, ensureProgressInitialized } = require('../../utils/progressRollup');
 
 /**
+ * Upserts ContentProgress rows for `contentIds` to `completed`, preserving
+ * `completedAt` from any row already in that state and skipping any id
+ * that's already there -- a duplicate/redundant completion call (double
+ * click, a replayed video-end event, reopening already-finished content)
+ * must not issue a database write at all, per the "no unnecessary writes,
+ * no unnecessary timestamp churn" requirement this shares with visits below.
+ *
+ * `existingRows` must already be the caller's own `contentProgress.findMany`
+ * result for exactly these ids/this student -- both completeContent and
+ * completeLesson fetch it themselves, in parallel with their other lookup,
+ * so this helper never has to make that read itself.
+ */
+async function upsertContentCompletions(studentId, contentIds, completed, existingRows) {
+  const existingByContentId = new Map(existingRows.map((row) => [row.contentId, row]));
+  const now = new Date();
+
+  const writes = [];
+  for (const id of contentIds) {
+    const existing = existingByContentId.get(id);
+    if (existing && existing.completed === completed) continue; // already correct -- no write
+
+    const completedAt = completed ? (existing?.completed && existing?.completedAt ? existing.completedAt : now) : null;
+    writes.push(
+      prisma.contentProgress.upsert({
+        where: { studentId_contentId: { studentId, contentId: id } },
+        create: { studentId, contentId: id, completed, completedAt: completed ? now : null },
+        update: { completed, completedAt }
+      })
+    );
+  }
+  if (writes.length > 0) await Promise.all(writes);
+}
+
+/**
+ * Upserts `visited` on one progress row only when it actually changes the
+ * value -- revisiting already-visited content, or a container the student
+ * already opened, must never touch the database or shift `visitedAt` off
+ * the FIRST visit. Returns `{ changed }` so the caller can skip the
+ * (comparatively expensive) course rollup entirely on a true no-op.
+ */
+async function upsertVisitedIfNeeded(delegate, where, createBase, visited) {
+  const existing = await delegate.findUnique({ where, select: { visited: true } });
+  if (existing && existing.visited === visited) {
+    return { changed: false };
+  }
+  const now = new Date();
+  await delegate.upsert({
+    where,
+    create: { ...createBase, visited, visitedAt: visited ? now : null },
+    update: { visited, visitedAt: visited ? now : null }
+  });
+  return { changed: true };
+}
+
+/**
+ * Reshapes a `recomputeCourseProgress(..., { includeTree: true })` result
+ * into the flat, course-scoped projections the Student frontend consumes
+ * (see getStudentCourseProgress). Shared with completeContent/completeLesson
+ * so a mutation response carries the exact same shape a fresh GET would --
+ * the frontend can drop it straight into its cache instead of firing a
+ * second network request just to re-derive what this call already computed.
+ */
+function attachFlatProjections(rollup) {
+  const { hierarchy } = rollup;
+
+  const completedContentIds = [];
+  const completedQuizIds = [];
+  const completedAssignmentIds = [];
+  const completedTopicIds = [];
+  const completedLessonIds = [];
+  const completedModuleIds = [];
+
+  const visitedContentIds = [];
+  const visitedQuizIds = [];
+  const visitedAssignmentIds = [];
+  const visitedTopicIds = [];
+  const visitedLessonIds = [];
+  const visitedModuleIds = [];
+
+  const collectDirect = (entity) => {
+    entity.contents.forEach((c) => {
+      if (c.completed) completedContentIds.push(c.id);
+      if (c.visited) visitedContentIds.push(c.id);
+    });
+    entity.quizzes.forEach((q) => {
+      if (q.completed) completedQuizIds.push(q.id);
+      if (q.visited) visitedQuizIds.push(q.id);
+    });
+    entity.assignments.forEach((a) => {
+      if (a.completed) completedAssignmentIds.push(a.id);
+      if (a.visited) visitedAssignmentIds.push(a.id);
+    });
+  };
+
+  collectDirect(hierarchy);
+  for (const mod of hierarchy.modules) {
+    collectDirect(mod);
+    if (mod.completed) completedModuleIds.push(mod.id);
+    if (mod.visited) visitedModuleIds.push(mod.id);
+    for (const lesson of mod.lessons) {
+      collectDirect(lesson);
+      if (lesson.completed) completedLessonIds.push(lesson.id);
+      if (lesson.visited) visitedLessonIds.push(lesson.id);
+      for (const topic of lesson.topics) {
+        collectDirect(topic);
+        if (topic.completed) completedTopicIds.push(topic.id);
+        if (topic.visited) visitedTopicIds.push(topic.id);
+      }
+    }
+  }
+
+  return {
+    ...rollup,
+    hierarchy,
+    moduleProgresses: completedModuleIds,
+    lessonProgresses: completedLessonIds,
+    topicProgresses: completedTopicIds,
+    completedContentIds,
+    completedQuizIds,
+    completedAssignmentIds,
+    visitedModuleProgresses: visitedModuleIds,
+    visitedLessonProgresses: visitedLessonIds,
+    visitedTopicProgresses: visitedTopicIds,
+    visitedContentIds,
+    visitedQuizIds,
+    visitedAssignmentIds
+  };
+}
+
+/**
  * Marks one or more Content items (same studentId) complete/incomplete and
  * triggers bottom-up course progress rollup — once per distinct course, not
  * once per content id.
@@ -32,26 +162,30 @@ async function completeContent(studentId, contentId, completed = true, requestin
     throw error;
   }
 
-  const contents = await prisma.content.findMany({
-    where: { id: { in: contentIds } },
-    include: {
-      topic: {
-        include: {
-          lesson: {
-            include: {
-              module: true
+  // Independent reads -- fetched together instead of one after the other.
+  const [contents, existingRows] = await Promise.all([
+    prisma.content.findMany({
+      where: { id: { in: contentIds } },
+      include: {
+        topic: {
+          include: {
+            lesson: {
+              include: {
+                module: true
+              }
             }
           }
-        }
-      },
-      lesson: {
-        include: {
-          module: true
-        }
-      },
-      module: true
-    }
-  });
+        },
+        lesson: {
+          include: {
+            module: true
+          }
+        },
+        module: true
+      }
+    }),
+    prisma.contentProgress.findMany({ where: { studentId, contentId: { in: contentIds } } })
+  ]);
 
   if (contents.length !== contentIds.length) {
     const error = new Error('Content not found');
@@ -72,34 +206,33 @@ async function completeContent(studentId, contentId, completed = true, requestin
   }
 
   if (requestingUser) {
-    for (const courseId of courseIds) {
-      await assertCourseProgressAccess(requestingUser, studentId, courseId);
-    }
+    await Promise.all([...courseIds].map((courseId) => assertCourseProgressAccess(requestingUser, studentId, courseId)));
   }
 
-  const existingRows = await prisma.contentProgress.findMany({
-    where: { studentId, contentId: { in: contentIds } }
-  });
-  const existingByContentId = new Map(existingRows.map((row) => [row.contentId, row]));
-  const now = new Date();
-
-  await Promise.all(
-    contentIds.map((id) => {
-      const existing = existingByContentId.get(id);
-      const completedAt = completed ? (existing?.completed && existing?.completedAt ? existing.completedAt : now) : null;
-      return prisma.contentProgress.upsert({
-        where: { studentId_contentId: { studentId, contentId: id } },
-        create: { studentId, contentId: id, completed, completedAt: completed ? now : null },
-        update: { completed, completedAt }
-      });
-    })
-  );
+  await upsertContentCompletions(studentId, contentIds, completed, existingRows);
 
   // One rollup per distinct course (almost always exactly one — a merged
   // block's rows all come from the same lesson) instead of one per content id.
+  // The ContentProgress writes above are already durable at this point: if
+  // the rollup itself fails (a transient DB hiccup, a slow query), the
+  // completion must still be reported as successful -- the row the student
+  // actually asked to change is already saved, and the frontend must not
+  // show "Mark as Complete" again for an item the database already has as
+  // complete just because the DERIVED course-wide numbers couldn't be
+  // recomputed this one time. The next read (or mutation) recomputes them.
   let rollup = null;
   for (const courseId of courseIds) {
-    rollup = await recomputeCourseProgress(studentId, courseId);
+    try {
+      rollup = attachFlatProjections(await recomputeCourseProgress(studentId, courseId, null, { includeTree: true }));
+    } catch (rollupError) {
+      console.error('[progress] rollup failed after content completion committed', {
+        studentId,
+        contentIds,
+        courseId,
+        error: rollupError.message
+      });
+      rollup = null;
+    }
   }
 
   return {
@@ -149,16 +282,24 @@ async function completeLesson(studentId, lessonId, completed = true, requestingU
     }
   }
 
-  const now = new Date();
-  for (const cId of contentIds) {
-    await prisma.contentProgress.upsert({
-      where: { studentId_contentId: { studentId, contentId: cId } },
-      create: { studentId, contentId: cId, completed, completedAt: completed ? now : null },
-      update: { completed, completedAt: completed ? now : null }
+  const existingRows =
+    contentIds.length > 0
+      ? await prisma.contentProgress.findMany({ where: { studentId, contentId: { in: contentIds } } })
+      : [];
+
+  await upsertContentCompletions(studentId, contentIds, completed, existingRows);
+
+  let rollup = null;
+  try {
+    rollup = attachFlatProjections(await recomputeCourseProgress(studentId, courseId, null, { includeTree: true }));
+  } catch (rollupError) {
+    console.error('[progress] rollup failed after lesson completion committed', {
+      studentId,
+      lessonId,
+      courseId,
+      error: rollupError.message
     });
   }
-
-  const rollup = await recomputeCourseProgress(studentId, courseId);
 
   return {
     lessonId,
@@ -186,7 +327,11 @@ async function markVisited(studentId, params, visited = true, requestingUser = n
   entityType = (entityType || '').toUpperCase();
 
   let courseId = null;
-  const now = new Date();
+  // Whether this call actually changed anything. Revisiting an
+  // already-visited item is a no-op: no upsert, and (below) no rollup either
+  // -- there is nothing new for a rollup to recompute, so it must not
+  // burn a full course recompute on every re-open of the same content.
+  let changed = true;
 
   if (entityType === 'CONTENT') {
     const content = await prisma.content.findUnique({
@@ -201,11 +346,12 @@ async function markVisited(studentId, params, visited = true, requestingUser = n
     courseId = content.topic?.lesson?.module?.courseId || content.lesson?.module?.courseId || content.module?.courseId || content.courseId;
     if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
 
-    await prisma.contentProgress.upsert({
-      where: { studentId_contentId: { studentId, contentId: entityId } },
-      create: { studentId, contentId: entityId, visited, visitedAt: visited ? now : null },
-      update: { visited, visitedAt: visited ? now : null }
-    });
+    ({ changed } = await upsertVisitedIfNeeded(
+      prisma.contentProgress,
+      { studentId_contentId: { studentId, contentId: entityId } },
+      { studentId, contentId: entityId },
+      visited
+    ));
   } else if (entityType === 'QUIZ') {
     const quiz = await prisma.quiz.findUnique({
       where: { id: entityId },
@@ -219,11 +365,12 @@ async function markVisited(studentId, params, visited = true, requestingUser = n
     courseId = quiz.topic?.lesson?.module?.courseId || quiz.lesson?.module?.courseId || quiz.module?.courseId || quiz.courseId;
     if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
 
-    await prisma.quizProgress.upsert({
-      where: { studentId_quizId: { studentId, quizId: entityId } },
-      create: { studentId, quizId: entityId, visited, visitedAt: visited ? now : null },
-      update: { visited, visitedAt: visited ? now : null }
-    });
+    ({ changed } = await upsertVisitedIfNeeded(
+      prisma.quizProgress,
+      { studentId_quizId: { studentId, quizId: entityId } },
+      { studentId, quizId: entityId },
+      visited
+    ));
   } else if (entityType === 'ASSIGNMENT') {
     const assignment = await prisma.assignment.findUnique({
       where: { id: entityId },
@@ -237,11 +384,12 @@ async function markVisited(studentId, params, visited = true, requestingUser = n
     courseId = assignment.topic?.lesson?.module?.courseId || assignment.lesson?.module?.courseId || assignment.module?.courseId || assignment.courseId;
     if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
 
-    await prisma.assignmentProgress.upsert({
-      where: { studentId_assignmentId: { studentId, assignmentId: entityId } },
-      create: { studentId, assignmentId: entityId, visited, visitedAt: visited ? now : null },
-      update: { visited, visitedAt: visited ? now : null }
-    });
+    ({ changed } = await upsertVisitedIfNeeded(
+      prisma.assignmentProgress,
+      { studentId_assignmentId: { studentId, assignmentId: entityId } },
+      { studentId, assignmentId: entityId },
+      visited
+    ));
   } else if (entityType === 'TOPIC') {
     const topic = await prisma.topic.findUnique({
       where: { id: entityId },
@@ -251,11 +399,12 @@ async function markVisited(studentId, params, visited = true, requestingUser = n
     courseId = topic.lesson.module.courseId;
     if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
 
-    await prisma.topicProgress.upsert({
-      where: { studentId_topicId: { studentId, topicId: entityId } },
-      create: { studentId, topicId: entityId, visited, visitedAt: visited ? now : null },
-      update: { visited, visitedAt: visited ? now : null }
-    });
+    ({ changed } = await upsertVisitedIfNeeded(
+      prisma.topicProgress,
+      { studentId_topicId: { studentId, topicId: entityId } },
+      { studentId, topicId: entityId },
+      visited
+    ));
   } else if (entityType === 'LESSON') {
     const lesson = await prisma.lesson.findUnique({
       where: { id: entityId },
@@ -265,11 +414,12 @@ async function markVisited(studentId, params, visited = true, requestingUser = n
     courseId = lesson.module.courseId;
     if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
 
-    await prisma.lessonProgress.upsert({
-      where: { studentId_lessonId: { studentId, lessonId: entityId } },
-      create: { studentId, lessonId: entityId, visited, visitedAt: visited ? now : null },
-      update: { visited, visitedAt: visited ? now : null }
-    });
+    ({ changed } = await upsertVisitedIfNeeded(
+      prisma.lessonProgress,
+      { studentId_lessonId: { studentId, lessonId: entityId } },
+      { studentId, lessonId: entityId },
+      visited
+    ));
   } else if (entityType === 'MODULE') {
     const moduleItem = await prisma.module.findUnique({
       where: { id: entityId }
@@ -278,18 +428,29 @@ async function markVisited(studentId, params, visited = true, requestingUser = n
     courseId = moduleItem.courseId;
     if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
 
-    await prisma.moduleProgress.upsert({
-      where: { studentId_moduleId: { studentId, moduleId: entityId } },
-      create: { studentId, moduleId: entityId, visited, visitedAt: visited ? now : null },
-      update: { visited, visitedAt: visited ? now : null }
-    });
+    ({ changed } = await upsertVisitedIfNeeded(
+      prisma.moduleProgress,
+      { studentId_moduleId: { studentId, moduleId: entityId } },
+      { studentId, moduleId: entityId },
+      visited
+    ));
   } else {
     throw Object.assign(new Error('Invalid entity type for visited progress'), { statusCode: 400 });
   }
 
   let rollup = null;
-  if (courseId) {
-    rollup = await recomputeCourseProgress(studentId, courseId, null, { includeTree: true });
+  if (courseId && changed) {
+    try {
+      rollup = attachFlatProjections(await recomputeCourseProgress(studentId, courseId, null, { includeTree: true }));
+    } catch (rollupError) {
+      console.error('[progress] rollup failed after visit committed', {
+        studentId,
+        entityType,
+        entityId,
+        courseId,
+        error: rollupError.message
+      });
+    }
   }
 
   return {
@@ -297,6 +458,7 @@ async function markVisited(studentId, params, visited = true, requestingUser = n
     entityId,
     studentId,
     visited,
+    changed,
     courseProgress: rollup
   };
 }
@@ -357,71 +519,7 @@ async function assertCourseProgressAccess(requestingUser, studentId, courseId) {
  */
 async function getStudentCourseProgress(studentId, courseId) {
   const rollup = await recomputeCourseProgress(studentId, courseId, null, { includeTree: true });
-  const { hierarchy } = rollup;
-
-  const completedContentIds = [];
-  const completedQuizIds = [];
-  const completedAssignmentIds = [];
-  const completedTopicIds = [];
-  const completedLessonIds = [];
-  const completedModuleIds = [];
-
-  const visitedContentIds = [];
-  const visitedQuizIds = [];
-  const visitedAssignmentIds = [];
-  const visitedTopicIds = [];
-  const visitedLessonIds = [];
-  const visitedModuleIds = [];
-
-  const collectDirect = (entity) => {
-    entity.contents.forEach((c) => {
-      if (c.completed) completedContentIds.push(c.id);
-      if (c.visited) visitedContentIds.push(c.id);
-    });
-    entity.quizzes.forEach((q) => {
-      if (q.completed) completedQuizIds.push(q.id);
-      if (q.visited) visitedQuizIds.push(q.id);
-    });
-    entity.assignments.forEach((a) => {
-      if (a.completed) completedAssignmentIds.push(a.id);
-      if (a.visited) visitedAssignmentIds.push(a.id);
-    });
-  };
-
-  collectDirect(hierarchy);
-  for (const mod of hierarchy.modules) {
-    collectDirect(mod);
-    if (mod.completed) completedModuleIds.push(mod.id);
-    if (mod.visited) visitedModuleIds.push(mod.id);
-    for (const lesson of mod.lessons) {
-      collectDirect(lesson);
-      if (lesson.completed) completedLessonIds.push(lesson.id);
-      if (lesson.visited) visitedLessonIds.push(lesson.id);
-      for (const topic of lesson.topics) {
-        collectDirect(topic);
-        if (topic.completed) completedTopicIds.push(topic.id);
-        if (topic.visited) visitedTopicIds.push(topic.id);
-      }
-    }
-  }
-
-  return {
-    ...rollup,
-    hierarchy,
-    // Flat convenience projections, scoped to this course.
-    moduleProgresses: completedModuleIds,
-    lessonProgresses: completedLessonIds,
-    topicProgresses: completedTopicIds,
-    completedContentIds,
-    completedQuizIds,
-    completedAssignmentIds,
-    visitedModuleProgresses: visitedModuleIds,
-    visitedLessonProgresses: visitedLessonIds,
-    visitedTopicProgresses: visitedTopicIds,
-    visitedContentIds,
-    visitedQuizIds,
-    visitedAssignmentIds
-  };
+  return attachFlatProjections(rollup);
 }
 
 /**
