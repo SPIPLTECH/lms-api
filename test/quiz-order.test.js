@@ -99,32 +99,23 @@ test("getNextAssignmentOrder — Assignment-only, zone-banded", async (t) => {
   });
 });
 
-test("createQuiz — order computation and explicit override", async (t) => {
-  const originalContentFindFirst = prisma.content.findFirst;
+test("createQuiz — order computation lands in the Quiz zone", async (t) => {
   const originalQuizFindFirst = prisma.quiz.findFirst;
   const originalQuizCreate = prisma.quiz.create;
   const originalQuizFindUnique = prisma.quiz.findUnique;
-  const originalModuleFindUnique = prisma.module.findUnique;
-  const originalLessonFindUnique = prisma.lesson.findUnique;
   const originalTopicFindUnique = prisma.topic.findUnique;
-  const originalBatchFindUnique = prisma.batch.findUnique;
   const originalCourseFindUnique = prisma.course.findUnique;
 
   t.after(() => {
-    prisma.content.findFirst = originalContentFindFirst;
     prisma.quiz.findFirst = originalQuizFindFirst;
     prisma.quiz.create = originalQuizCreate;
     prisma.quiz.findUnique = originalQuizFindUnique;
-    prisma.module.findUnique = originalModuleFindUnique;
-    prisma.lesson.findUnique = originalLessonFindUnique;
     prisma.topic.findUnique = originalTopicFindUnique;
-    prisma.batch.findUnique = originalBatchFindUnique;
     prisma.course.findUnique = originalCourseFindUnique;
   });
 
-  await t.test("computes order for the most-specific parent (topic beats course)", async () => {
-    prisma.content.findFirst = async () => null;
-    prisma.quiz.findFirst = async () => ({ order: 7 });
+  await t.test("auto-computed order for the most-specific parent (topic beats course)", async () => {
+    prisma.quiz.findFirst = async () => ({ order: QUIZ_ORDER_BASE + 7 });
     let capturedData;
     prisma.quiz.create = async ({ data }) => {
       capturedData = data;
@@ -141,18 +132,11 @@ test("createQuiz — order computation and explicit override", async (t) => {
       title: "Topic Quiz", passingScore: 70, courseId: "c1", topicId: "t1",
     });
 
-    assert.strictEqual(capturedData.order, 8);
+    assert.strictEqual(capturedData.order, QUIZ_ORDER_BASE + 8);
   });
 
-  await t.test("an explicit order is used verbatim when it doesn't collide", async () => {
-    // Collision-check calls pass a concrete numeric `order` in `where`;
-    // getNextOrder's max-lookup calls don't (no `order` key, or an
-    // `{ not: null }` filter object) — branch on that to answer each caller
-    // correctly with a single mock.
-    prisma.content.findFirst = async ({ where }) =>
-      typeof where.order === "number" ? null : { order: 99 };
-    prisma.quiz.findFirst = async ({ where }) =>
-      typeof where.order === "number" ? null : { order: 99 };
+  await t.test("an explicit small order is rebased into the Quiz zone", async () => {
+    prisma.quiz.findFirst = async () => null;
     let capturedData;
     prisma.quiz.create = async ({ data }) => {
       capturedData = data;
@@ -165,17 +149,11 @@ test("createQuiz — order computation and explicit override", async (t) => {
       title: "Positioned Quiz", passingScore: 70, courseId: "c1", order: 2,
     });
 
-    assert.strictEqual(capturedData.order, 2);
+    assert.strictEqual(capturedData.order, QUIZ_ORDER_BASE + 2);
   });
 
-  await t.test("an explicit order that collides falls back to auto-computed, not a 500", async () => {
-    // Simulates a scope that already holds a quiz at order 1 (e.g. the
-    // Add Content picker's insertion order, computed from Content rows
-    // only, landing on a slot a sibling quiz already occupies).
-    prisma.content.findFirst = async ({ where }) =>
-      typeof where.order === "number" ? null : null;
-    prisma.quiz.findFirst = async ({ where }) =>
-      typeof where.order === "number" ? { id: "existing-quiz" } : { order: 1 };
+  await t.test("an explicit order already in the zone is used as-is", async () => {
+    prisma.quiz.findFirst = async () => null;
     let capturedData;
     prisma.quiz.create = async ({ data }) => {
       capturedData = data;
@@ -185,11 +163,10 @@ test("createQuiz — order computation and explicit override", async (t) => {
     prisma.course.findUnique = async () => ({ title: "Some Course" });
 
     await quizService.createQuiz({
-      title: "Colliding Quiz", passingScore: 70, courseId: "c1", order: 1,
+      title: "Already Banded Quiz", passingScore: 70, courseId: "c1", order: QUIZ_ORDER_BASE + 9,
     });
 
-    assert.notStrictEqual(capturedData.order, 1);
-    assert.strictEqual(capturedData.order, 2);
+    assert.strictEqual(capturedData.order, QUIZ_ORDER_BASE + 9);
   });
 });
 

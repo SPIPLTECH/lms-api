@@ -3,7 +3,7 @@ const notificationService = require("../notifications/notification.service");
 const learnerModelService = require("../learner-model/learnerModel.service");
 const { MISCONCEPTION_TAXONOMY, isKnownMisconceptionType } = require("../learner-model/misconceptionTaxonomy.config");
 const misconceptionClassifier = require("../learner-model/misconceptionClassifier.service");
-const { getNextOrder } = require("../contents/contentOrder.util");
+const { getNextQuizOrder, QUIZ_ORDER_BASE } = require("../contents/contentOrder.util");
 
 // Tracks classifyAndApply() calls dispatched below fire-and-forget (never
 // awaited by the HTTP response, by design — see the dispatch site). Exists
@@ -500,16 +500,16 @@ const createQuiz = async (
 
   const orderField = resolveQuizParentField(quizData);
   if (quizData.order === undefined || quizData.order === null) {
-    quizData.order = await getNextOrder(orderField, quizData[orderField]);
+    quizData.order = await getNextQuizOrder(orderField, quizData[orderField]);
   } else {
-    quizData.order = Number(quizData.order);
-    const [collidingContent, collidingQuiz] = await Promise.all([
-      prisma.content.findFirst({ where: { [orderField]: quizData[orderField], order: quizData.order }, select: { id: true } }),
-      prisma.quiz.findFirst({ where: { [orderField]: quizData[orderField], order: quizData.order }, select: { id: true } }),
-    ]);
-    if (collidingContent || collidingQuiz) {
-      quizData.order = await getNextOrder(orderField, quizData[orderField]);
-    }
+    // An explicit order is always treated as a position inside the Quiz
+    // zone. A caller sending a small "local index" (1, 2, 3, ...) — the
+    // pre-existing convention — is rebased into the zone; a caller that
+    // already sends a zone-banded value (e.g. a value read back from another
+    // quiz) is used as-is. Either way the result can never land in the
+    // Normal or Assignment zone.
+    const requested = Number(quizData.order);
+    quizData.order = requested >= QUIZ_ORDER_BASE ? requested : QUIZ_ORDER_BASE + requested;
   }
 
   const quiz = await prisma.quiz.create({
