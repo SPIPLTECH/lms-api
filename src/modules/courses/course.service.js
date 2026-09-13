@@ -532,6 +532,7 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
               }
             }
           },
+          assignments: { orderBy: { order: "asc" } },
           lessons: {
             where: isStudentOrGuest ? { isPublished: true } : undefined,
             orderBy: {
@@ -563,6 +564,7 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
                   }
                 }
               },
+              assignments: { orderBy: { order: "asc" } },
               topics: {
                 orderBy: {
                   order: "asc"
@@ -592,6 +594,7 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
                       }
                     }
                   },
+                  assignments: { orderBy: { order: "asc" } },
                   contents: {
                     orderBy: {
                       order: "asc"
