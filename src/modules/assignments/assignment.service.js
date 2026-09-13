@@ -1,4 +1,5 @@
 const prisma = require("../../config/database");
+const { getNextAssignmentOrder } = require("../contents/contentOrder.util");
 
 const getAssignments = async (studentId) => {
     const assignments = await prisma.assignment.findMany({
@@ -434,11 +435,15 @@ const createAssignment = async (data) => {
         throw error;
     }
 
+    const orderField = data.courseId ? "courseId" : data.moduleId ? "moduleId" : data.lessonId ? "lessonId" : "topicId";
+    const order = await getNextAssignmentOrder(orderField, data[orderField]);
+
     return await prisma.assignment.create({
         data: {
             title: data.title,
             description: data.description || null,
             dueDate: new Date(data.dueDate),
+            order,
             totalQuestions: data.totalQuestions ? parseInt(data.totalQuestions) : 0,
             estimatedTime: data.estimatedTime ? parseInt(data.estimatedTime) : 0,
             resources: data.resources ? parseInt(data.resources) : 0,
@@ -492,6 +497,28 @@ const deleteAssignment = async (assignmentId) => {
     });
 };
 
+// Two-phase reorder: mirrors quizService.reorderQuizzes and
+// content.service.js's reorderContents exactly — move every row to a
+// disjoint negative placeholder first, then to its final order, inside one
+// transaction, so a direct swap never collides mid-flight.
+const reorderAssignments = async (assignments) => {
+    const offsetUpdates = assignments.map((a, index) =>
+        prisma.assignment.update({
+            where: { id: a.id },
+            data: { order: -1000 - index }
+        })
+    );
+
+    const finalUpdates = assignments.map((a) =>
+        prisma.assignment.update({
+            where: { id: a.id },
+            data: { order: a.order }
+        })
+    );
+
+    return prisma.$transaction([...offsetUpdates, ...finalUpdates]);
+};
+
 module.exports = {
     getAssignments,
     getAssignmentById,
@@ -502,4 +529,5 @@ module.exports = {
     createAssignment,
     updateAssignment,
     deleteAssignment,
+    reorderAssignments,
 };
