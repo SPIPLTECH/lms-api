@@ -479,13 +479,16 @@ test("V2 Importer Module Tests", async (t) => {
               order: 1,
               lessons: [
                 {
-                  title: "Lesson With Duplicate Topic Order",
+                  title: "Lesson With An Oversized Content Duration",
                   order: 1,
                   topics: [
-                    // Same order twice under the same lesson violates
-                    // the @@unique([lessonId, order]) constraint on Topic.
-                    { title: "Topic A", order: 1, contents: [] },
-                    { title: "Topic B", order: 1, contents: [] }
+                    // Order follows position now, so a duplicate order can no
+                    // longer force a failure. A duration past Postgres int4
+                    // passes JSON validation and is rejected by the database
+                    // on the Content insert — after Module, Lesson and Topic
+                    // rows were written in the same transaction.
+                    { title: "Topic A", contents: [] },
+                    { title: "Topic B", contents: [{ type: "VIDEO", title: "Too long", videoUrl: "https://videos.example.com/x.mp4", duration: 2147483648 }] }
                   ]
                 }
               ]

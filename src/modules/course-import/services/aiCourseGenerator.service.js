@@ -674,7 +674,7 @@ STRUCTURE — decide it from the instructor's request
 
 CONVENTIONS
 - "course": "title" (required), "description", "category", "level" ("Beginner" | "Intermediate" | "Advanced"), "language", "tags", "estimatedLearningHours". "status" is always "DRAFT".
-- "order" is 1-based and unique among siblings (modules, lessons, topics, content items).
+- Do NOT write "order" fields. Order is automatic: items appear in the order you list them, so list them in teaching order.
 - IDs follow the template's reference style: "courseId" on modules, "moduleId" on lessons, "lessonId" on topics, and the ancestor IDs on every quiz and assignment ("topicId" too when it belongs to a topic). Use short snake_case IDs, identical everywhere they appear.
 - "quiz" (one per level, only when wanted): "title", "quizTag", "passingScore" (0-100), "questions". quizTag by level: topic "SELF_TEST", lesson "LESSON_ASSESSMENT", module "MODULE_ASSESSMENT", course "COURSE_ASSESSMENT".
 - "assignment" (one per level, only when wanted): "title", "description", "marks", "assessmentType" ("EXERCISE"), "estimatedTime" (minutes), "dueDate" (ISO 8601, after {{TODAY}}, later for later parts of the course).
@@ -776,8 +776,10 @@ function repairGeneratedCourse(course, { context = {}, now = new Date() } = {}) 
   const { metadata } = course;
 
   metadata.status = "DRAFT";
-  if (!metadata.level && context.level) metadata.level = context.level;
-  if (!metadata.language && context.language) metadata.language = context.language;
+  // The form sends "AUTO" to mean "let the AI decide", never as a value to store.
+  const chosen = (value) => (typeof value === "string" && value.trim() && value.trim().toUpperCase() !== "AUTO" ? value : null);
+  if (!metadata.level && chosen(context.level)) metadata.level = context.level;
+  if (!metadata.language && chosen(context.language)) metadata.language = context.language;
 
   const slug = slugify((Array.isArray(metadata.tags) && metadata.tags[0]) || metadata.category || metadata.title) || "course";
   const counters = { module: 0, lesson: 0, topic: 0 };

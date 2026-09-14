@@ -116,27 +116,40 @@ test("the V2 spelling and the template spelling describe the same course", () =>
   assert.deepEqual(a.settings, b.settings);
 });
 
-test("orders: given orders are kept, positions fill in when none are given, duplicates are rejected", async (t) => {
-  await t.test("given orders are kept and the array is not rearranged", () => {
+test("order is automatic: position in the list, whatever order values the JSON carries", async (t) => {
+  await t.test("position is the order, and the list is not rearranged", () => {
     const { canonical } = parseCourseJson({ course: { title: "C" }, modules: [{ title: "Second", order: 2 }, { title: "First", order: 1 }] });
-    assert.deepEqual(canonical.modules.map((m) => [m.title, m.order]), [["Second", 2], ["First", 1]]);
+    assert.deepEqual(canonical.modules.map((m) => [m.title, m.order]), [["Second", 1], ["First", 2]]);
   });
 
-  await t.test("no orders at all means array position", () => {
-    const { canonical } = parseCourseJson({ course: { title: "C" }, content: [html("a"), html("b"), html("c")] });
-    assert.deepEqual(canonical.contents.map((c) => c.order), [1, 2, 3]);
+  await t.test("repeated or odd order values are neither errors nor warnings", () => {
+    const result = parseCourseJson({ course: { title: "C" }, content: [{ ...html("a"), order: 7 }, { ...html("b"), order: 7 }, { ...html("c"), order: "x" }] });
+    assert.deepEqual([result.errors, result.warnings], [[], []]);
+    assert.deepEqual(result.canonical.contents.map((c) => c.order), [1, 2, 3]);
+  });
+});
+
+test("a level's quizzes come after its content and its children, as the template lists them", async (t) => {
+  await t.test("in the reference template, at every level", () => {
+    const { canonical, warnings } = parseCourseJson(clone(template));
+    const module1 = canonical.modules[0];
+    const lesson1 = module1.lessons[0];
+
+    assert.deepEqual(warnings, []);
+    assert.equal(canonical.quizzes[0].order, 3, "after course content 1-2 and modules 1-2");
+    assert.equal(module1.quizzes[0].order, 2, "after module content 1 and lesson 1");
+    assert.equal(lesson1.quizzes[0].order, 3, "after lesson content 1 and topics 1-2");
+    assert.equal(lesson1.topics[0].quizzes[0].order, 2, "after topic content 1");
   });
 
-  await t.test("an unordered sibling goes after the ordered ones, with a warning", () => {
-    const result = parseCourseJson({ course: { title: "C" }, modules: [{ title: "A", order: 3 }, { title: "B" }] });
-    assert.deepEqual(result.canonical.modules.map((m) => m.order), [3, 4]);
-    assert.match(result.warnings.join("\n"), /modules\[1\] has no order; it was placed after its ordered siblings as order 4/);
-  });
-
-  await t.test("duplicate sibling orders are an error naming both", () => {
-    const result = parseCourseJson({ course: { title: "C" }, modules: [{ title: "M", lessons: [{ title: "A", order: 1 }, { title: "B", order: 1 }] }] });
-    assert.equal(result.isValid, false);
-    assert.deepEqual(result.errors, ["modules[0].lessons: order 1 is used by both modules[0].lessons[0] and modules[0].lessons[1]. Sibling orders must be unique."]);
+  await t.test("several quizzes on one level keep their listed sequence", () => {
+    const { canonical } = parseCourseJson({
+      course: { title: "C" },
+      content: [html("a")],
+      quiz: { title: "Q1", order: 1, questions: [mcq()] },
+      quizzes: [{ title: "Q2", order: 1, questions: [mcq()] }],
+    });
+    assert.deepEqual(canonical.quizzes.map((q) => [q.title, q.order]), [["Q1", 2], ["Q2", 3]]);
   });
 });
 

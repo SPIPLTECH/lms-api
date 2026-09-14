@@ -21,7 +21,6 @@
 
   "content": [
     {
-      "order": 1,
       "type": "HTML",
       "title": "What is Physics?",
       "htmlContent": "<h2>What is Physics?</h2><p>Physics is the study of matter, energy, motion, forces, and the fundamental laws that describe the natural world.</p>",
@@ -33,7 +32,6 @@
       }
     },
     {
-      "order": 2,
       "type": "HTML",
       "title": "Why Learn Physics?",
       "htmlContent": "<p>Physics helps us understand how objects move, interact, and transfer energy in the world around us.</p>",
@@ -51,11 +49,9 @@
       "courseId": "course_physics_1",
       "title": "Units and Measurements",
       "description": "Learn how physical quantities are measured and represented using standard units.",
-      "order": 1,
 
       "content": [
         {
-          "order": 1,
           "type": "HTML",
           "title": "Introduction to Measurement",
           "htmlContent": "<p>Measurement is the process of comparing a physical quantity with a standard unit.</p>",
@@ -73,12 +69,10 @@
           "moduleId": "physics_mod_1",
           "title": "Physical Quantities and SI Units",
           "description": "Understand physical quantities and the International System of Units.",
-          "order": 1,
           "isPublished": false,
 
           "content": [
             {
-              "order": 1,
               "type": "HTML",
               "title": "Physical Quantities",
               "htmlContent": "<p>Physical quantities are measurable properties such as length, mass, time, and temperature.</p>",
@@ -96,12 +90,10 @@
               "lessonId": "physics_lesson_1",
               "title": "SI Base Units",
               "description": "Learn the seven fundamental SI base units.",
-              "order": 1,
               "isPublished": false,
 
               "content": [
                 {
-                  "order": 1,
                   "type": "HTML",
                   "title": "The Seven SI Base Units",
                   "htmlContent": "<p>The SI system defines seven base units including metre, kilogram, second, ampere, kelvin, mole, and candela.</p>",
@@ -172,12 +164,10 @@
               "lessonId": "physics_lesson_1",
               "title": "Measurement Errors",
               "description": "Understand accuracy, precision, and common measurement errors.",
-              "order": 2,
               "isPublished": false,
 
               "content": [
                 {
-                  "order": 1,
                   "type": "HTML",
                   "title": "Accuracy and Precision",
                   "htmlContent": "<p>Accuracy describes how close a measurement is to the true value, while precision describes the consistency of repeated measurements.</p>",
@@ -336,11 +326,9 @@
       "courseId": "course_physics_1",
       "title": "Motion in a Straight Line",
       "description": "Learn the fundamental concepts of position, displacement, velocity, acceleration, and equations of motion.",
-      "order": 2,
 
       "content": [
         {
-          "order": 1,
           "type": "HTML",
           "title": "Introduction to Motion",
           "htmlContent": "<p>Motion describes the change in position of an object with respect to time.</p>",
@@ -358,12 +346,10 @@
           "moduleId": "physics_mod_2",
           "title": "Position, Distance and Displacement",
           "description": "Understand how the position and movement of objects are described.",
-          "order": 1,
           "isPublished": false,
 
           "content": [
             {
-              "order": 1,
               "type": "HTML",
               "title": "Distance and Displacement",
               "htmlContent": "<p>Distance is the total path travelled, while displacement is the change in position from the initial to final point.</p>",
@@ -381,12 +367,10 @@
               "lessonId": "physics_lesson_2",
               "title": "Distance",
               "description": "Learn the concept of distance travelled by an object.",
-              "order": 1,
               "isPublished": false,
 
               "content": [
                 {
-                  "order": 1,
                   "type": "HTML",
                   "title": "Understanding Distance",
                   "htmlContent": "<p>Distance is a scalar quantity representing the total length of the path travelled.</p>",

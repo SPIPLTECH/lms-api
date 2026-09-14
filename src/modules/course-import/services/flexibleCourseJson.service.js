@@ -12,10 +12,10 @@
  * The template shows HOW course JSON looks, not WHAT a course must contain.
  * Every level and every element is optional. Only what is present is
  * validated, and only against what the LMS itself needs: titles, a known
- * content type, an assignment due date, unique sibling orders, answer keys
- * that match their options, and ID references that agree with the nesting.
- * Nothing is added, removed or rearranged — the output is the same hierarchy,
- * spelled canonically (V2 keys at every level).
+ * content type, an assignment due date, answer keys that match their options,
+ * and ID references that agree with the nesting. Order is not part of the
+ * JSON: it follows position. Nothing is added, removed or rearranged — the
+ * output is the same hierarchy, spelled canonically (V2 keys at every level).
  */
 
 const CONTENT_TYPES = [
@@ -143,47 +143,15 @@ function getQuestionProblems(question) {
 }
 
 /**
- * Assigns each sibling its stored order. Given orders are kept as-is (and must
- * be unique, which the database enforces per parent). With no orders at all,
- * array position is the order. Siblings missing an order among ordered ones
- * are placed after them, in array sequence.
+ * Order is automatic: an item's position in its list is its order, the way the
+ * draft Composer numbers what it inserts. Any `order` value in the JSON is
+ * ignored, so it can neither conflict nor be forgotten.
  */
-function resolveOrders(entries, listPath, report) {
-  const usedBy = new Map();
-  let maxOrder = 0;
-  let anyGiven = false;
-
-  for (const { value, path } of entries) {
-    if (!isPresent(value.order)) continue;
-    if (!Number.isInteger(value.order)) {
-      report.errors.push(`${path}.order must be a whole number.`);
-      continue;
-    }
-    anyGiven = true;
-    if (usedBy.has(value.order)) {
-      report.errors.push(`${listPath}: order ${value.order} is used by both ${usedBy.get(value.order)} and ${path}. Sibling orders must be unique.`);
-    } else {
-      usedBy.set(value.order, path);
-    }
-    maxOrder = Math.max(maxOrder, value.order);
-  }
-
-  let next = maxOrder;
-  return entries.map(({ value, path }, index) => {
-    if (Number.isInteger(value.order)) return value.order;
-    if (!anyGiven || isPresent(value.order)) return index + 1;
-    next += 1;
-    report.warnings.push(`${path} has no order; it was placed after its ordered siblings as order ${next}.`);
-    return next;
-  });
-}
-
-function normalizeOrderedList(entries, listPath, normalizeEntry, report) {
-  const kept = entries
-    .map((entry) => ({ entry, value: normalizeEntry(entry) }))
-    .filter((item) => item.value !== null);
-  const orders = resolveOrders(kept.map((item) => item.entry), listPath, report);
-  return kept.map((item, index) => Object.assign(item.value, { order: orders[index] }));
+function normalizeOrderedList(entries, normalizeEntry) {
+  return entries
+    .map(normalizeEntry)
+    .filter((value) => value !== null)
+    .map((value, index) => Object.assign(value, { order: index + 1 }));
 }
 
 function normalizeContent({ value: item, path }, ctx) {
@@ -237,7 +205,6 @@ function normalizeQuiz({ value: quiz, path }, level, ctx) {
   checkBoolean(quiz, "isPublished", path, report);
   checkNumber(quiz, "passingScore", path, report, { integer: true, min: 0, max: 100 });
   checkNumber(quiz, "timeLimit", path, report, { integer: true, min: 0 });
-  checkNumber(quiz, "order", path, report, { integer: true });
 
   let quizTag;
   if (isPresent(quiz.quizTag)) {
@@ -335,10 +302,10 @@ function readAssessmentEntries(node, path, singular, plural, report) {
 /** Reads one level's content, quizzes, assignments and child entities. */
 function normalizeLevelLists(node, level, path, ctx) {
   const { report } = ctx;
-  const { listPath: contentListPath, entries: contentEntries } = readContentEntries(node, path, report);
+  const { entries: contentEntries } = readContentEntries(node, path, report);
 
   const lists = {
-    contents: normalizeOrderedList(contentEntries, contentListPath, (entry) => normalizeContent(entry, ctx), report),
+    contents: normalizeOrderedList(contentEntries, (entry) => normalizeContent(entry, ctx)),
     quizzes: readAssessmentEntries(node, path, "quiz", "quizzes", report)
       .map((entry) => normalizeQuiz(entry, level, ctx))
       .filter(Boolean),
@@ -356,9 +323,16 @@ function normalizeLevelLists(node, level, path, ctx) {
       report.errors.push(`${listPath} must be an array.`);
     } else if (Array.isArray(raw)) {
       const entries = raw.map((value, index) => ({ value, path: `${listPath}[${index}]` }));
-      lists[childKey] = normalizeOrderedList(entries, listPath, (entry) => normalizeEntity(entry, childLevel, ctx), report);
+      lists[childKey] = normalizeOrderedList(entries, (entry) => normalizeEntity(entry, childLevel, ctx));
     }
   }
+
+  // Content and quizzes share one order sequence per parent (see
+  // contents/contentOrder.util.js). A level's quizzes come after its content
+  // and its children, as the template lists them — which also keeps quiz
+  // orders unique on the level, as the database requires.
+  const quizBase = Math.max(lists.contents.length, childKey ? lists[childKey].length : 0);
+  lists.quizzes.forEach((quiz, index) => Object.assign(quiz, { order: quizBase + index + 1 }));
 
   return lists;
 }

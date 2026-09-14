@@ -124,17 +124,30 @@ test("the draft Composer's copy imports even though its IDs no longer match the 
   assert.equal(rows.quiz.length, 8);
 });
 
-test("an import that would break a database constraint is refused with the reasons, before anything is written", async (t) => {
+test("an import the LMS cannot store is refused with the reasons, before anything is written", async (t) => {
   const rows = captureImport(t);
 
   await assert.rejects(
-    () => importV2Manifest({ course: { title: "Clash" }, modules: [{ title: "A", order: 1 }, { title: "B", order: 1 }] }, "instructor-1"),
+    () => importV2Manifest({ course: { title: "No due date" }, modules: [{ title: "A", assignment: { title: "Essay" } }] }, "instructor-1"),
     (err) => {
       assert.equal(err.statusCode, 400);
       assert.equal(err.code, "COURSE_JSON_INVALID");
-      assert.deepEqual(err.errors, ["modules: order 1 is used by both modules[0] and modules[1]. Sibling orders must be unique."]);
+      assert.deepEqual(err.errors, [
+        'modules[0].assignment.dueDate is required — the LMS needs a due date for every assignment (ISO 8601, e.g. "2026-11-15T23:59:00.000Z").',
+      ]);
       return true;
     }
   );
   assert.equal(rows.course, null);
+});
+
+test("imported quizzes sit after their level's content, where the course map lists them", async (t) => {
+  const rows = captureImport(t);
+  await importV2Manifest(parseCourseJson(clone(template)).canonical, "instructor-1");
+
+  const courseContentOrders = rows.content.filter((c) => c.courseId).map((c) => c.order);
+  const courseQuiz = rows.quiz.find((q) => !q.moduleId && !q.lessonId && !q.topicId);
+  assert.deepEqual(courseContentOrders, [1, 2]);
+  assert.equal(courseQuiz.order, 3);
+  assert.ok(rows.quiz.every((q) => Number.isInteger(q.order)), "no imported quiz is left without an order");
 });

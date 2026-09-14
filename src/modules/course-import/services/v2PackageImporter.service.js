@@ -272,7 +272,8 @@ async function importV2Manifest(canonicalJson, instructorId) {
         title: quizDef.title,
         description: quizDef.description ?? null,
         quizTag,
-        ...(Number.isInteger(quizDef.order) && { order: quizDef.order }),
+        // Shared with the level's content: after its content and children.
+        order: quizDef.order,
         passingScore: quizDef.passingScore ?? 50,
         // A Self-Test is never timed, whatever the package claims.
         timeLimit: quizTag === "SELF_TEST" ? null : quizDef.timeLimit ?? null,

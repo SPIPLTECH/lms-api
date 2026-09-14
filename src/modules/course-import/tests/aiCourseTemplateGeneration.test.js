@@ -117,8 +117,17 @@ test("model output is brought in line with the template before validation, and e
   ]);
 });
 
+test("the form's AUTO choices mean 'let the AI decide' and are never stored as course values", async () => {
+  respondWith({ course: { title: "Untitled level" }, content: [{ type: "HTML", htmlContent: "<p>x</p>" }] });
+
+  const { canonical } = await generateCourse({ prompt: "Anything", context: { size: "AUTO", level: "AUTO", language: "English" }, now: NOW });
+
+  assert.equal(canonical.metadata.level, undefined);
+  assert.equal(canonical.metadata.language, "English");
+});
+
 test("output that cannot be repaired into a valid course is rejected with the validation errors", async () => {
-  respondWith({ course: { description: "forgot the title" }, modules: [{ title: "M", order: 1 }, { title: "N", order: 1 }] });
+  respondWith({ course: { description: "forgot the title" }, modules: [{ title: "M" }, { description: "and this module's title" }] });
 
   await assert.rejects(
     () => generateCourse({ prompt: "Make something", now: NOW }),
@@ -126,7 +135,7 @@ test("output that cannot be repaired into a valid course is rejected with the va
       assert.equal(err.statusCode, 422);
       assert.equal(err.code, "AI_COURSE_INVALID");
       // Paths are in the canonical spelling: this JSON was the model's, not the instructor's.
-      assert.deepEqual(err.errors, ["metadata.title is required.", "modules: order 1 is used by both modules[0] and modules[1]. Sibling orders must be unique."]);
+      assert.deepEqual(err.errors, ["metadata.title is required.", "modules[1].title is required."]);
       return true;
     }
   );
