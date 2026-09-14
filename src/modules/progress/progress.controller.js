@@ -40,8 +40,13 @@ async function resolveStudentId(req) {
 async function markContentComplete(req, res, next) {
   try {
     const studentId = await resolveStudentId(req);
-    const { contentId, completed = true } = req.body;
-    const data = await progressService.completeContent(studentId, contentId, completed, req.user);
+    const { contentId, contentIds, completed = true } = req.body;
+    const data = await progressService.completeContent(
+      studentId,
+      Array.isArray(contentIds) && contentIds.length > 0 ? contentIds : contentId,
+      completed,
+      req.user
+    );
     res.json({
       success: true,
       message: completed ? 'Content marked as complete' : 'Content marked as incomplete',

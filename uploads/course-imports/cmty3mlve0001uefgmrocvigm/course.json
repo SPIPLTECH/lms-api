@@ -1,0 +1,123 @@
+{
+  "metadata": {
+    "title": "C Programming Fundamentals",
+    "description": "Master C programming concepts from basic syntax to memory pointers.",
+    "category": "Computer Science",
+    "level": "BEGINNER",
+    "language": "English",
+    "tags": [
+      "c",
+      "programming",
+      "coding"
+    ],
+    "estimatedLearningHours": 10,
+    "price": 0
+  },
+  "settings": {
+    "visibility": "PUBLIC",
+    "certificatesEnabled": true,
+    "discussionEnabled": true
+  },
+  "quizzes": [
+    {
+      "title": "C Programming Final Assessment",
+      "description": "Comprehensive course-level assessment covering C fundamentals.",
+      "passingScore": 60,
+      "timeLimit": 30,
+      "isPublished": true,
+      "questions": [
+        {
+          "question": "Which header file is required for printf()?",
+          "questionType": "MCQ_SINGLE",
+          "options": [
+            "<stdio.h>",
+            "<stdlib.h>",
+            "<string.h>",
+            "<math.h>"
+          ],
+          "correctAnswer": "<stdio.h>",
+          "explanation": "printf() is declared in stdio.h.",
+          "marks": 1,
+          "negativeMarks": 0,
+          "difficulty": "EASY"
+        },
+        {
+          "question": "Is C a compiled programming language?",
+          "questionType": "TRUE_FALSE",
+          "options": [
+            "True",
+            "False"
+          ],
+          "correctAnswer": "True",
+          "explanation": "C code is directly compiled into machine executable binaries.",
+          "marks": 1,
+          "difficulty": "EASY"
+        }
+      ]
+    }
+  ],
+  "modules": [
+    {
+      "title": "C Fundamentals",
+      "description": "First steps in writing C programs.",
+      "order": 1,
+      "isPublished": true,
+      "quizzes": [
+        {
+          "title": "Module 1 Quick Check",
+          "description": "Check understanding of basic C concepts.",
+          "passingScore": 60,
+          "timeLimit": 15,
+          "isPublished": true,
+          "questions": [
+            {
+              "question": "What is the entry point of a C program?",
+              "questionType": "MCQ_SINGLE",
+              "options": [
+                "start()",
+                "main()",
+                "run()",
+                "execute()"
+              ],
+              "correctAnswer": "main()",
+              "explanation": "Execution of a C program always begins from main().",
+              "marks": 1,
+              "difficulty": "EASY"
+            }
+          ]
+        }
+      ],
+      "lessons": [
+        {
+          "title": "Introduction to C",
+          "description": "Understanding compilation and basic structure.",
+          "order": 1,
+          "isPublished": true,
+          "topics": [
+            {
+              "title": "What is C?",
+              "description": "Overview of procedural programming.",
+              "order": 1,
+              "isPublished": true,
+              "contents": [
+                {
+                  "type": "HTML",
+                  "title": "Introduction to C Language",
+                  "order": 1,
+                  "htmlContent": "<h2>What is C?</h2><p>C is a low-level, high-efficiency compiled programming language.</p>"
+                },
+                {
+                  "type": "VIDEO",
+                  "title": "Writing Your First Hello World",
+                  "order": 2,
+                  "duration": 300,
+                  "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

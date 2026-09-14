@@ -1,11 +1,17 @@
 const Joi = require("joi");
 
 const completeContentSchema = Joi.object({
-  contentId: Joi.string().required().messages({
-    "any.required": "contentId is required",
+  // A merged "document" block in the player stands for several real Content
+  // rows, all completed together — contentIds carries that batch; contentId
+  // stays required for single-item callers so the common case still 400s
+  // with a clear message when it's missing.
+  contentId: Joi.string().optional().messages({
     "string.empty": "contentId cannot be empty"
   }),
+  contentIds: Joi.array().items(Joi.string()).min(1).optional(),
   completed: Joi.boolean().optional().default(true)
+}).or("contentId", "contentIds").messages({
+  "object.missing": "contentId is required"
 });
 
 const completeLessonSchema = Joi.object({

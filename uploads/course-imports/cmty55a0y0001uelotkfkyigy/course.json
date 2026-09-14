@@ -1,0 +1,52 @@
+{
+  "$schema": "https://orangetree.lms/schemas/course-v2.json",
+  "version": "2.0",
+  "metadata": {
+    "title": "Probe Course",
+    "description": "Structure probe",
+    "category": "Test",
+    "level": "BEGINNER",
+    "thumbnail": "assets/thumbnail.png",
+    "language": "English",
+    "tags": ["probe"],
+    "estimatedLearningHours": 1
+  },
+  "settings": { "visibility": "PUBLIC", "certificatesEnabled": true, "discussionEnabled": true },
+  "quizzes": [
+    { "title": "COURSE FINAL", "quizTag": "FINAL", "passingScore": 60, "timeLimit": 30,
+      "questions": [ { "question": "Course q?", "questionType": "MCQ_SINGLE", "options": ["a","b"], "correctAnswer": "a", "marks": 1 } ] }
+  ],
+  "contents": [ { "type": "HTML", "title": "COURSE DIRECT CONTENT", "order": 1, "htmlContent": "<p>course level</p>" } ],
+  "assignments": [ { "title": "COURSE DIRECT ASSIGNMENT", "description": "course level", "marks": 10 } ],
+  "modules": [
+    {
+      "title": "Module One", "order": 1, "isPublished": true,
+      "quizzes": [ { "title": "MODULE FINAL", "quizTag": "FINAL", "passingScore": 60, "timeLimit": 20,
+        "questions": [ { "question": "Mod q?", "questionType": "TRUE_FALSE", "options": ["True","False"], "correctAnswer": "True", "marks": 1 } ] } ],
+      "contents": [ { "type": "HTML", "title": "MODULE DIRECT CONTENT", "order": 1, "htmlContent": "<p>module level</p>" } ],
+      "assignments": [ { "title": "MODULE DIRECT ASSIGNMENT", "description": "module level", "marks": 10 } ],
+      "lessons": [
+        {
+          "title": "Lesson One", "order": 1, "isPublished": true,
+          "quizzes": [ { "title": "LESSON FINAL", "quizTag": "FINAL", "passingScore": 60, "timeLimit": 15,
+            "questions": [ { "question": "Les q?", "questionType": "MCQ_SINGLE", "options": ["x","y"], "correctAnswer": "x", "marks": 1 } ] } ],
+          "contents": [ { "type": "HTML", "title": "LESSON DIRECT CONTENT", "order": 1, "htmlContent": "<p>lesson level</p>" } ],
+          "assignments": [ { "title": "LESSON DIRECT ASSIGNMENT", "description": "lesson level", "marks": 10 } ],
+          "topics": [
+            {
+              "title": "Topic One", "order": 1, "isPublished": true,
+              "quiz": { "title": "TOPIC SELF TEST", "quizTag": "SELF_TEST", "passingScore": 50, "timeLimit": 99,
+                "questions": [ { "question": "Top q?", "questionType": "SELF_ASSESSMENT", "options": [], "correctAnswer": "", "marks": 1 } ] },
+              "assignments": [ { "title": "TOPIC ASSIGNMENT ARRAY", "description": "topic level", "marks": 10 } ],
+              "contents": [
+                { "type": "HTML", "title": "TOPIC CONTENT", "order": 1, "htmlContent": "<p>topic level</p>" },
+                { "type": "VIDEO", "title": "TOPIC VIDEO", "order": 2, "mediaFile": "assets/clip.mp4" },
+                { "type": "ASSIGNMENT", "title": "TOPIC ASSIGNMENT AS CONTENT", "order": 3, "htmlContent": "<p>Do this</p>" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

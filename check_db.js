@@ -1,7 +1,9 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+require("dotenv").config();
+const prisma = require("./src/config/database");
+
 async function main() {
-  const courses = await prisma.course.findMany();
-  console.log(JSON.stringify(courses, null, 2));
+  const users = await prisma.user.findFirst();
+  console.log("CONNECTED SUCCESS! Found user:", users?.email || "No users");
 }
-main().catch(console.error).finally(() => prisma.$disconnect());
+main().catch(err => console.error("CONNECTION ERROR:", err.message)).finally(() => prisma.$disconnect());
+

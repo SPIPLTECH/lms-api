@@ -3,6 +3,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const prisma = require("../../../config/database");
 const ApiError = require("../../../utils/ApiError");
+const { parseCourseJson, buildValidationReport, toDbQuizTag, LEVELS } = require("./flexibleCourseJson.service");
 
 /**
  * Validates that a relative package path is safe and does not escape the extracted job directory.
@@ -28,189 +29,26 @@ function isSafePackagePath(pkgPath) {
   return true;
 }
 
-const VALID_CONTENT_TYPES = new Set([
-  "VIDEO",
-  "DOCUMENT",
-  "TEXT",
-  "LINK",
-  "PRESENTATION",
-  "IMAGE",
-  "PDF",
-  "FILE",
-  "EXTERNAL_LINK",
-  "HTML",
-  "CODE",
-  "ASSIGNMENT",
-  "CODING_EXERCISE",
-  "SCORM",
-  "INTERACTIVE_LAB",
-  "AUDIO",
-  "EMBED",
-  "SLIDE"
-]);
-
-function validateQuizDef(quiz, prefix = "quiz") {
-  const quizErrors = [];
-  if (!quiz || typeof quiz !== "object") {
-    quizErrors.push(`${prefix}: Quiz item must be an object.`);
-    return quizErrors;
-  }
-  if (!quiz.title || typeof quiz.title !== "string" || !quiz.title.trim()) {
-    quizErrors.push(`${prefix}.title is required.`);
-  }
-  if (quiz.passingScore !== undefined && (typeof quiz.passingScore !== "number" || quiz.passingScore < 0 || quiz.passingScore > 100)) {
-    quizErrors.push(`${prefix}.passingScore must be a number between 0 and 100.`);
-  }
-  if (quiz.timeLimit !== undefined && quiz.timeLimit !== null && (typeof quiz.timeLimit !== "number" || quiz.timeLimit < 0)) {
-    quizErrors.push(`${prefix}.timeLimit must be a non-negative number.`);
-  }
-  if (quiz.questions !== undefined) {
-    if (!Array.isArray(quiz.questions)) {
-      quizErrors.push(`${prefix}.questions must be an array.`);
-    } else {
-      quiz.questions.forEach((q, qIndex) => {
-        const qPrefix = `${prefix}.questions[${qIndex}]`;
-        if (!q || typeof q !== "object") {
-          quizErrors.push(`${qPrefix}: Question item must be an object.`);
-          return;
-        }
-        if (!q.question || typeof q.question !== "string" || !q.question.trim()) {
-          quizErrors.push(`${qPrefix}.question is required.`);
-        }
-        if (!q.questionType || typeof q.questionType !== "string") {
-          quizErrors.push(`${qPrefix}.questionType is required.`);
-        } else {
-          const validTypes = new Set([
-            "MCQ_SINGLE", "MCQ_MULTI", "TRUE_FALSE", "FILL_BLANK",
-            "SHORT_ANSWER", "LONG_ANSWER", "ARRANGE_TOKENS", "MATCH_PAIRS", "SELF_ASSESSMENT"
-          ]);
-          if (!validTypes.has(q.questionType.toUpperCase())) {
-            quizErrors.push(`${qPrefix}.questionType "${q.questionType}" is not supported.`);
-          }
-        }
-        if (q.options !== undefined && q.options !== null && typeof q.options !== "object") {
-          quizErrors.push(`${qPrefix}.options must be an array or object.`);
-        }
-      });
-    }
-  }
-  return quizErrors;
-}
-
 /**
- * Validates Canonical Course JSON v2 schema structure.
- * 
+ * Validates course JSON in either the template or the V2 spelling. Every
+ * level and element is optional — see flexibleCourseJson.service.js.
+ *
  * @param {Object} courseJson Parsed course.json object
- * @returns {{ isValid: boolean, errors: Array<string> }}
+ * @returns {{ isValid: boolean, errors: Array<string>, warnings: Array<string> }}
  */
 function validateV2Manifest(courseJson) {
-  const errors = [];
+  const { isValid, errors, warnings } = parseCourseJson(courseJson);
+  return { isValid, errors, warnings };
+}
 
-  if (!courseJson || typeof courseJson !== "object") {
-    return { isValid: false, errors: ["Course JSON must be a valid object."] };
-  }
-
-  if (!courseJson.metadata || typeof courseJson.metadata !== "object") {
-    errors.push("metadata: Missing or invalid metadata object.");
-  } else if (!courseJson.metadata.title || typeof courseJson.metadata.title !== "string" || !courseJson.metadata.title.trim()) {
-    errors.push("metadata.title: Course title is required and cannot be empty.");
-  }
-
-  if (!courseJson.settings || typeof courseJson.settings !== "object") {
-    errors.push("settings: Missing or invalid settings object.");
-  }
-
-  // Validate Course-Level Quizzes (when present)
-  if (courseJson.quizzes !== undefined) {
-    if (!Array.isArray(courseJson.quizzes)) {
-      errors.push("quizzes: Must be an array.");
-    } else {
-      courseJson.quizzes.forEach((qz, qi) => {
-        errors.push(...validateQuizDef(qz, `quizzes[${qi}]`));
-      });
-    }
-  }
-
-  if (!Array.isArray(courseJson.modules)) {
-    errors.push("modules: Missing or invalid modules array.");
-  } else if (courseJson.modules.length === 0) {
-    errors.push("modules: At least one module is required in the course.");
-  } else {
-    courseJson.modules.forEach((mod, mi) => {
-      if (!mod || typeof mod !== "object") {
-        errors.push(`modules[${mi}]: Module item must be an object.`);
-        return;
-      }
-      if (!mod.title || typeof mod.title !== "string" || !mod.title.trim()) {
-        errors.push(`modules[${mi}].title is required.`);
-      }
-
-      // Validate Module-Level Quizzes (when present)
-      if (mod.quizzes !== undefined) {
-        if (!Array.isArray(mod.quizzes)) {
-          errors.push(`modules[${mi}].quizzes: Must be an array.`);
-        } else {
-          mod.quizzes.forEach((qz, qi) => {
-            errors.push(...validateQuizDef(qz, `modules[${mi}].quizzes[${qi}]`));
-          });
-        }
-      }
-
-      if (!Array.isArray(mod.lessons)) {
-        errors.push(`modules[${mi}].lessons: Lessons must be an array.`);
-      } else {
-        mod.lessons.forEach((les, li) => {
-          if (!les || typeof les !== "object") {
-            errors.push(`modules[${mi}].lessons[${li}]: Lesson item must be an object.`);
-            return;
-          }
-          if (!les.title || typeof les.title !== "string" || !les.title.trim()) {
-            errors.push(`modules[${mi}].lessons[${li}].title is required.`);
-          }
-
-          if (!Array.isArray(les.topics)) {
-            errors.push(`modules[${mi}].lessons[${li}].topics: Topics must be an array.`);
-          } else {
-            les.topics.forEach((top, ti) => {
-              if (!top || typeof top !== "object") {
-                errors.push(`modules[${mi}].lessons[${li}].topics[${ti}]: Topic item must be an object.`);
-                return;
-              }
-              if (!top.title || typeof top.title !== "string" || !top.title.trim()) {
-                errors.push(`modules[${mi}].lessons[${li}].topics[${ti}].title is required.`);
-              }
-
-              if (!Array.isArray(top.contents)) {
-                errors.push(`modules[${mi}].lessons[${li}].topics[${ti}].contents: Contents must be an array.`);
-              } else {
-                top.contents.forEach((cnt, ci) => {
-                  if (!cnt || typeof cnt !== "object") {
-                    errors.push(`modules[${mi}].lessons[${li}].topics[${ti}].contents[${ci}]: Content item must be an object.`);
-                    return;
-                  }
-                  if (!cnt.type || typeof cnt.type !== "string") {
-                    errors.push(`modules[${mi}].lessons[${li}].topics[${ti}].contents[${ci}].type is required.`);
-                  } else {
-                    const upperType = cnt.type.toUpperCase();
-                    if (!VALID_CONTENT_TYPES.has(upperType)) {
-                      errors.push(
-                        `modules[${mi}].lessons[${li}].topics[${ti}].contents[${ci}].type "${cnt.type}" is not a supported content type.`
-                      );
-                    }
-                  }
-                });
-              }
-            });
-          }
-        });
-      }
-    });
-  }
-
-  return {
-    isValid: errors.length === 0,
-    errors
+/** Calls `visit(entity, level)` for the course and every module, lesson and topic of a canonical course. */
+function forEachLevel(canonical, visit) {
+  const walk = (entity, level) => {
+    visit(entity, level);
+    const { childKey, childLevel } = LEVELS[level];
+    if (childKey) (entity[childKey] || []).forEach((child) => walk(child, childLevel));
   };
+  walk(canonical, "course");
 }
 
 /**
@@ -236,6 +74,7 @@ function prepareV2Assets(jobDir, courseJson) {
   const processLocalFile = (relPkgPath, subfolder) => {
     if (!relPkgPath || typeof relPkgPath !== "string") return;
     if (relPkgPath.startsWith("http://") || relPkgPath.startsWith("https://")) return;
+    if (relPkgPath.startsWith("/uploads/")) return; // already stored on this server
 
     if (!isSafePackagePath(relPkgPath)) {
       errors.push(`Security error: Dangerous asset package path '${relPkgPath}'`);
@@ -268,24 +107,18 @@ function prepareV2Assets(jobDir, courseJson) {
     }
   };
 
-  // 1. Check Thumbnail
-  if (courseJson.metadata && courseJson.metadata.thumbnail) {
-    processLocalFile(courseJson.metadata.thumbnail, "thumbnails");
-  }
+  // 1. Check Thumbnail (URLs are skipped by processLocalFile)
+  processLocalFile(courseJson.metadata?.thumbnail, "thumbnails");
+  processLocalFile(courseJson.metadata?.thumbnailUrl, "thumbnails");
 
-  // 2. Check Content Media Files
-  const modules = Array.isArray(courseJson.modules) ? courseJson.modules : [];
-  for (const mod of modules) {
-    for (const les of mod.lessons || []) {
-      for (const top of les.topics || []) {
-        for (const cnt of top.contents || []) {
-          if (cnt.mediaFile) {
-            processLocalFile(cnt.mediaFile, "contents");
-          }
-        }
+  // 2. Check Content Media Files, wherever the content sits
+  forEachLevel(courseJson, (entity) => {
+    for (const cnt of entity.contents || []) {
+      if (cnt && cnt.mediaFile) {
+        processLocalFile(cnt.mediaFile, "contents");
       }
     }
-  }
+  });
 
   return { copiedAssets, assetMap, errors };
 }
@@ -299,12 +132,12 @@ function prepareV2Assets(jobDir, courseJson) {
  * @returns {Promise<{ canonicalJson: Object, validationReport: Object }>}
  */
 async function processV2Package(jobDir, jobId, rawCourseJson) {
-  const validation = validateV2Manifest(rawCourseJson);
-  if (!validation.isValid) {
-    throw new ApiError(400, `Invalid V2 course.json package: ${validation.errors.join("; ")}`);
+  const parsed = parseCourseJson(rawCourseJson);
+  if (!parsed.isValid) {
+    throw new ApiError(400, `Invalid course.json package: ${parsed.errors.join("; ")}`, undefined, parsed.errors);
   }
 
-  const assetPrep = prepareV2Assets(jobDir, rawCourseJson);
+  const assetPrep = prepareV2Assets(jobDir, parsed.canonical);
   if (assetPrep.errors.length > 0) {
     throw new ApiError(400, `V2 Package Asset Error: ${assetPrep.errors.join("; ")}`);
   }
@@ -315,31 +148,21 @@ async function processV2Package(jobDir, jobId, rawCourseJson) {
     assetMapObj[k] = v;
   }
 
-  const canonicalJson = {
-    version: "2.0",
-    $schema: rawCourseJson.$schema,
-    metadata: rawCourseJson.metadata,
-    settings: rawCourseJson.settings,
-    quizzes: Array.isArray(rawCourseJson.quizzes) ? rawCourseJson.quizzes : [],
-    modules: rawCourseJson.modules,
-    assetMap: assetMapObj
-  };
+  const canonicalJson = { ...parsed.canonical, assetMap: assetMapObj };
 
-  const validationReport = {
-    isValid: true,
-    errors: [],
-    warnings: [],
-    info: [`V2 Package processed successfully with ${Object.keys(assetMapObj).length} local asset(s).`]
-  };
+  const validationReport = buildValidationReport(parsed);
+  validationReport.info.push(`Package processed with ${Object.keys(assetMapObj).length} local asset(s).`);
 
   return { canonicalJson, validationReport };
 }
 
 /**
- * Imports a processed V2 CoursePackage into the database inside an ATOMIC PRISMA TRANSACTION.
- * Preserves full hierarchy: Course -> Module -> Lesson -> Topic -> Content + Course/Module Quizzes & Questions.
+ * Imports course JSON into the database inside an ATOMIC PRISMA TRANSACTION.
+ * Content, quizzes and assignments are written at whichever level they sit —
+ * course, module, lesson or topic — and nothing is created that the JSON does
+ * not contain.
  *
- * @param {Object} job CourseImportJob Prisma model object
+ * @param {Object} canonicalJson Course JSON (template or V2 spelling)
  * @param {string} instructorId Authenticated user ID importing the course
  * @returns {Promise<Object>} Created course database object
  */
@@ -348,215 +171,211 @@ async function importV2Manifest(canonicalJson, instructorId) {
     throw new ApiError(400, "canonicalJson is missing.");
   }
 
-  const metadata = canonicalJson.metadata || {};
-  const settings = canonicalJson.settings || {};
-  const modules = Array.isArray(canonicalJson.modules) ? canonicalJson.modules : [];
-  const courseQuizzes = Array.isArray(canonicalJson.quizzes) ? canonicalJson.quizzes : [];
-  const assetMap = canonicalJson.assetMap || {};
-
-  // Resolve thumbnail server URL
-  let thumbnailUrl = null;
-  if (metadata.thumbnail) {
-    thumbnailUrl = assetMap[metadata.thumbnail] || null;
+  // The job was fully validated when it was ingested. What arrives here may be
+  // the draft Composer's edited copy, which owns its own IDs, so references and
+  // answer keys are not re-checked — only what the database itself requires.
+  const parsed = parseCourseJson(canonicalJson, { checkReferences: false, checkAnswerKeys: false });
+  if (!parsed.isValid) {
+    const shown = parsed.errors.slice(0, 3).join("; ");
+    const more = parsed.errors.length > 3 ? ` (and ${parsed.errors.length - 3} more)` : "";
+    throw new ApiError(400, `Course JSON validation failed: ${shown}${more}`, "COURSE_JSON_INVALID", parsed.errors);
   }
 
-  const rawModules = Array.isArray(modules) ? modules : [];
+  const course = parsed.canonical;
+  const { metadata, settings } = course;
+  const assetMap = course.assetMap || {};
+
+  // A package-relative path resolves through the asset map; a URL, or a file
+  // already stored on this server, is kept as given.
+  const resolveAssetRef = (ref) => {
+    if (typeof ref !== "string" || !ref.trim()) return null;
+    if (assetMap[ref]) return assetMap[ref];
+    return /^https?:\/\//i.test(ref) || ref.startsWith("/uploads/") ? ref : null;
+  };
 
   return await prisma.$transaction(async (tx) => {
     // 1. Create Course
     const courseRecord = await tx.course.create({
       data: {
-        title: metadata.title || "Imported Course",
+        title: metadata.title,
         description: metadata.description ?? null,
         category: metadata.category ?? null,
         level: metadata.level ?? null,
-        thumbnailUrl,
+        thumbnailUrl: resolveAssetRef(metadata.thumbnailUrl) || resolveAssetRef(metadata.thumbnail),
         status: "DRAFT",
-        visibility: settings?.visibility || "PUBLIC",
+        visibility: settings.visibility || "PUBLIC",
         language: metadata.language ?? null,
-          tags: Array.isArray(metadata.tags) ? metadata.tags : [],
-          certificatesEnabled: Boolean(settings?.certificatesEnabled),
-          discussionEnabled: Boolean(settings?.discussionEnabled),
-          
-          estimatedLearningHours: metadata.estimatedLearningHours ?? null,
-          creatorId: instructorId
-        }
+        tags: Array.isArray(metadata.tags) ? metadata.tags : [],
+        certificatesEnabled: settings.certificatesEnabled ?? false,
+        discussionEnabled: settings.discussionEnabled ?? true,
+        estimatedLearningHours: metadata.estimatedLearningHours ?? null,
+        creatorId: instructorId
+      }
+    });
+
+    // 2. Walk the hierarchy once, collecting one batch per table
+    const moduleRows = [];
+    const lessonRows = [];
+    const topicRows = [];
+    const contentRows = [];
+    const quizRows = [];
+    const questionRows = [];
+    const quizQuestionRows = [];
+    const assignmentRows = [];
+
+    // Content and assignments attach to exactly one parent (see
+    // contents/content.service.js and assignments/assignment.service.js).
+    const addContent = (contentDef, parent) => {
+      const mediaUrl = contentDef.mediaFile ? assetMap[contentDef.mediaFile] || null : null;
+      const isVideo = contentDef.type === "VIDEO";
+      contentRows.push({
+        type: contentDef.type,
+        title: contentDef.title ?? null,
+        order: contentDef.order,
+        duration: contentDef.duration ?? null,
+        htmlContent: contentDef.htmlContent ?? null,
+        videoUrl: mediaUrl && isVideo ? mediaUrl : contentDef.videoUrl ?? null,
+        fileUrl: mediaUrl && !isVideo ? mediaUrl : contentDef.fileUrl ?? contentDef.externalUrl ?? null,
+        externalUrl: contentDef.externalUrl ?? null,
+        data: contentDef.data ?? undefined,
+        ...parent
+      });
+    };
+
+    const addAssignment = (assignmentDef, parent) => {
+      const toDate = (value) => (value ? new Date(value) : null);
+      assignmentRows.push({
+        title: assignmentDef.title,
+        description: assignmentDef.description ?? null,
+        dueDate: new Date(assignmentDef.dueDate),
+        startDate: toDate(assignmentDef.startDate),
+        availableFrom: toDate(assignmentDef.availableFrom),
+        availableUntil: toDate(assignmentDef.availableUntil),
+        marks: assignmentDef.marks ?? null,
+        estimatedTime: assignmentDef.estimatedTime ?? 0,
+        totalQuestions: assignmentDef.totalQuestions ?? 0,
+        resources: assignmentDef.resources ?? 0,
+        assessmentType: assignmentDef.assessmentType ?? null,
+        attachments: assignmentDef.attachments ?? undefined,
+        isPublished: assignmentDef.isPublished ?? true,
+        ...parent
+      });
+    };
+
+    const addQuiz = (quizDef, { moduleId = null, lessonId = null, topicId = null }) => {
+      const quizId = crypto.randomUUID();
+      // SELF_TEST stays a Self-Test; every assessment tag (and no tag, as in
+      // packages authored before tags existed) is FINAL, which keeps timers.
+      const quizTag = toDbQuizTag(quizDef.quizTag);
+      quizRows.push({
+        id: quizId,
+        title: quizDef.title,
+        description: quizDef.description ?? null,
+        quizTag,
+        ...(Number.isInteger(quizDef.order) && { order: quizDef.order }),
+        passingScore: quizDef.passingScore ?? 50,
+        // A Self-Test is never timed, whatever the package claims.
+        timeLimit: quizTag === "SELF_TEST" ? null : quizDef.timeLimit ?? null,
+        isPublished: quizDef.isPublished ?? true,
+        status: "ACTIVE",
+        courseId: courseRecord.id,
+        moduleId,
+        lessonId,
+        topicId,
+        batchId: null
       });
 
-      // 2-5. Walk the Module -> Lesson -> Topic -> Content hierarchy once
-      const moduleRows = [];
-      const lessonRows = [];
-      const topicRows = [];
-      const contentRows = [];
-
-      // Quizzes & Questions collectors
-      const quizRows = [];
-      const questionRows = [];
-      const quizQuestionRows = [];
-
-      const processQuizDef = (quizDef, targetModuleId = null, targetLessonId = null, targetTopicId = null) => {
-        const quizId = crypto.randomUUID();
-        // Packages authored before quiz tags existed carry no quizTag and
-        // import as FINAL, preserving their timers. Read defensively so a
-        // future exporter that emits the tag needs no importer change.
-        const quizTag = quizDef.quizTag === "SELF_TEST" ? "SELF_TEST" : "FINAL";
-        quizRows.push({
-          id: quizId,
-          title: quizDef.title || "Imported Quiz",
-          description: quizDef.description ?? null,
-          quizTag,
-          passingScore: quizDef.passingScore !== undefined && quizDef.passingScore !== null ? Number(quizDef.passingScore) : 50,
-          // A Self-Test is never timed, whatever the package claims.
-          timeLimit: quizTag === "SELF_TEST" || quizDef.timeLimit === undefined || quizDef.timeLimit === null ? null : Number(quizDef.timeLimit),
-          isPublished: quizDef.isPublished !== undefined ? Boolean(quizDef.isPublished) : true,
-          status: "ACTIVE",
+      (quizDef.questions || []).forEach((qDef, qIdx) => {
+        const questionId = crypto.randomUUID();
+        questionRows.push({
+          id: questionId,
+          quizId: null,
           courseId: courseRecord.id,
-          moduleId: targetModuleId,
-          lessonId: targetLessonId,
-          topicId: targetTopicId,
-          batchId: null
+          moduleId,
+          question: qDef.question || "",
+          questionType: (qDef.questionType || "MCQ_SINGLE").toUpperCase(),
+          options: qDef.options ?? [],
+          correctAnswer: qDef.correctAnswer ?? "",
+          explanation: qDef.explanation ?? null,
+          marks: qDef.marks ?? 1,
+          negativeMarks: qDef.negativeMarks ?? 0,
+          difficulty: (qDef.difficulty || "MEDIUM").toUpperCase(),
+          createdBy: instructorId
         });
 
-        const questions = Array.isArray(quizDef.questions) ? quizDef.questions : [];
-        questions.forEach((qDef, qIdx) => {
-          const questionId = crypto.randomUUID();
-          questionRows.push({
-            id: questionId,
-            quizId: null,
-            courseId: courseRecord.id,
-            moduleId: targetModuleId,
-            question: qDef.question || "",
-            questionType: (qDef.questionType || "MCQ_SINGLE").toUpperCase(),
-            options: qDef.options ?? [],
-            correctAnswer: qDef.correctAnswer ?? "",
-            explanation: qDef.explanation ?? null,
-            marks: qDef.marks ? Number(qDef.marks) : 1,
-            negativeMarks: qDef.negativeMarks ? Number(qDef.negativeMarks) : 0,
-            difficulty: (qDef.difficulty || "MEDIUM").toUpperCase(),
-            createdBy: instructorId
-          });
-
-          quizQuestionRows.push({
-            id: crypto.randomUUID(),
-            quizId,
-            questionId,
-            order: qIdx + 1,
-            marks: qDef.marks ? Number(qDef.marks) : 1,
-            isMandatory: true
-          });
+        quizQuestionRows.push({
+          id: crypto.randomUUID(),
+          quizId,
+          questionId,
+          order: qIdx + 1,
+          marks: qDef.marks ?? 1,
+          isMandatory: true
         });
-      };
+      });
+    };
 
-      // Process Course-Level Quizzes
-      for (const courseQuizDef of courseQuizzes) {
-        processQuizDef(courseQuizDef, null, null, null);
-      }
+    const addLevelItems = (entity, parent, quizScope) => {
+      entity.contents.forEach((contentDef) => addContent(contentDef, parent));
+      entity.quizzes.forEach((quizDef) => addQuiz(quizDef, quizScope));
+      entity.assignments.forEach((assignmentDef) => addAssignment(assignmentDef, parent));
+    };
 
-      for (const moduleDef of rawModules) {
-        const moduleId = crypto.randomUUID();
-        moduleRows.push({
-          id: moduleId,
-          title: moduleDef.title || "Untitled Module",
-          description: moduleDef.description ?? null,
-          order: moduleDef.order ?? 0,
-          isPublished: Boolean(moduleDef.isPublished),
-          courseId: courseRecord.id
+    addLevelItems(course, { courseId: courseRecord.id }, {});
+
+    for (const moduleDef of course.modules) {
+      const moduleId = crypto.randomUUID();
+      moduleRows.push({
+        id: moduleId,
+        title: moduleDef.title,
+        description: moduleDef.description ?? null,
+        order: moduleDef.order,
+        isPublished: moduleDef.isPublished ?? false,
+        courseId: courseRecord.id
+      });
+      addLevelItems(moduleDef, { moduleId }, { moduleId });
+
+      for (const lessonDef of moduleDef.lessons) {
+        const lessonId = crypto.randomUUID();
+        lessonRows.push({
+          id: lessonId,
+          title: lessonDef.title,
+          description: lessonDef.description ?? null,
+          order: lessonDef.order,
+          isPublished: lessonDef.isPublished ?? false,
+          moduleId
         });
+        addLevelItems(lessonDef, { lessonId }, { moduleId, lessonId });
 
-        // Process Module-Level Quizzes
-        const modQuizzes = Array.isArray(moduleDef.quizzes) ? moduleDef.quizzes : [];
-        for (const modQuizDef of modQuizzes) {
-          processQuizDef(modQuizDef, moduleId, null, null);
-        }
-
-        const rawLessons = Array.isArray(moduleDef.lessons) ? moduleDef.lessons : [];
-        for (const lessonDef of rawLessons) {
-          const lessonId = crypto.randomUUID();
-          lessonRows.push({
-            id: lessonId,
-            title: lessonDef.title || "Untitled Lesson",
-            description: lessonDef.description ?? null,
-            order: lessonDef.order ?? 0,
-            isPublished: Boolean(lessonDef.isPublished),
-            moduleId
+        for (const topicDef of lessonDef.topics) {
+          const topicId = crypto.randomUUID();
+          topicRows.push({
+            id: topicId,
+            title: topicDef.title,
+            description: topicDef.description ?? null,
+            order: topicDef.order,
+            isPublished: topicDef.isPublished ?? false,
+            lessonId
           });
-
-          // Process Lesson-Level Quizzes
-          const lesQuizzes = Array.isArray(lessonDef.quizzes) ? lessonDef.quizzes : [];
-          for (const lesQuizDef of lesQuizzes) {
-            processQuizDef(lesQuizDef, moduleId, lessonId, null);
-          }
-
-          const rawTopics = Array.isArray(lessonDef.topics) ? lessonDef.topics : [];
-          for (const topicDef of rawTopics) {
-            const topicId = crypto.randomUUID();
-            topicRows.push({
-              id: topicId,
-              title: topicDef.title || "Untitled Topic",
-              description: topicDef.description ?? null,
-              order: topicDef.order ?? 0,
-              isPublished: Boolean(topicDef.isPublished),
-              lessonId
-            });
-
-            // Process Topic-Level Quiz (topicDef.quiz or topicDef.quizzes)
-            const topQuizDef = topicDef.quiz;
-            if (topQuizDef) {
-              processQuizDef(topQuizDef, moduleId, lessonId, topicId);
-            }
-            const topQuizzes = Array.isArray(topicDef.quizzes) ? topicDef.quizzes : [];
-            for (const topQDef of topQuizzes) {
-              processQuizDef(topQDef, moduleId, lessonId, topicId);
-            }
-
-            const rawContents = Array.isArray(topicDef.contents) ? topicDef.contents : [];
-            for (const contentDef of rawContents) {
-              let videoUrl = contentDef.videoUrl ?? null;
-              let fileUrl = contentDef.externalUrl ?? null;
-              const externalUrl = contentDef.externalUrl ?? null;
-
-              if (contentDef.mediaFile) {
-                const serverAssetUrl = assetMap[contentDef.mediaFile] || null;
-                if (contentDef.type === "VIDEO") {
-                  videoUrl = serverAssetUrl;
-                } else {
-                  fileUrl = serverAssetUrl;
-                }
-              }
-
-              contentRows.push({
-                type: contentDef.type || contentDef.contentType || "TEXT",
-                title: contentDef.title ?? null,
-                order: contentDef.order ?? 0,
-                duration: contentDef.duration ?? null,
-                htmlContent: contentDef.htmlContent ?? null,
-                videoUrl,
-                fileUrl,
-                externalUrl,
-                data: contentDef.data ?? undefined,
-                topicId
-              });
-            }
-          }
+          addLevelItems(topicDef, { topicId }, { moduleId, lessonId, topicId });
         }
       }
+    }
 
-      // One batched insert per level
-      if (moduleRows.length > 0) await tx.module.createMany({ data: moduleRows });
-      if (lessonRows.length > 0) await tx.lesson.createMany({ data: lessonRows });
-      if (topicRows.length > 0) await tx.topic.createMany({ data: topicRows });
-      if (contentRows.length > 0) await tx.content.createMany({ data: contentRows });
+    // 3. One batched insert per table, parents before children
+    if (moduleRows.length > 0) await tx.module.createMany({ data: moduleRows });
+    if (lessonRows.length > 0) await tx.lesson.createMany({ data: lessonRows });
+    if (topicRows.length > 0) await tx.topic.createMany({ data: topicRows });
+    if (contentRows.length > 0) await tx.content.createMany({ data: contentRows });
+    if (quizRows.length > 0) await tx.quiz.createMany({ data: quizRows });
+    if (questionRows.length > 0) await tx.question.createMany({ data: questionRows });
+    if (quizQuestionRows.length > 0) await tx.quizQuestion.createMany({ data: quizQuestionRows });
+    if (assignmentRows.length > 0) await tx.assignment.createMany({ data: assignmentRows });
 
-      // Insert Quiz, Question, and QuizQuestion rows
-      if (quizRows.length > 0) await tx.quiz.createMany({ data: quizRows });
-      if (questionRows.length > 0) await tx.question.createMany({ data: questionRows });
-      if (quizQuestionRows.length > 0) await tx.quizQuestion.createMany({ data: quizQuestionRows });
-
-      return courseRecord;
-    }, {
-      maxWait: 20000,
-      timeout: 60000
-    });
+    return courseRecord;
+  }, {
+    maxWait: 20000,
+    timeout: 60000
+  });
 }
 
 async function importV2Job(job, instructorId) {

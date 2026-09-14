@@ -97,12 +97,17 @@ const createLesson = async (
     });
 
     if (moduleRecord) {
-      notificationService.notifyEnrolledStudents(moduleRecord.courseId, {
-        title: "New Lesson Published 📚",
-        message: `A new lesson "${lesson.title}" has been added to your course "${moduleRecord.course.title}".`,
-        type: "LESSON_PUBLISHED",
-        link: `/courses/${moduleRecord.courseId}`
-      }).catch(err => console.error("Error sending lesson notification:", err.message));
+      notificationService.notifyEnrolledStudents(
+        moduleRecord.courseId,
+        {
+          title: "New Lesson Published 📚",
+          message: `A new lesson "${lesson.title}" has been added to your course "${moduleRecord.course.title}".`,
+          type: "LESSON_PUBLISHED",
+          link: `/courses/${moduleRecord.courseId}`
+        },
+        null,
+        `lesson_published_${lesson.id}`
+      ).catch(err => console.error("Error sending lesson notification:", err.message));
     }
   }
 
@@ -143,12 +148,17 @@ const updateLesson = async (
     });
 
     if (moduleRecord) {
-      notificationService.notifyEnrolledStudents(moduleRecord.courseId, {
-        title: "New Lesson Published 📚",
-        message: `A new lesson "${lesson.title}" has been added to your course "${moduleRecord.course.title}".`,
-        type: "LESSON_PUBLISHED",
-        link: `/courses/${moduleRecord.courseId}`
-      }).catch(err => console.error("Error sending lesson update notification:", err.message));
+      notificationService.notifyEnrolledStudents(
+        moduleRecord.courseId,
+        {
+          title: "New Lesson Published 📚",
+          message: `A new lesson "${lesson.title}" has been added to your course "${moduleRecord.course.title}".`,
+          type: "LESSON_PUBLISHED",
+          link: `/courses/${moduleRecord.courseId}`
+        },
+        null,
+        `lesson_published_${lesson.id}`
+      ).catch(err => console.error("Error sending lesson notification:", err.message));
     }
   }
 

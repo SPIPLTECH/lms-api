@@ -9,8 +9,10 @@ const { buildCanonicalCourse } = require("./jsonTransformer.service");
 const { validateCourse } = require("./validator.service");
 const composerMapper = require("./composerMapper.service");
 const serverQuizMapper = require("./serverQuizMapper.service");
+const { parseCourseJson, buildValidationReport, looksLikeCourseJson } = require("./flexibleCourseJson.service");
 
 const v2PackageImporter = require("./v2PackageImporter.service");
+const physicalPackageImporter = require("./physicalPackageImporter.service");
 const courseService = require("../../courses/course.service");
 const moduleService = require("../../modules/module.service");
 const lessonService = require("../../lessons/lesson.service");
@@ -44,31 +46,26 @@ const createJob = async ({ instructorId, sourceFileName, zipFilePath }) => {
   });
 };
 
-const createJsonJob = async ({ instructorId, canonicalJson, sourceFileName }) => {
-  const { validateV2Manifest } = require("./v2PackageImporter.service");
-  const validation = validateV2Manifest(canonicalJson);
+/**
+ * Validates course JSON (template or V2 spelling) and records it as a job.
+ * A valid job stores the canonical form, which is the same hierarchy with V2
+ * keys at every level; an invalid one keeps the JSON exactly as supplied.
+ */
+const createJsonJob = async ({ instructorId, canonicalJson, sourceFileName, extraWarnings = [] }) => {
+  const parsed = parseCourseJson(canonicalJson);
 
-  const title = canonicalJson?.metadata?.title || "Course JSON Package";
-  const name = sourceFileName || `${title.toLowerCase().replace(/[^a-z0-9]/g, "_")}.json`;
-
-  const validationReport = {
-    isValid: validation.isValid,
-    errors: validation.errors,
-    warnings: [],
-    info: validation.isValid
-      ? ["Course JSON schema validation passed successfully."]
-      : ["Course JSON validation failed."]
-  };
+  const title = parsed.canonical?.metadata?.title || "Course JSON Package";
+  const name = sourceFileName || `${String(title).toLowerCase().replace(/[^a-z0-9]/g, "_")}.json`;
 
   const job = await prisma.courseImportJob.create({
     data: {
       instructorId,
       sourceFileName: name,
       sourcePath: "json-import",
-      status: validation.isValid ? "READY" : "FAILED",
-      canonicalJson,
-      validationReport,
-      errorMessage: validation.isValid ? null : validation.errors.join("; ")
+      status: parsed.isValid ? "READY" : "FAILED",
+      canonicalJson: parsed.isValid ? parsed.canonical : canonicalJson,
+      validationReport: buildValidationReport(parsed, extraWarnings),
+      errorMessage: parsed.isValid ? null : parsed.errors.join("; ")
     }
   });
 
@@ -258,7 +255,7 @@ const processJob = async (jobId, baseUrl) => {
       });
     }
 
-    if (rawCourseJson && (rawCourseJson.metadata || rawCourseJson.modules || rawCourseJson.version === "2.0" || rawCourseJson.$schema?.includes("course-v2.json"))) {
+    if (looksLikeCourseJson(rawCourseJson) || rawCourseJson?.$schema?.includes("course-v2.json")) {
       await prisma.courseImportJob.update({ where: { id: jobId }, data: { status: "ANALYZING" } });
       try {
         if (!rawCourseJson.version) rawCourseJson.version = "2.0";
@@ -279,6 +276,41 @@ const processJob = async (jobId, baseUrl) => {
           data: { status: "FAILED", errorMessage: v2Err.message },
         });
       }
+    }
+  }
+
+  // No course.json: a package whose folders spell out the course hierarchy is
+  // parsed structurally rather than guessed at by the V1 heuristic scanner.
+  const physical = physicalPackageImporter.detectPhysicalPackage(jobDir);
+  if (physical.isPhysical) {
+    await prisma.courseImportJob.update({ where: { id: jobId }, data: { status: "ANALYZING" } });
+    try {
+      const result = await physicalPackageImporter.processPhysicalPackage(physical.rootDir, {
+        sourceFileName: job.sourceFileName,
+        courseTitleHint: physical.courseTitleHint,
+      });
+      return await prisma.courseImportJob.update({
+        where: { id: jobId },
+        data: {
+          status: "READY",
+          canonicalJson: result.canonicalJson,
+          validationReport: result.validationReport,
+        },
+      });
+    } catch (physicalErr) {
+      return prisma.courseImportJob.update({
+        where: { id: jobId },
+        data: {
+          status: "FAILED",
+          errorMessage: physicalErr.message,
+          validationReport: {
+            isValid: false,
+            errors: physicalErr.errors || [physicalErr.message],
+            warnings: [],
+            info: [],
+          },
+        },
+      });
     }
   }
 
@@ -349,6 +381,13 @@ const importJob = async (jobId, instructorId, fallbackCanonicalJson = null) => {
   }
   if (job.status === "IMPORTING") {
     return job;
+  }
+
+  // Physical packages carry their own marker and must be matched before the V2
+  // check below, whose `metadata` test would otherwise claim them.
+  if (job.canonicalJson?.packageFormat === "PHYSICAL_V1") {
+    await prisma.courseImportJob.update({ where: { id: jobId }, data: { status: "IMPORTING" } });
+    return await physicalPackageImporter.importPhysicalJob(job, instructorId);
   }
 
   // Check for V2 Package canonicalJson (has metadata, modules, or version)

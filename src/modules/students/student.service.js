@@ -210,25 +210,29 @@ const getStudents = async (user) => {
     })
   );
 
-  // What each student has done per course — items, not whole modules. Still
-  // used for module-by-module breakdown, "started", and assignment counts;
-  // the headline progress number below comes from Enrollment.progressPercent
-  // instead (see progressOf), so the directory always agrees with the
-  // student's own stored course progress.
+  // What each student has done per course — items, not whole modules. Used
+  // for module-by-module breakdown, "started", assignment counts, AND (below)
+  // the headline progress number itself.
   const standings = new Map(); // `${studentId}:${courseId}` -> treeStats
   for (const [key, rollup] of rollups) {
     standings.set(key, { courseId: rollup.courseId, ...treeStats(rollup.hierarchy) });
   }
 
-  // The same Enrollment.progressPercent the student's own My Courses card
-  // reads (src/utils/progressRollup.js) — authoritative per (student, course).
+  // Item-level progress (treeStats) is the Directory's headline number —
+  // Enrollment.progressPercent (and the student's own "My Courses" card,
+  // which reads the same value) counts each Module as one all-or-nothing
+  // unit toward the course total, so real in-progress work inside an
+  // unfinished module reads as 0%. Fall back to it only when the roll-up
+  // itself failed for that pair (see the `catch` above).
   const progressOf = new Map(); // `${studentId}:${courseId}` -> progressPercent
   const courseAverages = new Map(); // courseId -> { average, count }, for "Behind Average"
   for (const student of students) {
     for (const e of enrollmentsOf(student)) {
-      progressOf.set(`${student.id}:${e.courseId}`, e.progressPercent);
+      const key = `${student.id}:${e.courseId}`;
+      const progress = standings.get(key)?.progress ?? e.progressPercent;
+      progressOf.set(key, progress);
       const entry = courseAverages.get(e.courseId) || { sum: 0, count: 0 };
-      entry.sum += e.progressPercent;
+      entry.sum += progress;
       entry.count += 1;
       courseAverages.set(e.courseId, entry);
     }

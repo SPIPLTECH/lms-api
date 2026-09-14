@@ -40,7 +40,7 @@ function isAssignmentSubmissionComplete(submission) {
   return !!submission && ASSIGNMENT_COMPLETED_STATUSES.includes(submission.status);
 }
 
-async function recomputeCourseProgress(studentId, courseId, tx = null, options = {}) {
+async function computeCourseProgress(studentId, courseId, tx = null, options = {}) {
   const client = tx || prisma;
   const includeTree = options.includeTree === true;
   const persist = options.persist !== false;
@@ -160,6 +160,11 @@ async function recomputeCourseProgress(studentId, courseId, tx = null, options =
   const allContentIds = new Set();
   const allQuizMap = new Map(); // quizId -> passingScore
   const allAssignmentIds = new Set();
+  // Container ids scope the existing-progress lookups below to this course
+  // only, instead of every course the student has ever touched.
+  const allTopicIds = new Set();
+  const allLessonIds = new Set();
+  const allModuleIds = new Set();
 
   // Course direct
   course.contents.forEach((c) => allContentIds.add(c.id));
@@ -168,16 +173,19 @@ async function recomputeCourseProgress(studentId, courseId, tx = null, options =
 
   // Modules, Lessons, Topics
   for (const mod of course.modules) {
+    allModuleIds.add(mod.id);
     mod.contents.forEach((c) => allContentIds.add(c.id));
     mod.quizzes.forEach((q) => allQuizMap.set(q.id, q.passingScore));
     mod.assignments.forEach((a) => allAssignmentIds.add(a.id));
 
     for (const lesson of mod.lessons) {
+      allLessonIds.add(lesson.id);
       lesson.contents.forEach((c) => allContentIds.add(c.id));
       lesson.quizzes.forEach((q) => allQuizMap.set(q.id, q.passingScore));
       lesson.assignments.forEach((a) => allAssignmentIds.add(a.id));
 
       for (const topic of lesson.topics) {
+        allTopicIds.add(topic.id);
         topic.contents.forEach((c) => allContentIds.add(c.id));
         topic.quizzes.forEach((q) => allQuizMap.set(q.id, q.passingScore));
         topic.assignments.forEach((a) => allAssignmentIds.add(a.id));
@@ -185,99 +193,125 @@ async function recomputeCourseProgress(studentId, courseId, tx = null, options =
     }
   }
 
-  // 3. Fetch Ground Truth completions & visited states for Student
+  // 3. Fetch Ground Truth completions & visited states for Student, plus the
+  // existing container-progress rows needed to preserve completedAt/visitedAt.
+  // All eight lookups are independent of one another (each only depends on
+  // the id sets collected in step 2), so they run as ONE parallel batch
+  // instead of a chain of sequential round trips -- the dominant cost of a
+  // rollup on a remote database is round-trip latency, not query cost, so
+  // collapsing N sequential awaits into one Promise.all is the single
+  // biggest lever on wall-clock time here.
+  const quizIds = Array.from(allQuizMap.keys());
+  const assignmentIds = Array.from(allAssignmentIds);
+  const topicIds = Array.from(allTopicIds);
+  const lessonIds = Array.from(allLessonIds);
+  const moduleIds = Array.from(allModuleIds);
+
+  const [
+    cpRecords,
+    qsRecords,
+    qpRecords,
+    asRecords,
+    apRecords,
+    existingTopicProgresses,
+    existingLessonProgresses,
+    existingModuleProgresses
+  ] = await Promise.all([
+    allContentIds.size > 0
+      ? client.contentProgress.findMany({
+          where: { studentId, contentId: { in: Array.from(allContentIds) } },
+          select: { contentId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
+        })
+      : [],
+    quizIds.length > 0
+      ? client.quizSubmission.findMany({
+          where: { studentId, quizId: { in: quizIds } },
+          select: { quizId: true, passed: true, percentage: true, score: true, totalMarks: true, submittedAt: true }
+        })
+      : [],
+    quizIds.length > 0
+      ? client.quizProgress.findMany({
+          where: { studentId, quizId: { in: quizIds } },
+          select: { quizId: true, visited: true, visitedAt: true, completed: true, completedAt: true }
+        })
+      : [],
+    assignmentIds.length > 0
+      ? client.assignmentSubmission.findMany({
+          where: { studentId, assignmentId: { in: assignmentIds } },
+          select: { assignmentId: true, status: true, grade: true, submittedAt: true }
+        })
+      : [],
+    assignmentIds.length > 0
+      ? client.assignmentProgress.findMany({
+          where: { studentId, assignmentId: { in: assignmentIds } },
+          select: { assignmentId: true, visited: true, visitedAt: true, completed: true, completedAt: true }
+        })
+      : [],
+    topicIds.length > 0
+      ? client.topicProgress.findMany({
+          where: { studentId, topicId: { in: topicIds } },
+          select: { topicId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
+        })
+      : [],
+    lessonIds.length > 0
+      ? client.lessonProgress.findMany({
+          where: { studentId, lessonId: { in: lessonIds } },
+          select: { lessonId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
+        })
+      : [],
+    moduleIds.length > 0
+      ? client.moduleProgress.findMany({
+          where: { studentId, moduleId: { in: moduleIds } },
+          select: { moduleId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
+        })
+      : []
+  ]);
+
   // A. Content Progress
   const completedContentSet = new Set();
   const visitedContentSet = new Set();
   const contentProgressMap = new Map();
-  if (allContentIds.size > 0) {
-    const cpRecords = await client.contentProgress.findMany({
-      where: { studentId, contentId: { in: Array.from(allContentIds) } },
-      select: { contentId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
-    });
-    cpRecords.forEach((r) => {
-      contentProgressMap.set(r.contentId, r);
-      if (r.completed) completedContentSet.add(r.contentId);
-      if (r.visited) visitedContentSet.add(r.contentId);
-    });
-  }
+  cpRecords.forEach((r) => {
+    contentProgressMap.set(r.contentId, r);
+    if (r.completed) completedContentSet.add(r.contentId);
+    if (r.visited) visitedContentSet.add(r.contentId);
+  });
 
   // B. Quiz Progress & Submissions
   const completedQuizSet = new Set();
   const visitedQuizSet = new Set();
   const quizSubmissionMap = new Map();
   const quizProgressMap = new Map();
-  if (allQuizMap.size > 0) {
-    const quizIds = Array.from(allQuizMap.keys());
-    const [qsRecords, qpRecords] = await Promise.all([
-      client.quizSubmission.findMany({
-        where: { studentId, quizId: { in: quizIds } },
-        select: { quizId: true, passed: true, percentage: true, score: true, totalMarks: true, submittedAt: true }
-      }),
-      client.quizProgress.findMany({
-        where: { studentId, quizId: { in: quizIds } },
-        select: { quizId: true, visited: true, visitedAt: true, completed: true, completedAt: true }
-      })
-    ]);
-    qsRecords.forEach((qs) => {
-      quizSubmissionMap.set(qs.quizId, qs);
-      const minPassScore = allQuizMap.get(qs.quizId) || 0;
-      if (qs.passed || (qs.percentage !== undefined && qs.percentage >= minPassScore)) {
-        completedQuizSet.add(qs.quizId);
-      }
-    });
-    qpRecords.forEach((qp) => {
-      quizProgressMap.set(qp.quizId, qp);
-      if (qp.visited) visitedQuizSet.add(qp.quizId);
-      if (qp.completed) completedQuizSet.add(qp.quizId);
-    });
-  }
+  qsRecords.forEach((qs) => {
+    quizSubmissionMap.set(qs.quizId, qs);
+    const minPassScore = allQuizMap.get(qs.quizId) || 0;
+    if (qs.passed || (qs.percentage !== undefined && qs.percentage >= minPassScore)) {
+      completedQuizSet.add(qs.quizId);
+    }
+  });
+  qpRecords.forEach((qp) => {
+    quizProgressMap.set(qp.quizId, qp);
+    if (qp.visited) visitedQuizSet.add(qp.quizId);
+    if (qp.completed) completedQuizSet.add(qp.quizId);
+  });
 
   // C. Assignment Progress & Submissions
   const completedAssignmentSet = new Set();
   const visitedAssignmentSet = new Set();
   const assignmentSubmissionMap = new Map();
   const assignmentProgressMap = new Map();
-  if (allAssignmentIds.size > 0) {
-    const assignmentIds = Array.from(allAssignmentIds);
-    const [asRecords, apRecords] = await Promise.all([
-      client.assignmentSubmission.findMany({
-        where: { studentId, assignmentId: { in: assignmentIds } },
-        select: { assignmentId: true, status: true, grade: true, submittedAt: true }
-      }),
-      client.assignmentProgress.findMany({
-        where: { studentId, assignmentId: { in: assignmentIds } },
-        select: { assignmentId: true, visited: true, visitedAt: true, completed: true, completedAt: true }
-      })
-    ]);
-    asRecords.forEach((r) => {
-      assignmentSubmissionMap.set(r.assignmentId, r);
-      if (isAssignmentSubmissionComplete(r)) completedAssignmentSet.add(r.assignmentId);
-    });
-    apRecords.forEach((ap) => {
-      assignmentProgressMap.set(ap.assignmentId, ap);
-      if (ap.visited) visitedAssignmentSet.add(ap.assignmentId);
-      if (ap.completed) completedAssignmentSet.add(ap.assignmentId);
-    });
-  }
-
-  // Fetch existing topic/lesson/module progress to preserve completedAt & visitedAt
-  const existingTopicProgresses = await client.topicProgress.findMany({
-    where: { studentId },
-    select: { topicId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
+  asRecords.forEach((r) => {
+    assignmentSubmissionMap.set(r.assignmentId, r);
+    if (isAssignmentSubmissionComplete(r)) completedAssignmentSet.add(r.assignmentId);
   });
+  apRecords.forEach((ap) => {
+    assignmentProgressMap.set(ap.assignmentId, ap);
+    if (ap.visited) visitedAssignmentSet.add(ap.assignmentId);
+    if (ap.completed) completedAssignmentSet.add(ap.assignmentId);
+  });
+
   const topicProgressMap = new Map(existingTopicProgresses.map((tp) => [tp.topicId, tp]));
-
-  const existingLessonProgresses = await client.lessonProgress.findMany({
-    where: { studentId },
-    select: { lessonId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
-  });
   const lessonProgressMap = new Map(existingLessonProgresses.map((lp) => [lp.lessonId, lp]));
-
-  const existingModuleProgresses = await client.moduleProgress.findMany({
-    where: { studentId },
-    select: { moduleId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
-  });
   const moduleProgressMap = new Map(existingModuleProgresses.map((mp) => [mp.moduleId, mp]));
 
   const now = new Date();
@@ -302,6 +336,11 @@ async function recomputeCourseProgress(studentId, courseId, tx = null, options =
   const moduleVisitedAtMap = new Map();
 
   // 4. Roll up TOPIC Progress
+  // Every topic's completion depends only on its OWN contents/quizzes/
+  // assignments (never on a sibling topic), so all topic upserts are
+  // independent writes -- collected here and flushed with one Promise.all
+  // instead of one awaited round trip per topic.
+  const topicUpsertPromises = [];
   for (const mod of course.modules) {
     for (const lesson of mod.lessons) {
       for (const topic of lesson.topics) {
@@ -332,17 +371,24 @@ async function recomputeCourseProgress(studentId, courseId, tx = null, options =
         topicVisitedAtMap.set(topic.id, visitedAt);
 
         if (persist) {
-          await client.topicProgress.upsert({
-            where: { studentId_topicId: { studentId, topicId: topic.id } },
-            create: { studentId, topicId: topic.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
-            update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
-          });
+          topicUpsertPromises.push(
+            client.topicProgress.upsert({
+              where: { studentId_topicId: { studentId, topicId: topic.id } },
+              create: { studentId, topicId: topic.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
+              update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
+            })
+          );
         }
       }
     }
   }
+  if (persist) await Promise.all(topicUpsertPromises);
 
-  // 5. Roll up LESSON Progress
+  // 5. Roll up LESSON Progress -- same independence argument as topics: a
+  // lesson's completion never depends on a sibling lesson, so these upserts
+  // batch too. Must still run AFTER all topic upserts settle (already
+  // guaranteed above) since lesson completion reads topicCompletionStatus.
+  const lessonUpsertPromises = [];
   for (const mod of course.modules) {
     for (const lesson of mod.lessons) {
       const lessonContents = lesson.contents;
@@ -376,16 +422,21 @@ async function recomputeCourseProgress(studentId, courseId, tx = null, options =
       lessonVisitedAtMap.set(lesson.id, visitedAt);
 
       if (persist) {
-        await client.lessonProgress.upsert({
-          where: { studentId_lessonId: { studentId, lessonId: lesson.id } },
-          create: { studentId, lessonId: lesson.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
-          update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
-        });
+        lessonUpsertPromises.push(
+          client.lessonProgress.upsert({
+            where: { studentId_lessonId: { studentId, lessonId: lesson.id } },
+            create: { studentId, lessonId: lesson.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
+            update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
+          })
+        );
       }
     }
   }
+  if (persist) await Promise.all(lessonUpsertPromises);
 
-  // 6. Roll up MODULE Progress
+  // 6. Roll up MODULE Progress -- same batching, run after lessons settle
+  // since module completion reads lessonCompletionStatus.
+  const moduleUpsertPromises = [];
   for (const mod of course.modules) {
     const moduleContents = mod.contents;
     const moduleQuizzes = mod.quizzes;
@@ -418,13 +469,16 @@ async function recomputeCourseProgress(studentId, courseId, tx = null, options =
     moduleVisitedAtMap.set(mod.id, visitedAt);
 
     if (persist) {
-      await client.moduleProgress.upsert({
-        where: { studentId_moduleId: { studentId, moduleId: mod.id } },
-        create: { studentId, moduleId: mod.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
-        update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
-      });
+      moduleUpsertPromises.push(
+        client.moduleProgress.upsert({
+          where: { studentId_moduleId: { studentId, moduleId: mod.id } },
+          create: { studentId, moduleId: mod.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
+          update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
+        })
+      );
     }
   }
+  if (persist) await Promise.all(moduleUpsertPromises);
 
   // 7. Helper functions for mapping items and building direct item counts
   const mapContent = (c) => {
@@ -640,6 +694,48 @@ async function recomputeCourseProgress(studentId, courseId, tx = null, options =
   };
 
   return result;
+}
+
+/**
+ * Serializes concurrent rollups for the same (studentId, courseId) pair.
+ *
+ * completeContent/markVisited/completeLesson can all be in flight for the
+ * same student and course at once (e.g. the auto-visit fired when a block
+ * opens racing the "Mark as Complete" click for that same block, or a
+ * double-click before the mutation's own isPending guard commits). Each
+ * call independently reads Content/Quiz/Assignment ground truth, computes
+ * fresh Topic/Lesson/Module/Enrollment values, and writes them with no
+ * shared transaction -- two overlapping calls can interleave their reads
+ * and writes so that whichever call's write lands LAST wins the row, even
+ * if it was computed from an OLDER snapshot (a classic lost update). Since
+ * every one of these calls is independent, cheap, in-process bookkeeping
+ * (no cross-request state, no I/O), a simple per-key promise chain is
+ * enough to make them run one-at-a-time rather than interleaved, without
+ * touching how any individual rollup is computed. Calls for different
+ * students/courses never block each other.
+ *
+ * Only applies to the caller-owned-transaction-free path: a caller that
+ * passes its own `tx` already controls its own sequencing.
+ */
+const rollupChains = new Map();
+
+function runExclusive(key, fn) {
+  const tail = rollupChains.get(key) || Promise.resolve();
+  const settled = tail.then(fn, fn);
+  const chained = settled.then(
+    () => {},
+    () => {}
+  );
+  rollupChains.set(key, chained);
+  chained.finally(() => {
+    if (rollupChains.get(key) === chained) rollupChains.delete(key);
+  });
+  return settled;
+}
+
+async function recomputeCourseProgress(studentId, courseId, tx = null, options = {}) {
+  if (tx) return computeCourseProgress(studentId, courseId, tx, options);
+  return runExclusive(`${studentId}:${courseId}`, () => computeCourseProgress(studentId, courseId, tx, options));
 }
 
 /**

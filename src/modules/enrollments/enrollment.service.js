@@ -17,6 +17,10 @@ const getEnrollments = async (
 
   return await prisma.enrollment.findMany({
     where,
+    orderBy: [
+      { lastAccessedAt: { sort: "desc", nulls: "last" } },
+      { enrolledAt: "desc" }
+    ],
     include: {
       student: {
         include: {
@@ -107,7 +111,8 @@ const createEnrollment = async (
       title: "New Student Enrolled 🎓",
       message: `${enrollment.student.user.name} enrolled in your course "${enrollment.course.title}".`,
       type: "ENROLLMENT",
-      link: `/courses/${courseId}/students`
+      link: `/courses/${courseId}/students`,
+      eventId: `enrollment_${enrollment.id}`
     });
   } catch (error) {
     console.error("Error creating enrollment notification:", error.message);

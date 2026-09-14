@@ -156,6 +156,7 @@ model Course {
   creatorId              String
   createdAt              DateTime         @default(now())
   updatedAt              DateTime         @updatedAt
+  lastViewedAt           DateTime?
   certificates           Certificate[]
   creator                User             @relation(fields: [creatorId], references: [id], onDelete: Cascade)
   enrollments            Enrollment[]
@@ -648,8 +649,8 @@ model QuizAttempt {
   student          StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, quizId, attemptNumber])
-  @@index([studentId])
   @@index([quizId])
+  @@index([studentId])
 }
 
 model Certificate {
@@ -1003,12 +1004,15 @@ model Notification {
   message   String
   type      String
   link      String?
+  eventId   String?
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([userId, eventId])
+  @@unique([userId, eventId])
 }
 
 model StudentState {

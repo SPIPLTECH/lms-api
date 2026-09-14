@@ -1,6 +1,15 @@
+const cheerio = require("cheerio");
 const llmService = require("../../llm/llm.service");
-const { validateV2Manifest } = require("./v2PackageImporter.service");
 const ApiError = require("../../../utils/ApiError");
+const { elementToMarkdown } = require("../utils/markdownFromHtml.util");
+const courseJsonTemplate = require("../fixtures/course_json_template.json");
+const {
+  LEVELS,
+  QUIZ_TAG_TO_DB,
+  parseCourseJson,
+  getQuestionProblems,
+  looksLikeCourseJson,
+} = require("./flexibleCourseJson.service");
 
 const SYSTEM_PROMPT = `You are an expert LMS course content generator for Orange Tree LMS.
 Generate complete, valid course packages or entity structures for ANY subject area (Computer Science, Mathematics, Physics, Business, Marketing, Cybersecurity, History, Agriculture, Finance, Languages, Professional Training, etc.).
@@ -369,82 +378,6 @@ function normalizeQuizDef(quiz) {
   }
 }
 
-/** Repair missing optional metadata/settings if missing */
-function normalizeCourseJson(json) {
-  if (!json || typeof json !== "object") return json;
-
-  json.version = json.version || "2.0";
-
-  if (!json.metadata) json.metadata = {};
-  if (!json.metadata.title) json.metadata.title = "AI Generated Course";
-  if (!json.metadata.category) json.metadata.category = "Computer Science";
-  if (!json.metadata.level) json.metadata.level = "BEGINNER";
-  if (!json.metadata.language) json.metadata.language = "English";
-
-  if (!json.settings) {
-    json.settings = {
-      visibility: "PUBLIC",
-      certificatesEnabled: true,
-      discussionEnabled: true,
-      
-    };
-  }
-
-  if (!Array.isArray(json.quizzes)) json.quizzes = [];
-  json.quizzes.forEach(normalizeQuizDef);
-
-  if (!Array.isArray(json.modules)) json.modules = [];
-
-  // Normalize order & missing topics/contents
-  json.modules.forEach((mod, mIdx) => {
-    if (!mod.order) mod.order = mIdx + 1;
-    if (mod.isPublished === undefined) mod.isPublished = true;
-    if (!Array.isArray(mod.quizzes)) mod.quizzes = [];
-    mod.quizzes.forEach(normalizeQuizDef);
-    if (!Array.isArray(mod.lessons)) mod.lessons = [];
-
-    mod.lessons.forEach((les, lIdx) => {
-      if (!les.order) les.order = lIdx + 1;
-      if (les.isPublished === undefined) les.isPublished = true;
-
-      if (!Array.isArray(les.topics) || les.topics.length === 0) {
-        les.topics = [{ title: "General", order: 1, isPublished: true, contents: [] }];
-      }
-
-      les.topics.forEach((top, tIdx) => {
-        if (!top.order) top.order = tIdx + 1;
-        if (top.isPublished === undefined) top.isPublished = true;
-
-        if (!Array.isArray(top.contents)) top.contents = [];
-        top.contents = top.contents.filter((cnt) => {
-          if (!cnt || typeof cnt !== "object") return false;
-          if (cnt.type?.toUpperCase() === "QUIZ") {
-            const qz = {
-              title: cnt.title || "Module Quiz",
-              description: cnt.description || "Quiz auto-relocated from topic",
-              passingScore: 60,
-              timeLimit: 15,
-              isPublished: true,
-              questions: Array.isArray(cnt.questions) ? cnt.questions : [],
-            };
-            normalizeQuizDef(qz);
-            mod.quizzes.push(qz);
-            return false;
-          }
-          return true;
-        });
-
-        top.contents.forEach((cnt, cIdx) => {
-          if (!cnt.order) cnt.order = cIdx + 1;
-          if (cnt.type) cnt.type = cnt.type.toUpperCase();
-        });
-      });
-    });
-  });
-
-  return json;
-}
-
 // --- MODULE generation: bounded-concurrency, multi-request pipeline ---
 //
 // A single MODULE request previously asked Gemini for the ENTIRE hierarchy
@@ -715,17 +648,308 @@ ${context && Object.keys(context).length > 0 ? JSON.stringify(context, null, 2) 
   };
 };
 
-const generateCourseFromPrompt = async ({ prompt, scope = "COURSE", context = {} }) => {
+// --- COURSE generation: template-driven ---
+//
+// A whole course is written in the course JSON template's format — the
+// built-in fixtures/course_json_template.json, or a template the instructor
+// supplies — and then passes the same flexible validation as an imported
+// file. The template teaches HOW the JSON looks; the request decides WHAT the
+// course contains, so nothing in the template is treated as required.
+
+const COURSE_TEMPLATE_RULES = `You are an expert LMS course author for Orange Tree LMS. Write one course as JSON, for ANY subject area.
+
+OUTPUT
+- Raw JSON only. No markdown fences, commentary or reasoning text.
+
+FORMAT — learn it from the REFERENCE TEMPLATE at the end
+- Follow the template's field names, nesting, content / quiz / assignment shapes, ID reference style, ordering and quizTag conventions.
+- The template is an EXAMPLE of how course JSON looks. It deliberately shows every supported element. It is NOT a list of elements every course must have, and its subject and size are irrelevant.
+
+STRUCTURE — decide it from the instructor's request
+- Every level and every element is optional. Include only what the request asks for or clearly implies.
+- A "content" array may sit on the course, a module, a lesson or a topic.
+- A module may have content and no lessons. A lesson may have content and no topics. Modules in one course may be structured differently.
+- Do NOT add topics, quizzes or assignments unless the request asks for them, or asks for a complete/comprehensive course with assessments.
+- When the request gives counts (e.g. "3 modules, each with 2 lessons"), match them exactly.
+
+CONVENTIONS
+- "course": "title" (required), "description", "category", "level" ("Beginner" | "Intermediate" | "Advanced"), "language", "tags", "estimatedLearningHours". "status" is always "DRAFT".
+- "order" is 1-based and unique among siblings (modules, lessons, topics, content items).
+- IDs follow the template's reference style: "courseId" on modules, "moduleId" on lessons, "lessonId" on topics, and the ancestor IDs on every quiz and assignment ("topicId" too when it belongs to a topic). Use short snake_case IDs, identical everywhere they appear.
+- "quiz" (one per level, only when wanted): "title", "quizTag", "passingScore" (0-100), "questions". quizTag by level: topic "SELF_TEST", lesson "LESSON_ASSESSMENT", module "MODULE_ASSESSMENT", course "COURSE_ASSESSMENT".
+- "assignment" (one per level, only when wanted): "title", "description", "marks", "assessmentType" ("EXERCISE"), "estimatedTime" (minutes), "dueDate" (ISO 8601, after {{TODAY}}, later for later parts of the course).
+- HTML content may omit "data"; the server derives data.markdown from "htmlContent".`;
+
+const QUIZ_TAG_FOR_LEVEL = { course: "COURSE_ASSESSMENT", module: "MODULE_ASSESSMENT", lesson: "LESSON_ASSESSMENT", topic: "SELF_TEST" };
+const CONTENT_TYPE_ALIASES = { TEXT: "HTML", TEXT_BLOCK: "HTML", MARKDOWN: "HTML", CODE_BLOCK: "CODE", SNIPPET: "CODE" };
+const REF_KEYS = Object.values(LEVELS).map((level) => level.refKey);
+
+/**
+ * Shrinks a template to what the model needs to learn its conventions: lists
+ * of objects keep their first few entries and long text is cut. Lists of plain
+ * values (options, tags) are kept whole so their shape is not misread.
+ */
+function compactTemplate(value, { maxItems, maxText = 240 }) {
+  if (Array.isArray(value)) {
+    const items = value.some((item) => item && typeof item === "object") ? value.slice(0, maxItems) : value;
+    return items.map((item) => compactTemplate(item, { maxItems, maxText }));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, compactTemplate(item, { maxItems, maxText })]));
+  }
+  if (typeof value === "string" && value.length > maxText) return `${value.slice(0, maxText)}…`;
+  return value;
+}
+
+/**
+ * The template to follow: an explicit `template` (object or JSON text), else a
+ * course JSON object pasted into the prompt itself, else the built-in one.
+ * A template pasted into the prompt is removed from the instruction text.
+ */
+function resolveCourseTemplate(prompt, template) {
+  if (template !== undefined && template !== null && template !== "") {
+    let parsed = template;
+    if (typeof template === "string") {
+      try {
+        parsed = JSON.parse(stripMarkdownCodeFences(template));
+      } catch (err) {
+        throw new ApiError(400, `The supplied template is not valid JSON: ${err.message}`);
+      }
+    }
+    if (!looksLikeCourseJson(parsed)) {
+      throw new ApiError(400, "The supplied template does not look like course JSON (expected keys such as \"course\", \"content\" or \"modules\").");
+    }
+    return { instruction: prompt.trim(), template: parsed, supplied: true };
+  }
+
+  const start = prompt.indexOf("{");
+  const end = prompt.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try {
+      const pasted = JSON.parse(prompt.slice(start, end + 1));
+      if (looksLikeCourseJson(pasted)) {
+        const instruction = `${prompt.slice(0, start)}\n${prompt.slice(end + 1)}`.trim() || "Create a course using this template.";
+        return { instruction, template: pasted, supplied: true };
+      }
+    } catch (err) {
+      // Braces in an ordinary prompt are not a template.
+    }
+  }
+
+  return { instruction: prompt.trim(), template: courseJsonTemplate, supplied: false };
+}
+
+function buildCourseSystemPrompt({ template, supplied }, today) {
+  const reference = JSON.stringify(compactTemplate(template, { maxItems: supplied ? 2 : 1 }), null, 1);
+  const heading = supplied
+    ? "REFERENCE TEMPLATE (supplied by the instructor — follow its conventions, not its subject or size)"
+    : "REFERENCE TEMPLATE (built-in example)";
+  return [COURSE_TEMPLATE_RULES.replace("{{TODAY}}", today), CONTENT_GUIDANCE, QUESTION_SCHEMA, `${heading}:\n${reference}`].join("\n\n");
+}
+
+function htmlToMarkdown(html) {
+  const $ = cheerio.load(html, null, false);
+  const blocks = $.root().children().map((i, el) => elementToMarkdown($(el), $)).get().filter((block) => block && block.trim());
+  return blocks.length > 0 ? blocks.join("\n\n") : $.root().text().trim();
+}
+
+const slugify = (text) =>
+  String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .split("_")
+    .filter(Boolean)
+    .slice(0, 3)
+    .join("_");
+
+/**
+ * Brings model output in line with the template's conventions so it can pass
+ * the same validation as an imported file. Only the model's own output is
+ * touched: IDs are re-derived from the nesting (the model is not trusted to
+ * keep them consistent), missing quiz tags follow the level, questions whose
+ * answer key does not match their options are dropped, and assignments
+ * without a usable due date get one. Every change that affects what the
+ * instructor sees is reported back as a warning.
+ */
+function repairGeneratedCourse(course, { context = {}, now = new Date() } = {}) {
+  const warnings = [];
+  const { metadata } = course;
+
+  metadata.status = "DRAFT";
+  if (!metadata.level && context.level) metadata.level = context.level;
+  if (!metadata.language && context.language) metadata.language = context.language;
+
+  const slug = slugify((Array.isArray(metadata.tags) && metadata.tags[0]) || metadata.category || metadata.title) || "course";
+  const counters = { module: 0, lesson: 0, topic: 0 };
+  let assignmentCount = 0;
+
+  const setRefs = (obj, scopeIds) => {
+    REF_KEYS.forEach((key) => delete obj[key]);
+    Object.assign(obj, scopeIds);
+  };
+
+  const repairContent = (item) => {
+    const type = String(item.type || "HTML").toUpperCase();
+    item.type = CONTENT_TYPE_ALIASES[type] || type;
+    if (!item.htmlContent && typeof item.code === "string") item.htmlContent = item.code;
+    if (item.type === "CODE" && typeof item.language === "string" && item.language.trim() && !item.data) {
+      item.data = { language: item.language.trim().toLowerCase() };
+    }
+    if (item.type === "HTML" && typeof item.htmlContent === "string" && item.htmlContent.trim() && !item.data) {
+      item.data = { blockType: "text", title: item.title || "", cssStyles: "", markdown: htmlToMarkdown(item.htmlContent) };
+    }
+  };
+
+  const repairQuizzes = (entity, level, scopeIds) => {
+    entity.quizzes = entity.quizzes.filter((quiz) => {
+      setRefs(quiz, scopeIds);
+      const tag = String(quiz.quizTag || "").toUpperCase();
+      quiz.quizTag = QUIZ_TAG_TO_DB[tag] ? tag : QUIZ_TAG_FOR_LEVEL[level];
+      normalizeQuizDef(quiz);
+      if (quiz.quizTag === "SELF_TEST") delete quiz.timeLimit;
+
+      quiz.questions = quiz.questions.filter((question) => {
+        const problems = getQuestionProblems(question);
+        if (problems.length === 0) return true;
+        warnings.push(`Removed question "${String(question.question || "").slice(0, 60)}" from quiz "${quiz.title}": ${problems[0]}.`);
+        return false;
+      });
+      if (quiz.questions.length > 0) return true;
+      warnings.push(`Removed quiz "${quiz.title}" because none of its questions had a usable answer key.`);
+      return false;
+    });
+  };
+
+  const repairAssignments = (entity, scopeIds) => {
+    entity.assignments.forEach((assignment) => {
+      setRefs(assignment, scopeIds);
+      assignmentCount += 1;
+      if (typeof assignment.dueDate !== "string" || Number.isNaN(Date.parse(assignment.dueDate))) {
+        const due = new Date(now);
+        due.setUTCDate(due.getUTCDate() + 7 * assignmentCount);
+        due.setUTCHours(23, 59, 0, 0);
+        assignment.dueDate = due.toISOString();
+        warnings.push(`Assignment "${assignment.title}" had no valid due date; it was set to ${assignment.dueDate.slice(0, 10)}. Review it after the course is created.`);
+      }
+    });
+  };
+
+  const walk = (entity, level, scopeIds) => {
+    let ownIds = scopeIds;
+    if (level !== "course") {
+      counters[level] += 1;
+      const ownId = `${slug}_${level === "module" ? "mod" : level}_${counters[level]}`;
+      // A node carries its parent's ID (template style); its own ID is what its descendants refer to.
+      setRefs(entity, Object.fromEntries(Object.entries(scopeIds).slice(-1)));
+      delete entity.id;
+      ownIds = { ...scopeIds, [LEVELS[level].refKey]: ownId };
+    }
+
+    entity.contents.forEach(repairContent);
+    repairQuizzes(entity, level, ownIds);
+    repairAssignments(entity, ownIds);
+
+    const { childKey, childLevel } = LEVELS[level];
+    if (childKey) entity[childKey].forEach((child) => walk(child, childLevel, ownIds));
+  };
+  walk(course, "course", { courseId: `course_${slug}` });
+
+  return warnings;
+}
+
+async function requestCourseJson(systemPrompt, userPrompt, { context, size }) {
+  let llmResult;
+  try {
+    llmResult = await llmService.generate({ systemPrompt, prompt: userPrompt, context, think: false, size });
+  } catch (err) {
+    throw toGeminiApiError(err, "COURSE");
+  }
+
+  const rawResponse = llmResult.response || "";
+  if (!rawResponse.trim()) {
+    const emptyErr = new Error(`Response text was empty (finishReason=${llmResult.finishReason || "UNKNOWN"}).`);
+    emptyErr.code = "GEMINI_EMPTY_RESPONSE";
+    emptyErr.statusCode = 502;
+    emptyErr.finishReason = llmResult.finishReason;
+    throw toGeminiApiError(emptyErr, "COURSE");
+  }
+
+  try {
+    const parsed = JSON.parse(stripMarkdownCodeFences(rawResponse));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    throw new Error("top-level value is not an object");
+  } catch (parseErr) {
+    console.error(`[AI Gen] COURSE malformed JSON (finishReason=${llmResult.finishReason || "?"}):`, rawResponse.slice(0, 300));
+    const invalidJsonErr = new Error(`AI response was not valid course JSON (${parseErr.message}).`);
+    invalidJsonErr.code = "GEMINI_INVALID_JSON";
+    invalidJsonErr.statusCode = 502;
+    throw toGeminiApiError(invalidJsonErr, "COURSE");
+  }
+}
+
+/**
+ * Generates a whole course in the template's format.
+ *
+ * @param {object} params
+ * @param {string} params.prompt Instructor request; may contain a pasted course JSON template.
+ * @param {object} [params.context] UI choices (size, level, language, targetAudience).
+ * @param {object|string} [params.template] Course JSON to follow instead of the built-in template.
+ * @returns {Promise<{ canonical: object, warnings: string[] }>} Validated canonical course plus what was repaired.
+ */
+const generateCourse = async ({ prompt, context = {}, template, now = new Date() }) => {
+  if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+    throw new ApiError(400, "Please provide a valid text prompt for course generation.");
+  }
+
   const requestStartTime = Date.now();
+  const resolved = resolveCourseTemplate(prompt, template);
+  const size = String(context.size || "LARGE").toUpperCase();
+  const systemPrompt = buildCourseSystemPrompt(resolved, now.toISOString().slice(0, 10));
+  const userPrompt = `CREATION SCOPE:
+COURSE
+
+INSTRUCTOR REQUEST:
+${resolved.instruction}
+
+REQUESTED SIZE: ${size}
+
+EXISTING CONTEXT & SIBLING DETAILS:
+${Object.keys(context).length > 0 ? JSON.stringify(context, null, 2) : "None"}`;
+
+  console.log(`[AI Gen] COURSE generation started (size=${size}, ${resolved.supplied ? "supplied" : "built-in"} template, system prompt ${systemPrompt.length} chars)`);
+  const generated = await requestCourseJson(systemPrompt, userPrompt, { context, size });
+
+  // Read the model's output leniently first, so repairs can run on the
+  // canonical shape; the final parse below is the full, strict validation.
+  const draft = parseCourseJson(generated, { checkReferences: false, checkAnswerKeys: false }).canonical;
+  const warnings = repairGeneratedCourse(draft, { context, now });
+  const result = parseCourseJson(draft);
+
+  if (!result.isValid) {
+    console.warn("[AI Gen] COURSE output failed validation:", result.errors);
+    const shown = result.errors.slice(0, 3).join("; ");
+    throw new ApiError(422, `The generated course did not pass validation: ${shown}`, "AI_COURSE_INVALID", result.errors);
+  }
+
+  console.log(`[AI Gen] COURSE generation complete in ${Date.now() - requestStartTime} ms — ${JSON.stringify(result.summary)}`);
+  return { canonical: result.canonical, warnings };
+};
+
+const generateCourseFromPrompt = async ({ prompt, scope = "COURSE", context = {} }) => {
   if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
     throw new ApiError(400, "Please provide a valid text prompt for course generation.");
   }
 
   const scopeUpper = (scope || "COURSE").toUpperCase();
 
+  if (scopeUpper === "COURSE") {
+    const { canonical } = await generateCourse({ prompt, context });
+    return canonical;
+  }
+
   // MODULE generation runs the bounded-concurrency multi-request pipeline
-  // above instead of the single-call path below — every other scope
-  // (LESSON/TOPIC/CONTENT/QUIZ/COURSE) is unaffected.
+  // above instead of the single-call path below — every other entity scope
+  // (LESSON/TOPIC/CONTENT/QUIZ) is unaffected.
   if (scopeUpper === "MODULE") {
     return await generateModuleInParallel({ prompt, context });
   }
@@ -813,27 +1037,8 @@ ${context && Object.keys(context).length > 0 ? JSON.stringify(context, null, 2) 
   const parseDuration = Date.now() - parseStartTime;
   console.log(`[AI Gen] JSON parsed: ${parseDuration} ms`);
 
-  if (scope && scope.toUpperCase() !== "COURSE") {
-    console.log(`[AI Gen] Returning generated payload for scope: ${scope}`);
-    return parsedJson;
-  }
-
-  const validationStartTime = Date.now();
-  const normalizedJson = normalizeCourseJson(parsedJson);
-
-  const validation = validateV2Manifest(normalizedJson);
-  if (!validation.isValid) {
-    console.warn("AI Generated Course failed validation:", validation.errors);
-    throw new ApiError(422, `Generated course structure is invalid: ${validation.errors.join("; ")}`);
-  }
-
-  const validationDuration = Date.now() - validationStartTime;
-  console.log(`[AI Gen] validateV2Manifest completed: ${validationDuration} ms`);
-
-  const totalDuration = Date.now() - requestStartTime;
-  console.log(`[AI Gen] Total AI generation for size [${courseSize}]: ${totalDuration} ms`);
-
-  return normalizedJson;
+  console.log(`[AI Gen] Returning generated payload for scope: ${scopeUpper}`);
+  return parsedJson;
 };
 
-module.exports = { generateCourseFromPrompt };
+module.exports = { generateCourseFromPrompt, generateCourse, repairGeneratedCourse, resolveCourseTemplate };

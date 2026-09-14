@@ -1,6 +1,7 @@
 const courseImporterService = require("../services/courseImporter.service");
 const aiCourseGeneratorService = require("../services/aiCourseGenerator.service");
 const ApiError = require("../../../utils/ApiError");
+const courseJsonTemplate = require("../fixtures/course_json_template.json");
 
 const uploadPackage = async (req, res, next) => {
   try {
@@ -89,21 +90,22 @@ const processJsonJob = async (req, res, next) => {
   try {
     let canonicalJson = null;
     let sourceFileName = "course.json";
+    let extraWarnings = [];
 
     if (req.body?.prompt && typeof req.body.prompt === "string" && req.body.prompt.trim()) {
       sourceFileName = "ai_generated_course.json";
+      const scope = String(req.body.scope || "COURSE").toUpperCase();
       console.log("[AI DEBUG] AI GENERATION START");
       const aiStart = Date.now();
-      canonicalJson = await aiCourseGeneratorService.generateCourseFromPrompt({
-        prompt: req.body.prompt,
-        scope: req.body.scope || "COURSE",
-        context: req.body.context || {},
-      });
-      console.log(`[AI DEBUG] AI GENERATION END: ${Date.now() - aiStart} ms`);
 
       // For entity-level scope generations (MODULE, LESSON, TOPIC, CONTENT, QUIZ),
       // return the generated JSON directly to the frontend without validating against full course schema.
-      if (req.body?.scope && req.body.scope !== "COURSE") {
+      if (scope !== "COURSE") {
+        canonicalJson = await aiCourseGeneratorService.generateCourseFromPrompt({
+          prompt: req.body.prompt,
+          scope,
+          context: req.body.context || {},
+        });
         console.log(`[AI DEBUG] AI ENTITY GENERATION SUCCESS | TOTAL REQUEST: ${Date.now() - reqStartTime} ms`);
         return res.status(200).json({
           success: true,
@@ -111,6 +113,17 @@ const processJsonJob = async (req, res, next) => {
           canonicalJson,
         });
       }
+
+      // A whole course follows the supplied template (or the built-in one) and
+      // is validated like any imported JSON before it reaches the preview.
+      const generated = await aiCourseGeneratorService.generateCourse({
+        prompt: req.body.prompt,
+        context: req.body.context || {},
+        template: req.body.template,
+      });
+      canonicalJson = generated.canonical;
+      extraWarnings = generated.warnings;
+      console.log(`[AI DEBUG] AI GENERATION END: ${Date.now() - aiStart} ms`);
     } else if (req.file) {
       sourceFileName = req.file.originalname;
       const rawText = stripMarkdownCodeFences(req.file.buffer.toString("utf-8"));
@@ -139,14 +152,15 @@ const processJsonJob = async (req, res, next) => {
             : `Invalid JSON text syntax: ${parseErr.message}`,
           errors: [
             isNaturalLanguage 
-              ? "This doesn't appear to be JSON. If you want to generate course JSON, use ChatGPT, Claude, Gemini, or another AI assistant and ask it to follow the Orange Tree LMS Course JSON v2 format."
+              ? "This doesn't appear to be JSON. If you want to generate course JSON, use ChatGPT, Claude, Gemini, or another AI assistant and ask it to follow the Orange Tree LMS course JSON template."
               : `JSON Syntax Error: ${parseErr.message}`
           ],
         });
       }
-    } else if (req.body?.metadata) {
-      canonicalJson = req.body;
-      sourceFileName = req.body.sourceFileName || "course.json";
+    } else if (req.body?.metadata || req.body?.course) {
+      const { sourceFileName: bodyFileName, ...courseJson } = req.body;
+      canonicalJson = courseJson;
+      sourceFileName = bodyFileName || "course.json";
     } else {
       return res.status(400).json({
         success: false,
@@ -163,6 +177,7 @@ const processJsonJob = async (req, res, next) => {
         instructorId: req.user.id,
         canonicalJson,
         sourceFileName,
+        extraWarnings,
       });
       console.log(`[AI DEBUG] JOB CREATION END: ${Date.now() - jobStart} ms`);
     } catch (jobErr) {
@@ -191,129 +206,27 @@ const processJsonJob = async (req, res, next) => {
         success: false,
         message: "Course JSON validation failed.",
         errors: job.validationReport?.errors || [job.errorMessage],
+        warnings: job.validationReport?.warnings || [],
         data: job,
       });
     }
 
     console.log(`[AI DEBUG] RESPONSE SEND | TOTAL REQUEST: ${Date.now() - reqStartTime} ms`);
-    res.status(201).json({ success: true, data: job, canonicalJson });
+    res.status(201).json({ success: true, data: job, canonicalJson: job.canonicalJson, warnings: job.validationReport?.warnings || [] });
   } catch (error) {
     console.error(`[AI DEBUG] REQUEST ERROR after ${Date.now() - reqStartTime} ms:`, error);
     next(error);
   }
 };
 
+/**
+ * The reference course JSON template. It shows HOW course JSON is written —
+ * every supported level and element appears once — not what a course must
+ * contain: any subset of it imports.
+ */
 const getTemplate = async (req, res, next) => {
   try {
-    const template = {
-      metadata: {
-        title: "C Programming Fundamentals",
-        description: "Master C programming concepts from basic syntax to memory pointers.",
-        category: "Computer Science",
-        level: "BEGINNER",
-        language: "English",
-        tags: ["c", "programming", "coding"],
-        estimatedLearningHours: 10,
-        price: 0
-      },
-      settings: {
-        visibility: "PUBLIC",
-        certificatesEnabled: true,
-        discussionEnabled: true,
-        /* dripContent removed */
-      },
-      quizzes: [
-        {
-          title: "C Programming Final Assessment",
-          description: "Comprehensive course-level assessment covering C fundamentals.",
-          passingScore: 60,
-          timeLimit: 30,
-          isPublished: true,
-          questions: [
-            {
-              question: "Which header file is required for printf()?",
-              questionType: "MCQ_SINGLE",
-              options: ["<stdio.h>", "<stdlib.h>", "<string.h>", "<math.h>"],
-              correctAnswer: "<stdio.h>",
-              explanation: "printf() is declared in stdio.h.",
-              marks: 1,
-              negativeMarks: 0,
-              difficulty: "EASY"
-            },
-            {
-              question: "Is C a compiled programming language?",
-              questionType: "MCQ_SINGLE",
-              options: ["Yes, it compiles to machine code", "No, it is interpreted"],
-              correctAnswer: "Yes, it compiles to machine code",
-              explanation: "C code is directly compiled into machine executable binaries.",
-              marks: 1,
-              difficulty: "EASY"
-            }
-          ]
-        }
-      ],
-      modules: [
-        {
-          title: "C Fundamentals",
-          description: "First steps in writing C programs.",
-          order: 1,
-          isPublished: true,
-          quizzes: [
-            {
-              title: "Module 1 Quick Check",
-              description: "Check understanding of basic C concepts.",
-              passingScore: 60,
-              timeLimit: 15,
-              isPublished: true,
-              questions: [
-                {
-                  question: "What is the entry point of a C program?",
-                  questionType: "MCQ_SINGLE",
-                  options: ["start()", "main()", "run()", "execute()"],
-                  correctAnswer: "main()",
-                  explanation: "Execution of a C program always begins from main().",
-                  marks: 1,
-                  difficulty: "EASY"
-                }
-              ]
-            }
-          ],
-          lessons: [
-            {
-              title: "Introduction to C",
-              description: "Understanding compilation and basic structure.",
-              order: 1,
-              isPublished: true,
-              topics: [
-                {
-                  title: "What is C?",
-                  description: "Overview of procedural programming.",
-                  order: 1,
-                  isPublished: true,
-                  contents: [
-                    {
-                      type: "HTML",
-                      title: "Introduction to C Language",
-                      order: 1,
-                      htmlContent: "<h2>What is C?</h2><p>C is a low-level, high-efficiency compiled programming language.</p>"
-                    },
-                    {
-                      type: "VIDEO",
-                      title: "Writing Your First Hello World",
-                      order: 2,
-                      duration: 300,
-                      videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    };
-
-    res.json({ success: true, data: template });
+    res.json({ success: true, data: courseJsonTemplate });
   } catch (error) {
     next(error);
   }

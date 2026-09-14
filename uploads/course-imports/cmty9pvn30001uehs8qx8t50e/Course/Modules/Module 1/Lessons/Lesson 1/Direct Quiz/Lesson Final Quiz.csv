@@ -1,0 +1,2 @@
+quizTag,passingScore,timeLimit,question,optionA,optionB,optionC,optionD,correctAnswer,marks,difficulty,explanation
+FINAL,60,15,How many bytes does a char occupy in standard C?,1,2,4,8,1,1,EASY,sizeof(char) is 1 by definition.

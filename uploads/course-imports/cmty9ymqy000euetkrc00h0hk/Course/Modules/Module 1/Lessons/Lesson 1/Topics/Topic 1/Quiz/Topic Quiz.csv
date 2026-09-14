@@ -1,0 +1,2 @@
+quizTag,passingScore,timeLimit,question,optionA,optionB,optionC,optionD,correctAnswer,marks,difficulty,explanation
+SELF_TEST,50,,Which keyword declares a variable that cannot be reassigned?,static,const,volatile,register,const,1,EASY,const marks a value as read-only after initialisation.
