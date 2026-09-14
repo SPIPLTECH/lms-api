@@ -110,20 +110,14 @@ function validateV2Manifest(courseJson) {
     return { isValid: false, errors: ["Course JSON must be a valid object."] };
   }
 
-  // Normalize metadata & title
   if (!courseJson.metadata || typeof courseJson.metadata !== "object") {
-    courseJson.metadata = { title: courseJson.title || "Imported Course" };
-  } else if (!courseJson.metadata.title && courseJson.title) {
-    courseJson.metadata.title = courseJson.title;
-  }
-
-  if (!courseJson.metadata.title || typeof courseJson.metadata.title !== "string" || !courseJson.metadata.title.trim()) {
+    errors.push("metadata: Missing or invalid metadata object.");
+  } else if (!courseJson.metadata.title || typeof courseJson.metadata.title !== "string" || !courseJson.metadata.title.trim()) {
     errors.push("metadata.title: Course title is required and cannot be empty.");
   }
 
-  // Normalize settings
   if (!courseJson.settings || typeof courseJson.settings !== "object") {
-    courseJson.settings = { visibility: "PUBLIC", certificatesEnabled: true, discussionEnabled: true };
+    errors.push("settings: Missing or invalid settings object.");
   }
 
   // Validate Course-Level Quizzes (when present)
@@ -256,7 +250,7 @@ function prepareV2Assets(jobDir, courseJson) {
     }
 
     if (!fs.existsSync(sourceFilePath)) {
-      console.warn(`[ZIP IMPORT WARNING] Asset '${relPkgPath}' not found in ZIP package.`);
+      errors.push(`Missing file asset in package: '${relPkgPath}'`);
       return;
     }
 

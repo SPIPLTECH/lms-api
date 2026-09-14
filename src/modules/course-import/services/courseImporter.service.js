@@ -77,29 +77,165 @@ const createJsonJob = async ({ instructorId, canonicalJson, sourceFileName }) =>
 
 const getJob = async (jobId) => prisma.courseImportJob.findUnique({ where: { id: jobId } });
 
-const listJobs = async (instructorId) => prisma.courseImportJob.findMany({ where: { instructorId }, orderBy: { createdAt: "desc" } });
+function convertScannedCourseToV2Canonical(canonicalResult, jobDir, jobId, sourceFileName) {
+  const courseObj = canonicalResult?.course || canonicalResult || {};
 
-const findCourseJsonInDirectory = (startDir) => {
-  const directPath = path.join(startDir, "course.json");
-  if (fs.existsSync(directPath)) {
-    return { courseJsonPath: directPath, effectiveJobDir: startDir };
+  const rawTitle = courseObj.title || (sourceFileName ? sourceFileName.replace(/\.[^.]+$/, "") : "Imported Course");
+  const title = rawTitle.trim() || "Imported Course";
+  const description = courseObj.description || "";
+  const category = courseObj.category || "General";
+  const level = (courseObj.level && ["BEGINNER", "INTERMEDIATE", "ADVANCED", "ALL_LEVELS"].includes(String(courseObj.level).toUpperCase()))
+    ? String(courseObj.level).toUpperCase()
+    : "BEGINNER";
+
+  const metadata = {
+    title,
+    description,
+    category,
+    level,
+    language: courseObj.language || "English",
+    tags: Array.isArray(courseObj.tags) ? courseObj.tags : [],
+    estimatedLearningHours: courseObj.estimatedLearningHours || null,
+    thumbnail: courseObj.thumbnail || null
+  };
+
+  const settings = {
+    visibility: "PUBLIC",
+    certificatesEnabled: true,
+    discussionEnabled: true
+  };
+
+  const rawModules = Array.isArray(courseObj.modules) ? courseObj.modules : [];
+
+  const modules = rawModules.map((m, mIdx) => {
+    const rawLessons = Array.isArray(m.lessons) ? m.lessons : [];
+    const lessons = rawLessons.map((l, lIdx) => {
+      const rawTopics = Array.isArray(l.topics) ? l.topics : (
+        Array.isArray(l.content) ? [{ title: "General", order: 1, contents: l.content }] : []
+      );
+
+      const topics = rawTopics.map((t, tIdx) => {
+        const rawContents = Array.isArray(t.contents) ? t.contents : (Array.isArray(t.content) ? t.content : []);
+        const contents = rawContents.map((c, cIdx) => {
+          let rawType = (c.type || c.blockType || "TEXT").toUpperCase();
+          let type = "TEXT";
+          if (rawType === "DOCUMENT") type = "DOCUMENT";
+          else if (rawType === "VIDEO") type = "VIDEO";
+          else if (rawType === "AUDIO") type = "AUDIO";
+          else if (rawType === "IMAGE") type = "IMAGE";
+          else if (rawType === "SLIDESHOW" || rawType === "PRESENTATION") type = "PRESENTATION";
+          else if (rawType === "CODE") type = "CODE";
+          else if (rawType === "LINK") type = "LINK";
+          else if (rawType === "FILE") type = "FILE";
+          else if (rawType === "HTML") type = "HTML";
+
+          let contentTitle = c.title || c.attributes?.fileName || c.attributes?.originalFileName || c.name || `Content ${cIdx + 1}`;
+          let htmlContent = c.htmlContent || null;
+          if (!htmlContent && c.markdown) {
+            htmlContent = `<p>${c.markdown.replace(/\n/g, "<br/>")}</p>`;
+          }
+          let videoUrl = c.videoUrl || (type === "VIDEO" && c.url ? c.url : null);
+          let fileUrl = c.fileUrl || (type !== "VIDEO" && c.url ? c.url : null);
+          let mediaFile = c.mediaFile || c.originalPath || c.attributes?.sourcePath || null;
+
+          return {
+            type,
+            title: contentTitle,
+            order: c.order || (cIdx + 1),
+            duration: c.duration || null,
+            htmlContent,
+            videoUrl,
+            fileUrl,
+            externalUrl: c.externalUrl || null,
+            mediaFile,
+            data: c.data || null
+          };
+        });
+
+        return {
+          title: t.title || `Topic ${tIdx + 1}`,
+          description: t.description || "",
+          order: t.order || (tIdx + 1),
+          isPublished: true,
+          quizzes: Array.isArray(t.quizzes) ? t.quizzes : (t.quiz ? [t.quiz] : []),
+          contents
+        };
+      });
+
+      return {
+        title: l.title || `Lesson ${lIdx + 1}`,
+        description: l.description || "",
+        order: l.order || (lIdx + 1),
+        isPublished: true,
+        quizzes: Array.isArray(l.quizzes) ? l.quizzes : [],
+        topics
+      };
+    });
+
+    return {
+      title: m.title || `Module ${mIdx + 1}`,
+      description: m.description || "",
+      order: m.order || (mIdx + 1),
+      isPublished: true,
+      quizzes: Array.isArray(m.quizzes) ? m.quizzes : [],
+      lessons
+    };
+  });
+
+  if (modules.length === 0) {
+    modules.push({
+      title: "Module 1: General Concepts",
+      description: "Imported package content",
+      order: 1,
+      isPublished: true,
+      quizzes: [],
+      lessons: [
+        {
+          title: "Lesson 1: Introduction",
+          description: "",
+          order: 1,
+          isPublished: true,
+          quizzes: [],
+          topics: [
+            {
+              title: "Topic 1: Overview",
+              description: "",
+              order: 1,
+              isPublished: true,
+              quizzes: [],
+              contents: []
+            }
+          ]
+        }
+      ]
+    });
   }
 
-  try {
-    const entries = fs.readdirSync(startDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const subDir = path.join(startDir, entry.name);
-        const subJsonPath = path.join(subDir, "course.json");
-        if (fs.existsSync(subJsonPath)) {
-          return { courseJsonPath: subJsonPath, effectiveJobDir: subDir };
-        }
-      }
-    }
-  } catch (err) {}
+  const canonicalV2 = {
+    version: "2.0",
+    $schema: "https://orangetree.lms/schemas/course-v2.json",
+    metadata,
+    settings,
+    quizzes: Array.isArray(courseObj.quizzes) ? courseObj.quizzes : [],
+    modules,
+    assetMap: {}
+  };
 
-  return { courseJsonPath: null, effectiveJobDir: startDir };
-};
+  try {
+    const assetPrep = v2PackageImporter.prepareV2Assets(jobDir, canonicalV2);
+    const assetMapObj = {};
+    for (const [k, v] of assetPrep.assetMap.entries()) {
+      assetMapObj[k] = v;
+    }
+    canonicalV2.assetMap = assetMapObj;
+  } catch (assetErr) {
+    console.warn("[CourseImport] Asset preparation notice for scanned package:", assetErr.message);
+  }
+
+  return canonicalV2;
+}
+
+const listJobs = async (instructorId) => prisma.courseImportJob.findMany({ where: { instructorId }, orderBy: { createdAt: "desc" } });
 
 const processJob = async (jobId, baseUrl) => {
   const job = await getJob(jobId);
@@ -109,9 +245,9 @@ const processJob = async (jobId, baseUrl) => {
 
   const jobDir = path.join(UPLOAD_ROOT, jobId);
 
-  // Check for V2 Canonical Package Manifest (course.json), even if nested inside a root subfolder
-  const { courseJsonPath, effectiveJobDir } = findCourseJsonInDirectory(jobDir);
-  if (courseJsonPath && fs.existsSync(courseJsonPath)) {
+  // Check for V2 Canonical Package Manifest (course.json)
+  const courseJsonPath = path.join(jobDir, "course.json");
+  if (fs.existsSync(courseJsonPath)) {
     let rawCourseJson;
     try {
       rawCourseJson = JSON.parse(fs.readFileSync(courseJsonPath, "utf8"));
@@ -122,20 +258,17 @@ const processJob = async (jobId, baseUrl) => {
       });
     }
 
-    if (
-      rawCourseJson &&
-      (rawCourseJson.version === "2.0" ||
-        rawCourseJson.$schema?.includes("course-v2.json") ||
-        rawCourseJson.metadata ||
-        rawCourseJson.modules ||
-        rawCourseJson.title)
-    ) {
-      if (!rawCourseJson.version) rawCourseJson.version = "2.0";
-      if (!rawCourseJson.$schema) rawCourseJson.$schema = "https://orangetree.lms/schemas/course-v2.json";
-
+    if (rawCourseJson && (rawCourseJson.metadata || rawCourseJson.modules || rawCourseJson.version === "2.0" || rawCourseJson.$schema?.includes("course-v2.json"))) {
       await prisma.courseImportJob.update({ where: { id: jobId }, data: { status: "ANALYZING" } });
       try {
-        const v2Result = await v2PackageImporter.processV2Package(effectiveJobDir, jobId, rawCourseJson);
+        if (!rawCourseJson.version) rawCourseJson.version = "2.0";
+        if (!rawCourseJson.metadata && rawCourseJson.title) {
+          rawCourseJson.metadata = { title: rawCourseJson.title, description: rawCourseJson.description || "" };
+        }
+        if (!rawCourseJson.settings) {
+          rawCourseJson.settings = { visibility: "PUBLIC", certificatesEnabled: true, discussionEnabled: true };
+        }
+        const v2Result = await v2PackageImporter.processV2Package(jobDir, jobId, rawCourseJson);
         return await prisma.courseImportJob.update({
           where: { id: jobId },
           data: { status: "READY", canonicalJson: v2Result.canonicalJson, validationReport: v2Result.validationReport },
@@ -149,18 +282,19 @@ const processJob = async (jobId, baseUrl) => {
     }
   }
 
-  // Fallback to V1 folder/file scanning processing path
+  // Fallback to folder/file scanning processing path for raw ZIP packages
   const files = scanDirectory(jobDir);
 
   await prisma.courseImportJob.update({ where: { id: jobId }, data: { status: "ANALYZING" } });
 
   try {
-    const canonical = await buildCanonicalCourse({ files, jobId, baseUrl, sourceFileName: job.sourceFileName });
-    const validationReport = validateCourse(canonical.course);
+    const canonicalRaw = await buildCanonicalCourse({ files, jobId, baseUrl, sourceFileName: job.sourceFileName });
+    const canonicalV2 = convertScannedCourseToV2Canonical(canonicalRaw, jobDir, jobId, job.sourceFileName);
+    const validationReport = validateCourse(canonicalRaw.course || canonicalRaw);
 
     return await prisma.courseImportJob.update({
       where: { id: jobId },
-      data: { status: "READY", canonicalJson: canonical, validationReport },
+      data: { status: "READY", canonicalJson: canonicalV2, validationReport },
     });
   } catch (error) {
     return prisma.courseImportJob.update({
