@@ -28,6 +28,9 @@ class QuestionRepositoryService {
       tags = "",
       status = "",
       instructorId = "",
+      // Set by the quiz builder's repository picker: a quiz may only be built
+      // from questions that are actually published.
+      publishedOnly = "",
       page = 1,
       limit = 10,
       sortBy = "createdAt",
@@ -46,11 +49,12 @@ class QuestionRepositoryService {
         where.createdBy = instructorId;
       }
     } else {
-      // INSTRUCTOR: see own created questions or system/legacy questions
-      where.OR = [
-        { createdBy: user.id },
-        { createdBy: null },
-      ];
+      // INSTRUCTOR: their own questions, and only their own. Ownerless rows
+      // (createdBy null) used to be treated as a shared pool every instructor
+      // could see and pull into a quiz; a question bank is per-author, so they
+      // are no longer surfaced here. Anything an instructor creates is stamped
+      // with their id on every creation path, so their own work is unaffected.
+      where.createdBy = user.id;
     }
 
     // Status filter
@@ -59,6 +63,15 @@ class QuestionRepositoryService {
     } else {
       // By default show ACTIVE questions unless specifically requesting ARCHIVED
       where.status = { not: "DELETED" };
+    }
+
+    // Published filter. Distinct from status: status is the row's lifecycle
+    // (active / archived / deleted), isPublished is whether its author has
+    // released it for use. The quiz picker asks for both — a quiz built from
+    // an archived or unreleased question would ship a question the author had
+    // deliberately taken out of circulation.
+    if (publishedOnly === true || publishedOnly === "true") {
+      where.isPublished = true;
     }
 
     // Filters
@@ -113,6 +126,15 @@ class QuestionRepositoryService {
           creator: {
             select: { id: true, name: true, email: true },
           },
+          // The repository list renders `q.course?.title` (and the module
+          // beside it) as each row's course tag — without these relations it
+          // read undefined on every row and the tag never appeared.
+          course: {
+            select: { id: true, title: true },
+          },
+          module: {
+            select: { id: true, title: true },
+          },
           _count: {
             select: { quizQuestions: true },
           },
@@ -149,6 +171,14 @@ class QuestionRepositoryService {
         creator: {
           select: { id: true, name: true, email: true },
         },
+        // Backs the preview panel's "course • module" line, which otherwise
+        // always read "No Course".
+        course: {
+          select: { id: true, title: true },
+        },
+        module: {
+          select: { id: true, title: true },
+        },
         quizQuestions: {
           include: {
             quiz: {
@@ -184,7 +214,62 @@ class QuestionRepositoryService {
    * @param {Object} data 
    * @param {string} userId 
    */
-  async createQuestion(data, userId) {
+  /**
+   * Resolves the Course/Module a repository question is being bound to.
+   *
+   * Question.courseId/.moduleId are what the repository's Course and Module
+   * filters query and what the quiz builder's picker narrows by, so a
+   * question saved without them is invisible to every course-scoped view.
+   * The create form has always sent them and question.validation.js has
+   * always allowed them through — they simply were never written.
+   *
+   * Returns { courseId, moduleId }, both null when no course was chosen (a
+   * repository question may legitimately belong to no course). A course that
+   * does not exist, or belongs to another instructor, is rejected here rather
+   * than surfacing as a foreign-key 500 from Prisma.
+   *
+   * @param {Object} data - the request payload
+   * @param {Object|null} user - the acting user ({ id, role })
+   */
+  async resolveCourseBinding(data, user) {
+    const courseId = data.courseId ? String(data.courseId).trim() : "";
+    if (!courseId) return { courseId: null, moduleId: null };
+
+    const course = await prisma.course.findUnique({
+      where: { id: courseId },
+      select: { id: true, creatorId: true },
+    });
+
+    if (!course) {
+      const error = new Error("Course not found.");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (user && user.role !== "ADMIN" && course.creatorId !== user.id) {
+      const error = new Error("Access denied: You can only add questions to your own courses.");
+      error.statusCode = 403;
+      throw error;
+    }
+
+    const moduleId = data.moduleId ? String(data.moduleId).trim() : "";
+    if (!moduleId) return { courseId, moduleId: null };
+
+    const module = await prisma.module.findUnique({
+      where: { id: moduleId },
+      select: { id: true, courseId: true },
+    });
+
+    if (!module || module.courseId !== courseId) {
+      const error = new Error("The selected module does not belong to the selected course.");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    return { courseId, moduleId };
+  }
+
+  async createQuestion(data, userId, user = null) {
     if (!data.question || !data.question.trim()) {
       const error = new Error("Question text is required.");
       error.statusCode = 400;
@@ -206,10 +291,17 @@ class QuestionRepositoryService {
       ...(data.concept ? [data.concept] : []),
     ];
 
+    const { courseId, moduleId } = await this.resolveCourseBinding(
+      data,
+      user || (userId ? { id: userId, role: "INSTRUCTOR" } : null)
+    );
+
     const question = await prisma.question.create({
       data: {
         question: data.question.trim(),
         questionType,
+        courseId,
+        moduleId,
         options: data.options ?? [],
         // correctAnswer is a required Json column — an empty string is a
         // valid JSON value, unlike a bare `null` on a non-nullable field.
@@ -285,6 +377,19 @@ class QuestionRepositoryService {
       updateData.tags = tagList.join(", ");
     }
     if (data.status !== undefined) updateData.status = data.status;
+
+    // Same binding the create path writes — present so a question can be
+    // moved between courses (or bound to one after the fact) instead of
+    // being stuck with whatever it was created with. Untouched when the
+    // caller sends neither field.
+    if (data.courseId !== undefined || data.moduleId !== undefined) {
+      const { courseId, moduleId } = await this.resolveCourseBinding(
+        { courseId: data.courseId ?? existing.courseId, moduleId: data.moduleId },
+        user
+      );
+      updateData.courseId = courseId;
+      updateData.moduleId = moduleId;
+    }
 
     return await prisma.question.update({
       where: { id },

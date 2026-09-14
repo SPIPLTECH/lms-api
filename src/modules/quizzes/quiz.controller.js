@@ -64,7 +64,7 @@ const getQuizById = async (req, res, next) => {
 
 const createQuiz = async (req, res, next) => {
   try {
-    const quiz = await quizService.createQuiz(req.body);
+    const quiz = await quizService.createQuiz(req.body, req.user?.id || null);
 
     res.status(201).json({
       success: true,
@@ -77,7 +77,7 @@ const createQuiz = async (req, res, next) => {
 
 const updateQuiz = async (req, res, next) => {
   try {
-    const quiz = await quizService.updateQuiz(req.params.quizId, req.body);
+    const quiz = await quizService.updateQuiz(req.params.quizId, req.body, req.user?.id || null);
 
     res.json({
       success: true,

@@ -86,7 +86,7 @@ const createQuestion = async (req, res, next) => {
     const userId = req.user ? req.user.id : null;
 
     // Repository creation
-    const question = await questionRepositoryService.createQuestion(req.body, userId);
+    const question = await questionRepositoryService.createQuestion(req.body, userId, req.user || null);
     await attachIfQuizProvided(question, req.body.quizId);
 
     res.status(201).json({
@@ -133,7 +133,7 @@ const uploadQuestions = async (req, res, next) => {
 const bulkCreateQuestions = async (req, res, next) => {
   try {
     const { quizId, questions } = req.body;
-    const result = await questionService.bulkCreateQuestions(questions, quizId || null);
+    const result = await questionService.bulkCreateQuestions(questions, quizId || null, req.user?.id || null);
 
     res.status(201).json({
       success: true,
@@ -157,7 +157,7 @@ const importQuestionsFile = async (req, res, next) => {
       });
     }
 
-    const result = await questionService.importQuestions(req.file, req.body.quizId || null);
+    const result = await questionService.importQuestions(req.file, req.body.quizId || null, req.user?.id || null);
 
     res.status(201).json({
       success: true,

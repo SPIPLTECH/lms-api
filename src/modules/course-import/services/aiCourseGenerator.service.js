@@ -353,9 +353,14 @@ function normalizeQuizDef(quiz) {
       if (!q || typeof q !== "object") return;
       if (typeof q.questionType === "string") {
         const raw = q.questionType.toUpperCase().trim();
-        if (raw.includes("MCQ") || raw.includes("MC")) q.questionType = "MCQ_SINGLE";
-        else if (raw.includes("TRUE") || raw.includes("FALSE")) q.questionType = "TRUE_FALSE";
-        else if (raw.includes("MULTI")) q.questionType = "MCQ_MULTI";
+        // "MULTI" is tested first on purpose: "MCQ_MULTI" and
+        // "MULTIPLE_CORRECT" both contain "MCQ"/"MC", so checking those
+        // first collapsed every multi-select question the prompt asked for
+        // back into a single-choice one. Everything else — a True/False the
+        // model produced despite QUESTION_SCHEMA, or an unrecognized label —
+        // lands on MCQ_SINGLE, which is graded and rendered end-to-end;
+        // TRUE_FALSE is not one of the types the authoring UI offers.
+        if (raw.includes("MULTI")) q.questionType = "MCQ_MULTI";
         else q.questionType = "MCQ_SINGLE";
       } else {
         q.questionType = "MCQ_SINGLE";
