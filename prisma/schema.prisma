@@ -1,5 +1,10 @@
 generator client {
   provider = "prisma-client-js"
+  // Loads `include`d relations in one SQL query (LATERAL joins) instead of one
+  // round trip per relation level. Against the remote database that took the
+  // deep course tree (getCourseById) from ~4.7s to ~0.8s and the course list
+  // from ~1.5s to ~0.4s, with identical results. Requires `prisma generate`.
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {
