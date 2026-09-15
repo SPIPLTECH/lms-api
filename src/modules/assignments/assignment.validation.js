@@ -101,9 +101,19 @@ const gradeSubmissionSchema = Joi.object({
   feedback: Joi.string().trim().max(2000).optional().allow(null, "")
 });
 
+const reorderAssignmentsSchema = Joi.object({
+  assignments: Joi.array().items(
+    Joi.object({
+      id: Joi.string().required(),
+      order: Joi.number().integer().required(),
+    })
+  ).min(1).required(),
+});
+
 module.exports = {
   createAssignmentSchema,
   updateAssignmentSchema,
   submitAssignmentSchema,
-  gradeSubmissionSchema
+  gradeSubmissionSchema,
+  reorderAssignmentsSchema
 };

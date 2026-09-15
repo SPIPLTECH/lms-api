@@ -816,6 +816,7 @@ model StudentAchievement {
 
 model Assignment {
   id             String                 @id @default(cuid())
+  order          Int?
   title          String
   description    String?
   startDate      DateTime?

@@ -70,7 +70,8 @@ const createLesson = async (
   try {
     const lesson =
       await lessonService.createLesson(
-        req.body
+        req.body,
+        req.user?.id
       );
 
     res.status(201).json(lesson);
@@ -88,7 +89,8 @@ const updateLesson = async (
     const lesson =
       await lessonService.updateLesson(
         req.params.lessonId,
-        req.body
+        req.body,
+        req.user?.id
       );
 
     res.json(lesson);

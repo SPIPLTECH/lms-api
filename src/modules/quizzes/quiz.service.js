@@ -3,7 +3,7 @@ const notificationService = require("../notifications/notification.service");
 const learnerModelService = require("../learner-model/learnerModel.service");
 const { MISCONCEPTION_TAXONOMY, isKnownMisconceptionType } = require("../learner-model/misconceptionTaxonomy.config");
 const misconceptionClassifier = require("../learner-model/misconceptionClassifier.service");
-const { getNextOrder } = require("../contents/contentOrder.util");
+const { getNextQuizOrder, QUIZ_ORDER_BASE, ASSIGNMENT_ORDER_BASE } = require("../contents/contentOrder.util");
 
 // Tracks classifyAndApply() calls dispatched below fire-and-forget (never
 // awaited by the HTTP response, by design — see the dispatch site). Exists
@@ -500,15 +500,23 @@ const createQuiz = async (
 
   const orderField = resolveQuizParentField(quizData);
   if (quizData.order === undefined || quizData.order === null) {
-    quizData.order = await getNextOrder(orderField, quizData[orderField]);
+    quizData.order = await getNextQuizOrder(orderField, quizData[orderField]);
   } else {
-    quizData.order = Number(quizData.order);
-    const [collidingContent, collidingQuiz] = await Promise.all([
-      prisma.content.findFirst({ where: { [orderField]: quizData[orderField], order: quizData.order }, select: { id: true } }),
-      prisma.quiz.findFirst({ where: { [orderField]: quizData[orderField], order: quizData.order }, select: { id: true } }),
-    ]);
-    if (collidingContent || collidingQuiz) {
-      quizData.order = await getNextOrder(orderField, quizData[orderField]);
+    const requested = Number(quizData.order);
+    if (!Number.isInteger(requested)) {
+      const error = new Error("Quiz order must be an integer.");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (requested >= QUIZ_ORDER_BASE && requested < ASSIGNMENT_ORDER_BASE) {
+      // Already a valid zone-banded value (e.g. resent from another quiz's order) — use as-is.
+      quizData.order = requested;
+    } else {
+      // Treat as a local index (1-based position among quizzes in this scope).
+      // Clamp so neither a non-positive index nor an absurdly large one can
+      // rebase outside the Quiz zone in either direction.
+      const localIndex = Math.min(Math.max(requested, 1), ASSIGNMENT_ORDER_BASE - QUIZ_ORDER_BASE - 1);
+      quizData.order = QUIZ_ORDER_BASE + localIndex;
     }
   }
 
@@ -576,10 +584,12 @@ const createQuiz = async (
           title: "New Quiz Available 📝",
           message: `A new quiz "${quiz.title}" has been added to your course "${course.title}".`,
           type: "QUIZ_PUBLISHED",
-          link: `/courses/${quiz.courseId}/quizzes`
+          link: `/courses/${quiz.courseId}/quizzes`,
+          actorId: userId
         },
         null,
-        `quiz_published_${quiz.id}`
+        `quiz_published_${quiz.id}`,
+        userId
       );
     }
   } catch (error) {
@@ -1061,7 +1071,8 @@ const submitQuiz = async (studentId, quizId, answers = [], timeTakenSeconds = nu
           message: `${student.user.name} submitted the quiz "${quiz.title}" for "${course.title}" (Score: ${result.percentage}%).`,
           type: "QUIZ_SUBMISSION",
           link: `/courses/${quiz.courseId}/quizzes`,
-          eventId: `quiz_submission_${submission.id}`
+          eventId: `quiz_submission_${submission.id}`,
+          actorId: student.userId
         });
       }
     } catch (error) {

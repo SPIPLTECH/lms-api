@@ -1,0 +1,2 @@
+quizTag,passingScore,timeLimit,question,optionA,optionB,optionC,optionD,correctAnswer,marks,difficulty,explanation
+FINAL,60,20,What is the entry point of every C program?,start(),main(),run(),execute(),main(),1,EASY,Execution always begins at main().

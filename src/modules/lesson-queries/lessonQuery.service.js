@@ -142,7 +142,8 @@ const createQuery = async (userId, data) => {
         title: `New question from ${studentName} in ${courseTitle}`,
         message: data.question.trim(),
         type: "QA",
-        eventId: `qa_question_${newQuery.id}`
+        eventId: `qa_question_${newQuery.id}`,
+        actorId: student?.userId
       });
     } catch (err) {
       console.error("Failed to deliver Q&A question notification:", err.message);
@@ -304,7 +305,8 @@ const replyToQuery = async (queryId, user, reply) => {
         title: `Instructor replied to your question in ${courseTitle}`,
         message: reply.trim(),
         type: "QA",
-        eventId: `qa_reply_${query.id}_${updatedQuery.answeredAt ? new Date(updatedQuery.answeredAt).getTime() : Date.now()}`
+        eventId: `qa_reply_${query.id}`,
+        actorId: user.id
       });
     } catch (err) {
       console.error("Failed to deliver Q&A reply notification:", err.message);

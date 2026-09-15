@@ -11,7 +11,8 @@ const {
   createAssignmentSchema,
   updateAssignmentSchema,
   submitAssignmentSchema,
-  gradeSubmissionSchema
+  gradeSubmissionSchema,
+  reorderAssignmentsSchema,
 } = require("./assignment.validation");
 
 router.get(
@@ -19,6 +20,14 @@ router.get(
     verifyToken,
     checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]),
     controller.getAssignments
+);
+
+router.patch(
+    "/reorder",
+    verifyToken,
+    checkRole(["ADMIN", "INSTRUCTOR"]),
+    validate(reorderAssignmentsSchema),
+    controller.reorderAssignments
 );
 
 router.get(
