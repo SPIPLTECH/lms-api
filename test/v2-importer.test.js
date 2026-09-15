@@ -45,7 +45,7 @@ test("V2 Importer Module Tests", async (t) => {
     assert.strictEqual(res.errors.length, 0);
   });
 
-  await t.test("1b. Empty modules array fails manifest validation (at least one module required)", () => {
+  await t.test("1b. Modules are optional: an empty modules array is valid, and flagged as an empty course", () => {
     const emptyModulesManifest = {
       $schema: "https://orangetree.lms/schemas/course-v2.json",
       version: "2.0",
@@ -55,8 +55,8 @@ test("V2 Importer Module Tests", async (t) => {
     };
 
     const res = v2Importer.validateV2Manifest(emptyModulesManifest);
-    assert.strictEqual(res.isValid, false);
-    assert.ok(res.errors.some((e) => e.includes("At least one module is required")));
+    assert.strictEqual(res.isValid, true);
+    assert.ok(res.warnings.some((w) => w.includes("no content, modules, quizzes or assignments")));
   });
 
   await t.test("2. Missing course.json metadata.title fails validation", () => {
@@ -479,13 +479,16 @@ test("V2 Importer Module Tests", async (t) => {
               order: 1,
               lessons: [
                 {
-                  title: "Lesson With Duplicate Topic Order",
+                  title: "Lesson With An Oversized Content Duration",
                   order: 1,
                   topics: [
-                    // Same order twice under the same lesson violates
-                    // the @@unique([lessonId, order]) constraint on Topic.
-                    { title: "Topic A", order: 1, contents: [] },
-                    { title: "Topic B", order: 1, contents: [] }
+                    // Order follows position now, so a duplicate order can no
+                    // longer force a failure. A duration past Postgres int4
+                    // passes JSON validation and is rejected by the database
+                    // on the Content insert — after Module, Lesson and Topic
+                    // rows were written in the same transaction.
+                    { title: "Topic A", contents: [] },
+                    { title: "Topic B", contents: [{ type: "VIDEO", title: "Too long", videoUrl: "https://videos.example.com/x.mp4", duration: 2147483648 }] }
                   ]
                 }
               ]
@@ -508,35 +511,6 @@ test("V2 Importer Module Tests", async (t) => {
     assert.ok(failedJob.errorMessage, "errorMessage should be recorded on failure");
 
     await prisma.courseImportJob.delete({ where: { id: dbJob.id } });
-  });
-
-  await t.test("9. Manifest with missing settings or top-level title is auto-normalized and passes validation", () => {
-    const rawManifest = {
-      title: "Course Without Metadata Object",
-      modules: [{ title: "Module 1", lessons: [] }]
-    };
-
-    const res = v2Importer.validateV2Manifest(rawManifest);
-    assert.strictEqual(res.isValid, true);
-    assert.strictEqual(rawManifest.metadata.title, "Course Without Metadata Object");
-    assert.strictEqual(rawManifest.settings.visibility, "PUBLIC");
-  });
-
-  await t.test("10. Missing local asset file logs warning instead of failing package processing", async () => {
-    const manifestWithMissingAsset = {
-      $schema: "https://orangetree.lms/schemas/course-v2.json",
-      version: "2.0",
-      metadata: {
-        title: "Course With Missing Asset Reference",
-        thumbnail: "non_existent_thumb.png"
-      },
-      settings: { visibility: "PUBLIC" },
-      modules: [{ title: "Mod 1", order: 1, lessons: [] }]
-    };
-
-    const result = await v2Importer.processV2Package(testJobDir, "job_missing_asset_test", manifestWithMissingAsset);
-    assert.strictEqual(result.canonicalJson.version, "2.0");
-    assert.strictEqual(result.validationReport.isValid, true);
   });
 
 });

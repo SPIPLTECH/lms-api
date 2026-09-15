@@ -1,0 +1,563 @@
+{
+  "course": {
+    "title": "Introduction to Physics",
+    "description": "A beginner-friendly introduction to fundamental concepts of physics, including measurement, motion, forces, energy, and gravitation.",
+    "category": "Physics",
+    "level": "Beginner",
+    "thumbnailUrl": "https://blob.example.com/thumbnails/physics-intro.jpg",
+    "status": "DRAFT",
+    "visibility": "PUBLIC",
+    "language": "English",
+    "tags": [
+      "physics",
+      "beginner",
+      "science",
+      "mechanics"
+    ],
+    "certificatesEnabled": false,
+    "discussionEnabled": true,
+    "estimatedLearningHours": 15
+  },
+
+  "content": [
+    {
+      "type": "HTML",
+      "title": "What is Physics?",
+      "htmlContent": "<h2>What is Physics?</h2><p>Physics is the study of matter, energy, motion, forces, and the fundamental laws that describe the natural world.</p>",
+      "data": {
+        "blockType": "text",
+        "title": "What is Physics?",
+        "cssStyles": "",
+        "markdown": "## What is Physics?\n\nPhysics is the study of matter, energy, motion, forces, and the fundamental laws that describe the natural world."
+      }
+    },
+    {
+      "type": "HTML",
+      "title": "Why Learn Physics?",
+      "htmlContent": "<p>Physics helps us understand how objects move, interact, and transfer energy in the world around us.</p>",
+      "data": {
+        "blockType": "text",
+        "title": "Why Learn Physics?",
+        "cssStyles": "",
+        "markdown": "Physics helps us understand how objects move, interact, and transfer energy in the world around us."
+      }
+    }
+  ],
+
+  "modules": [
+    {
+      "courseId": "course_physics_1",
+      "title": "Units and Measurements",
+      "description": "Learn how physical quantities are measured and represented using standard units.",
+
+      "content": [
+        {
+          "type": "HTML",
+          "title": "Introduction to Measurement",
+          "htmlContent": "<p>Measurement is the process of comparing a physical quantity with a standard unit.</p>",
+          "data": {
+            "blockType": "text",
+            "title": "Introduction to Measurement",
+            "cssStyles": "",
+            "markdown": "Measurement is the process of comparing a physical quantity with a standard unit."
+          }
+        }
+      ],
+
+      "lessons": [
+        {
+          "moduleId": "physics_mod_1",
+          "title": "Physical Quantities and SI Units",
+          "description": "Understand physical quantities and the International System of Units.",
+          "isPublished": false,
+
+          "content": [
+            {
+              "type": "HTML",
+              "title": "Physical Quantities",
+              "htmlContent": "<p>Physical quantities are measurable properties such as length, mass, time, and temperature.</p>",
+              "data": {
+                "blockType": "text",
+                "title": "Physical Quantities",
+                "cssStyles": "",
+                "markdown": "Physical quantities are measurable properties such as length, mass, time, and temperature."
+              }
+            }
+          ],
+
+          "topics": [
+            {
+              "lessonId": "physics_lesson_1",
+              "title": "SI Base Units",
+              "description": "Learn the seven fundamental SI base units.",
+              "isPublished": false,
+
+              "content": [
+                {
+                  "type": "HTML",
+                  "title": "The Seven SI Base Units",
+                  "htmlContent": "<p>The SI system defines seven base units including metre, kilogram, second, ampere, kelvin, mole, and candela.</p>",
+                  "data": {
+                    "blockType": "text",
+                    "title": "The Seven SI Base Units",
+                    "cssStyles": "",
+                    "markdown": "The SI system defines seven base units including metre, kilogram, second, ampere, kelvin, mole, and candela."
+                  }
+                }
+              ],
+
+              "quiz": {
+                "title": "SI Units Quick Check",
+                "courseId": "course_physics_1",
+                "moduleId": "physics_mod_1",
+                "lessonId": "physics_lesson_1",
+                "topicId": "physics_topic_1",
+                "quizTag": "SELF_TEST",
+                "passingScore": 50,
+                "questions": [
+                  {
+                    "question": "What is the SI unit of length?",
+                    "questionType": "MCQ_SINGLE",
+                    "options": [
+                      "Kilogram",
+                      "Metre",
+                      "Second",
+                      "Newton"
+                    ],
+                    "correctAnswer": "Metre",
+                    "marks": 1,
+                    "difficulty": "EASY",
+                    "explanation": "The metre is the SI base unit of length."
+                  },
+                  {
+                    "question": "What is the SI unit of time?",
+                    "questionType": "MCQ_SINGLE",
+                    "options": [
+                      "Hour",
+                      "Minute",
+                      "Second",
+                      "Day"
+                    ],
+                    "correctAnswer": "Second",
+                    "marks": 1,
+                    "difficulty": "EASY",
+                    "explanation": "The second is the SI base unit of time."
+                  }
+                ]
+              },
+
+              "assignment": {
+                "title": "Identify Physical Units",
+                "courseId": "course_physics_1",
+                "moduleId": "physics_mod_1",
+                "lessonId": "physics_lesson_1",
+                "topicId": "physics_topic_1",
+                "dueDate": "2026-11-15T23:59:00.000Z",
+                "marks": 10,
+                "assessmentType": "EXERCISE",
+                "estimatedTime": 15,
+                "description": "Identify the appropriate SI units for different physical quantities."
+              }
+            },
+
+            {
+              "lessonId": "physics_lesson_1",
+              "title": "Measurement Errors",
+              "description": "Understand accuracy, precision, and common measurement errors.",
+              "isPublished": false,
+
+              "content": [
+                {
+                  "type": "HTML",
+                  "title": "Accuracy and Precision",
+                  "htmlContent": "<p>Accuracy describes how close a measurement is to the true value, while precision describes the consistency of repeated measurements.</p>",
+                  "data": {
+                    "blockType": "text",
+                    "title": "Accuracy and Precision",
+                    "cssStyles": "",
+                    "markdown": "Accuracy describes how close a measurement is to the true value, while precision describes the consistency of repeated measurements."
+                  }
+                }
+              ],
+
+              "quiz": {
+                "title": "Measurement Errors Quiz",
+                "courseId": "course_physics_1",
+                "moduleId": "physics_mod_1",
+                "lessonId": "physics_lesson_1",
+                "quizTag": "SELF_TEST",
+                "passingScore": 60,
+                "questions": [
+                  {
+                    "question": "Which term describes how close a measurement is to the true value?",
+                    "questionType": "MCQ_SINGLE",
+                    "options": [
+                      "Precision",
+                      "Accuracy",
+                      "Resolution",
+                      "Range"
+                    ],
+                    "correctAnswer": "Accuracy",
+                    "marks": 1,
+                    "difficulty": "EASY",
+                    "explanation": "Accuracy describes closeness to the true or accepted value."
+                  }
+                ]
+              },
+
+              "assignment": {
+                "title": "Measurement Analysis",
+                "courseId": "course_physics_1",
+                "moduleId": "physics_mod_1",
+                "lessonId": "physics_lesson_1",
+                "dueDate": "2026-11-20T23:59:00.000Z",
+                "marks": 10,
+                "assessmentType": "EXERCISE",
+                "estimatedTime": 20,
+                "description": "Analyze a set of measurements and identify their accuracy and precision."
+              }
+            }
+          ],
+
+          "quiz": {
+            "title": "Physical Quantities and SI Units - Lesson Quiz",
+            "courseId": "course_physics_1",
+            "moduleId": "physics_mod_1",
+            "lessonId": "physics_lesson_1",
+            "quizTag": "LESSON_ASSESSMENT",
+            "passingScore": 60,
+            "questions": [
+              {
+                "question": "Which of the following is an SI base unit?",
+                "questionType": "MCQ_SINGLE",
+                "options": [
+                  "Newton",
+                  "Joule",
+                  "Kilogram",
+                  "Watt"
+                ],
+                "correctAnswer": "Kilogram",
+                "marks": 1,
+                "difficulty": "EASY",
+                "explanation": "Kilogram is one of the seven SI base units."
+              },
+              {
+                "question": "What does precision describe?",
+                "questionType": "MCQ_SINGLE",
+                "options": [
+                  "Closeness to the true value",
+                  "Consistency of repeated measurements",
+                  "Size of an object",
+                  "Unit conversion"
+                ],
+                "correctAnswer": "Consistency of repeated measurements",
+                "marks": 1,
+                "difficulty": "MEDIUM",
+                "explanation": "Precision refers to how consistently repeated measurements agree."
+              }
+            ]
+          },
+
+          "assignment": {
+            "title": "SI Measurement Practice",
+            "courseId": "course_physics_1",
+            "moduleId": "physics_mod_1",
+            "lessonId": "physics_lesson_1",
+            "dueDate": "2026-11-25T23:59:00.000Z",
+            "marks": 15,
+            "assessmentType": "EXERCISE",
+            "estimatedTime": 30,
+            "description": "Solve practical problems involving SI units, measurements, accuracy, and precision."
+          }
+        }
+      ],
+
+      "quiz": {
+        "title": "Units and Measurements - Module Quiz",
+        "courseId": "course_physics_1",
+        "moduleId": "physics_mod_1",
+        "quizTag": "MODULE_ASSESSMENT",
+        "passingScore": 60,
+        "questions": [
+          {
+            "question": "Which is the SI unit of mass?",
+            "questionType": "MCQ_SINGLE",
+            "options": [
+              "Gram",
+              "Kilogram",
+              "Pound",
+              "Newton"
+            ],
+            "correctAnswer": "Kilogram",
+            "marks": 1,
+            "difficulty": "EASY",
+            "explanation": "The kilogram is the SI base unit of mass."
+          },
+          {
+            "question": "What is the main purpose of a standard unit?",
+            "questionType": "MCQ_SINGLE",
+            "options": [
+              "To make measurements comparable",
+              "To increase object size",
+              "To change physical laws",
+              "To remove all errors"
+            ],
+            "correctAnswer": "To make measurements comparable",
+            "marks": 1,
+            "difficulty": "MEDIUM",
+            "explanation": "Standard units provide a common reference for measurements."
+          }
+        ]
+      },
+
+      "assignment": {
+        "title": "Units and Measurements Practical Assignment",
+        "courseId": "course_physics_1",
+        "moduleId": "physics_mod_1",
+        "dueDate": "2026-12-01T23:59:00.000Z",
+        "marks": 20,
+        "assessmentType": "EXERCISE",
+        "estimatedTime": 45,
+        "description": "Complete practical measurement problems and demonstrate your understanding of SI units, accuracy, precision, and measurement errors."
+      }
+    },
+
+    {
+      "courseId": "course_physics_1",
+      "title": "Motion in a Straight Line",
+      "description": "Learn the fundamental concepts of position, displacement, velocity, acceleration, and equations of motion.",
+
+      "content": [
+        {
+          "type": "HTML",
+          "title": "Introduction to Motion",
+          "htmlContent": "<p>Motion describes the change in position of an object with respect to time.</p>",
+          "data": {
+            "blockType": "text",
+            "title": "Introduction to Motion",
+            "cssStyles": "",
+            "markdown": "Motion describes the change in position of an object with respect to time."
+          }
+        }
+      ],
+
+      "lessons": [
+        {
+          "moduleId": "physics_mod_2",
+          "title": "Position, Distance and Displacement",
+          "description": "Understand how the position and movement of objects are described.",
+          "isPublished": false,
+
+          "content": [
+            {
+              "type": "HTML",
+              "title": "Distance and Displacement",
+              "htmlContent": "<p>Distance is the total path travelled, while displacement is the change in position from the initial to final point.</p>",
+              "data": {
+                "blockType": "text",
+                "title": "Distance and Displacement",
+                "cssStyles": "",
+                "markdown": "Distance is the total path travelled, while displacement is the change in position from the initial to final point."
+              }
+            }
+          ],
+
+          "topics": [
+            {
+              "lessonId": "physics_lesson_2",
+              "title": "Distance",
+              "description": "Learn the concept of distance travelled by an object.",
+              "isPublished": false,
+
+              "content": [
+                {
+                  "type": "HTML",
+                  "title": "Understanding Distance",
+                  "htmlContent": "<p>Distance is a scalar quantity representing the total length of the path travelled.</p>",
+                  "data": {
+                    "blockType": "text",
+                    "title": "Understanding Distance",
+                    "cssStyles": "",
+                    "markdown": "Distance is a scalar quantity representing the total length of the path travelled."
+                  }
+                }
+              ],
+
+              "quiz": {
+                "title": "Distance Quick Check",
+                "courseId": "course_physics_1",
+                "moduleId": "physics_mod_2",
+                "lessonId": "physics_lesson_2",
+                "topicId": "physics_topic_2",
+                "quizTag": "SELF_TEST",
+                "passingScore": 50,
+                "questions": [
+                  {
+                    "question": "Distance is a:",
+                    "questionType": "MCQ_SINGLE",
+                    "options": [
+                      "Vector quantity",
+                      "Scalar quantity",
+                      "Tensor quantity",
+                      "Dimensionless quantity"
+                    ],
+                    "correctAnswer": "Scalar quantity",
+                    "marks": 1,
+                    "difficulty": "EASY",
+                    "explanation": "Distance has magnitude but no direction, so it is scalar."
+                  }
+                ]
+              },
+
+              "assignment": {
+                "title": "Distance Calculation Exercise",
+                "courseId": "course_physics_1",
+                "moduleId": "physics_mod_2",
+                "lessonId": "physics_lesson_2",
+                "topicId": "physics_topic_2",
+                "dueDate": "2026-12-05T23:59:00.000Z",
+                "marks": 10,
+                "assessmentType": "EXERCISE",
+                "estimatedTime": 20,
+                "description": "Calculate the distance travelled by objects following different paths."
+              }
+            }
+          ],
+
+          "quiz": {
+            "title": "Motion Basics - Lesson Quiz",
+            "courseId": "course_physics_1",
+            "moduleId": "physics_mod_2",
+            "lessonId": "physics_lesson_2",
+            "quizTag": "LESSON_ASSESSMENT",
+            "passingScore": 60,
+            "questions": [
+              {
+                "question": "Which quantity includes direction?",
+                "questionType": "MCQ_SINGLE",
+                "options": [
+                  "Distance",
+                  "Speed",
+                  "Displacement",
+                  "Time"
+                ],
+                "correctAnswer": "Displacement",
+                "marks": 1,
+                "difficulty": "EASY",
+                "explanation": "Displacement is a vector quantity and therefore has direction."
+              }
+            ]
+          },
+
+          "assignment": {
+            "title": "Motion Analysis Assignment",
+            "courseId": "course_physics_1",
+            "moduleId": "physics_mod_2",
+            "lessonId": "physics_lesson_2",
+            "dueDate": "2026-12-10T23:59:00.000Z",
+            "marks": 15,
+            "assessmentType": "EXERCISE",
+            "estimatedTime": 30,
+            "description": "Analyze different motion scenarios and calculate distance and displacement."
+          }
+        }
+      ],
+
+      "quiz": {
+        "title": "Motion in a Straight Line - Module Quiz",
+        "courseId": "course_physics_1",
+        "moduleId": "physics_mod_2",
+        "quizTag": "MODULE_ASSESSMENT",
+        "passingScore": 60,
+        "questions": [
+          {
+            "question": "Velocity is defined as:",
+            "questionType": "MCQ_SINGLE",
+            "options": [
+              "Distance divided by time",
+              "Displacement divided by time",
+              "Time divided by distance",
+              "Acceleration divided by time"
+            ],
+            "correctAnswer": "Displacement divided by time",
+            "marks": 1,
+            "difficulty": "MEDIUM",
+            "explanation": "Average velocity is displacement divided by the time taken."
+          }
+        ]
+      },
+
+      "assignment": {
+        "title": "Motion and Kinematics Assignment",
+        "courseId": "course_physics_1",
+        "moduleId": "physics_mod_2",
+        "dueDate": "2026-12-15T23:59:00.000Z",
+        "marks": 20,
+        "assessmentType": "EXERCISE",
+        "estimatedTime": 45,
+        "description": "Solve numerical problems involving distance, displacement, velocity, and acceleration."
+      }
+    }
+  ],
+
+  "quiz": {
+    "title": "Introduction to Physics - Final Course Quiz",
+    "courseId": "course_physics_1",
+    "quizTag": "COURSE_ASSESSMENT",
+    "passingScore": 60,
+    "questions": [
+      {
+        "question": "Which branch of physics deals primarily with motion and forces?",
+        "questionType": "MCQ_SINGLE",
+        "options": [
+          "Mechanics",
+          "Optics",
+          "Thermodynamics",
+          "Electromagnetism"
+        ],
+        "correctAnswer": "Mechanics",
+        "marks": 1,
+        "difficulty": "EASY",
+        "explanation": "Mechanics studies motion, forces, and the effects of forces on objects."
+      },
+      {
+        "question": "Which of the following is a vector quantity?",
+        "questionType": "MCQ_SINGLE",
+        "options": [
+          "Mass",
+          "Time",
+          "Distance",
+          "Displacement"
+        ],
+        "correctAnswer": "Displacement",
+        "marks": 1,
+        "difficulty": "EASY",
+        "explanation": "Displacement has both magnitude and direction."
+      },
+      {
+        "question": "What is the SI unit of mass?",
+        "questionType": "MCQ_SINGLE",
+        "options": [
+          "Gram",
+          "Kilogram",
+          "Newton",
+          "Joule"
+        ],
+        "correctAnswer": "Kilogram",
+        "marks": 1,
+        "difficulty": "EASY",
+        "explanation": "Kilogram is the SI base unit of mass."
+      }
+    ]
+  },
+
+  "assignment": {
+    "title": "Introduction to Physics Final Assignment",
+    "courseId": "course_physics_1",
+    "dueDate": "2026-12-20T23:59:00.000Z",
+    "marks": 30,
+    "assessmentType": "EXERCISE",
+    "estimatedTime": 60,
+    "description": "Complete a comprehensive set of physics problems covering measurement, units, motion, displacement, velocity, and acceleration."
+  }
+}
