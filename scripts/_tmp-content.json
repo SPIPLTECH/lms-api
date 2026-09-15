@@ -1,0 +1,18 @@
+{
+  "id": "cmtwt4dtv01rgfi1zbt4jza3t",
+  "order": 1,
+  "courseId": null,
+  "moduleId": null,
+  "lessonId": null,
+  "topicId": "2888a782-42b6-47e8-ba0e-07205cdf04e4",
+  "type": "HTML",
+  "title": "Generations of Computers",
+  "videoUrl": null,
+  "fileUrl": null,
+  "htmlContent": "<div>&lt;h2&gt;Generations of Computers&lt;/h2&gt;<br>Five generations: 1st Vacuum Tubes (1940–1956), 2nd Transistors (1956–1963), 3rd Integrated Circuits (1964–1971), 4th Microprocessors (1971–Present), 5th Artificial Intelligence (Present &amp; Beyond). Key examples include ENIAC, UNIVAC I, IBM 701, IBM 1401, IBM 360, IBM PC, Apple Macintosh, IBM Watson and modern AI assistants.</div>",
+  "externalUrl": null,
+  "duration": null,
+  "data": null,
+  "createdAt": "2026-09-11T10:22:08.899Z",
+  "updatedAt": "2026-09-11T10:22:08.899Z"
+}
