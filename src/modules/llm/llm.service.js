@@ -65,7 +65,46 @@ const generate = async ({ systemPrompt, prompt, context, think = false, size } =
 // thinkingEnabled }) — the only difference is that `onToken` fires with each
 // content delta as Ollama produces it, and `response` is the concatenation
 // of everything forwarded to `onToken` rather than one final blob.
-const generateStream = async ({ systemPrompt, prompt, context, think = false, onToken, signal } = {}) => {
+const generateStream = async ({
+  systemPrompt,
+  prompt,
+  context,
+  think = false,
+  onToken,
+  signal,
+  provider,
+  responseMimeType,
+  maxOutputTokens,
+} = {}) => {
+  // Opt-in Gemini streaming. Callers must ask for it explicitly (provider:
+  // "gemini") — the default stays Ollama so the live adaptive-learning
+  // stream keeps the exact behaviour it has today. Unlike generate(), the
+  // presence of GEMINI_API_KEY alone must NOT reroute this path, because
+  // adaptive-learning already runs with that key set.
+  if (provider === "gemini") {
+    const geminiRes = await geminiProvider.generateStream({
+      systemPrompt,
+      prompt: buildPromptWithContext(prompt, context),
+      responseMimeType: responseMimeType || "text/plain",
+      maxOutputTokens,
+      onToken,
+      signal,
+    });
+
+    return {
+      response: geminiRes.response,
+      usage: {
+        promptTokens: toNullableNumber(geminiRes.usage?.promptTokenCount),
+        outputTokens: toNullableNumber(geminiRes.usage?.candidatesTokenCount),
+        totalTokens: toNullableNumber(geminiRes.usage?.totalTokenCount),
+      },
+      latency: { totalMs: geminiRes.latency?.totalMs ?? null },
+      model: geminiRes.model,
+      finishReason: geminiRes.finishReason,
+      thinkingEnabled: false,
+    };
+  }
+
   let fullText = "";
   const handleToken = (token) => {
     fullText += token;
