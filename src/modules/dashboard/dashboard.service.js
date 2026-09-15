@@ -257,6 +257,7 @@ const getInstructorDashboard = async (instructorId, courseId) => {
     quizSubmissionGroups,
     quizSubmissionsThisWeek,
     reviewGroups,
+    inactiveStudentsCount,
     pendingFeedbackCount
   ] = await Promise.all([
     // All enrollments for this instructor's own courses (bounded, not platform-wide)

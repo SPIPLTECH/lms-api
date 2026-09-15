@@ -52,7 +52,11 @@ const progressRoutes = require("./modules/progress/progress.routes");
 const app = express();
 app.disable('etag');
 
-app.use(cors());
+// Every API call from the frontend is cross-origin with an Authorization
+// header, so the browser preflights it. Without Access-Control-Max-Age that
+// preflight result is only cached for ~5s, adding an extra OPTIONS round trip
+// ahead of most requests. 7200s is the longest Chromium honours.
+app.use(cors({ maxAge: 7200 }));
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
