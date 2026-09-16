@@ -278,3 +278,101 @@ test("gateway normalises Gemini usage into the shared shape", async () => {
   assert.equal(res.usage.outputTokens, 2);
   assert.equal(res.thinkingEnabled, false);
 });
+
+/* ---------------- model fallback tests ---------------- */
+
+test("generateStream() falls back to secondary model when primary exhausts retries before first token", async () => {
+  const origFallbacks = process.env.GEMINI_FALLBACK_MODELS;
+  process.env.GEMINI_FALLBACK_MODELS = "gemini-3.5-flash";
+
+  try {
+    streamImpl = (params) => {
+      if (params.model === "gemini-3.6-flash") {
+        const err = new Error("503 UNAVAILABLE");
+        err.status = 503;
+        throw err;
+      }
+      return chunksOf(["fallback-stream"]);
+    };
+
+    const received = [];
+    const res = await geminiProvider.generateStream({
+      prompt: "test",
+      onToken: (t) => received.push(t),
+    });
+
+    assert.equal(res.response, "fallback-stream");
+    assert.equal(res.model, "gemini-3.5-flash");
+    assert.deepEqual(received, ["fallback-stream"]);
+    assert.equal(streamCalls.length, 4, "3 attempts on primary + 1 attempt on fallback model");
+    assert.equal(streamCalls[0].model, "gemini-3.6-flash");
+    assert.equal(streamCalls[3].model, "gemini-3.5-flash");
+  } finally {
+    if (origFallbacks !== undefined) process.env.GEMINI_FALLBACK_MODELS = origFallbacks;
+    else delete process.env.GEMINI_FALLBACK_MODELS;
+  }
+});
+
+test("generateStream() does NOT fall back once tokens have been emitted", async () => {
+  const origFallbacks = process.env.GEMINI_FALLBACK_MODELS;
+  process.env.GEMINI_FALLBACK_MODELS = "gemini-3.5-flash";
+
+  try {
+    streamImpl = (params) => {
+      if (params.model === "gemini-3.6-flash") {
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield { text: "token1 ", candidates: [{}] };
+            const err = new Error("503 UNAVAILABLE");
+            err.status = 503;
+            throw err;
+          },
+        };
+      }
+      return chunksOf(["should-not-reach-fallback"]);
+    };
+
+    const received = [];
+    await assert.rejects(
+      () => geminiProvider.generateStream({ prompt: "test", onToken: (t) => received.push(t) }),
+      (err) => {
+        assert.equal(err.code, "GEMINI_STREAM_INTERRUPTED");
+        assert.equal(err.partialResponse, "token1 ");
+        return true;
+      }
+    );
+
+    assert.deepEqual(received, ["token1 "]);
+    assert.equal(streamCalls.length, 1, "must not attempt secondary model once tokens were emitted");
+  } finally {
+    if (origFallbacks !== undefined) process.env.GEMINI_FALLBACK_MODELS = origFallbacks;
+    else delete process.env.GEMINI_FALLBACK_MODELS;
+  }
+});
+
+test("generateStream() does NOT fall back on non-retryable 401 auth error", async () => {
+  const origFallbacks = process.env.GEMINI_FALLBACK_MODELS;
+  process.env.GEMINI_FALLBACK_MODELS = "gemini-3.5-flash";
+
+  try {
+    streamImpl = () => {
+      const err = new Error("401 Unauthorized: invalid API key");
+      err.status = 401;
+      throw err;
+    };
+
+    await assert.rejects(
+      () => geminiProvider.generateStream({ prompt: "test", onToken: () => {} }),
+      (err) => {
+        assert.equal(err.code, "GEMINI_AUTH_ERROR");
+        return true;
+      }
+    );
+
+    assert.equal(streamCalls.length, 1, "must fail immediately on auth error without attempting fallback model");
+  } finally {
+    if (origFallbacks !== undefined) process.env.GEMINI_FALLBACK_MODELS = origFallbacks;
+    else delete process.env.GEMINI_FALLBACK_MODELS;
+  }
+});
+

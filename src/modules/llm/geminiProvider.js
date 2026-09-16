@@ -3,6 +3,24 @@ const { GoogleGenAI } = require("@google/genai");
 const getApiKey = () => process.env.GEMINI_API_KEY;
 const getModelName = () => process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
+const getModelNames = () => {
+  const primary = (process.env.GEMINI_MODEL || "gemini-3.6-flash").trim();
+  const rawFallbacks = process.env.GEMINI_FALLBACK_MODELS || "";
+
+  const fallbacks = rawFallbacks
+    .split(",")
+    .map((m) => m.trim())
+    .filter((m) => m.length > 0);
+
+  const models = [primary];
+  for (const model of fallbacks) {
+    if (!models.includes(model)) {
+      models.push(model);
+    }
+  }
+  return models;
+};
+
 // Bounded output-token caps per requested course "size" (SMALL/MEDIUM/LARGE
 // — see aiCourseGenerator.service.js's courseSize). Prevents an unbounded
 // generation from running arbitrarily long, while staying generous enough
@@ -175,8 +193,8 @@ const classifyGeminiError = (err) => {
 /**
  * Executes a structured AI generation request via Google Gemini API (@google/genai).
  * Retries a bounded number of times, with exponential backoff, but only for
- * transient failures (429 / 5xx / network errors) — never for a missing/bad
- * API key or a malformed request, which fail the same way on every attempt.
+ * transient failures (429 / 5xx / network errors). If a model exhausts its retries
+ * with a retryable error, falls back to the next configured model.
  */
 const generate = async ({ systemPrompt, prompt, context, size, responseMimeType } = {}) => {
   const apiKey = getApiKey();
@@ -187,7 +205,7 @@ const generate = async ({ systemPrompt, prompt, context, size, responseMimeType 
   }
 
   const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
-  const model = getModelName();
+  const models = getModelNames();
   const maxOutputTokens = getMaxOutputTokens(size);
 
   let fullPrompt = prompt || "";
@@ -195,111 +213,103 @@ const generate = async ({ systemPrompt, prompt, context, size, responseMimeType 
     fullPrompt += `\n\nContext:\n${JSON.stringify(context, null, 2)}`;
   }
 
-  let attempt = 0;
-  // Set only after an empty/blocked (e.g. RECITATION) response, so the next
-  // retry attempt — and only that attempt — asks the model to paraphrase
-  // instead of repeating the exact same prompt verbatim. A plain retry of an
-  // identical prompt has real (if not huge) value here since generation
-  // isn't fully deterministic, but nudging the instructions gives the retry
-  // a genuinely different chance rather than just re-rolling the dice.
-  let lastFinishReason = null;
+  let lastErr = null;
 
-  while (true) {
-    try {
-      const startTime = Date.now();
-      console.log(
-        `[Gemini Provider] Sending generation request to model: ${model} (maxOutputTokens: ${maxOutputTokens})${
-          attempt > 0 ? ` [retry ${attempt}/${MAX_RETRIES}]` : ""
-        }`
-      );
+  for (let mIdx = 0; mIdx < models.length; mIdx += 1) {
+    const model = models[mIdx];
+    let attempt = 0;
+    let lastFinishReason = null;
 
-      const attemptSystemPrompt = BLOCKED_FINISH_REASONS.has(lastFinishReason)
-        ? `${systemPrompt}\n\nIMPORTANT: Your previous response was blocked (finishReason=${lastFinishReason}) for potentially reproducing source/context text verbatim. Paraphrase everything in your own original wording this time — do not copy long passages from the prompt, the provided context, or any reference material.`
-        : systemPrompt;
-
-      const response = await ai.models.generateContent({
-        model,
-        contents: fullPrompt,
-        config: {
-          systemInstruction: attemptSystemPrompt,
-          responseMimeType: responseMimeType || DEFAULT_RESPONSE_MIME_TYPE,
-          maxOutputTokens,
-        },
-      });
-
-      const duration = Date.now() - startTime;
-      const usage = response.usageMetadata || {};
-      const finishReason = response.candidates?.[0]?.finishReason;
-      const responseText = response.text || "";
-      // Kept permanently (not stripped after testing): one extra log line,
-      // same [Gemini Provider] convention as the rest of this file, and the
-      // only place in the app that ever surfaces token counts/finishReason
-      // — directly answers "is this response close to truncating" and "how
-      // much of maxOutputTokens did this actually use" without needing a
-      // one-off diagnostic script each time it's in question.
-      console.log(
-        `[Gemini Provider] Gemini response received in ${duration} ms | finishReason=${finishReason} | ` +
-          `promptTokens=${usage.promptTokenCount ?? "?"} outputTokens=${usage.candidatesTokenCount ?? "?"} ` +
-          `thoughtsTokens=${usage.thoughtsTokenCount ?? 0} totalTokens=${usage.totalTokenCount ?? "?"} | ` +
-          `responseChars=${responseText.length}`
-      );
-
-      // The SDK does NOT throw for a blocked/empty candidate — `response.text`
-      // just comes back "". Detect that explicitly here, before any caller
-      // can hand an empty string to JSON.parse, and route it through the
-      // SAME catch/retry/classification path below as a real error instead
-      // of returning a fake "success".
-      if (!responseText || !responseText.trim()) {
-        const emptyErr = new Error(`Gemini returned an empty response (finishReason=${finishReason || "UNKNOWN"}).`);
-        emptyErr.isEmptyResponse = true;
-        emptyErr.finishReason = finishReason;
-        throw emptyErr;
-      }
-
-      return {
-        response: responseText,
-        usage,
-        finishReason,
-        model,
-      };
-    } catch (err) {
-      console.error(
-        "[Gemini Provider] Gemini API Error:",
-        err.isEmptyResponse ? err.message : err.message || err
-      );
-
-      if (isRetryableError(err) && attempt < MAX_RETRIES) {
-        const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
-        attempt += 1;
-        if (err.isEmptyResponse) lastFinishReason = err.finishReason;
-        console.warn(
-          `[Gemini Provider] ${
-            err.isEmptyResponse ? `Empty/blocked response (finishReason=${err.finishReason || "UNKNOWN"})` : "Transient error"
-          } — retrying attempt ${attempt}/${MAX_RETRIES} in ${delayMs}ms...`
+    while (true) {
+      try {
+        const startTime = Date.now();
+        console.log(
+          `[Gemini Provider] Sending generation request to model: ${model} (maxOutputTokens: ${maxOutputTokens})${
+            attempt > 0 ? ` [retry ${attempt}/${MAX_RETRIES}]` : ""
+          }`
         );
-        await sleep(delayMs);
-        continue;
-      }
 
-      throw classifyGeminiError(err);
+        const attemptSystemPrompt = BLOCKED_FINISH_REASONS.has(lastFinishReason)
+          ? `${systemPrompt}\n\nIMPORTANT: Your previous response was blocked (finishReason=${lastFinishReason}) for potentially reproducing source/context text verbatim. Paraphrase everything in your own original wording this time — do not copy long passages from the prompt, the provided context, or any reference material.`
+          : systemPrompt;
+
+        const response = await ai.models.generateContent({
+          model,
+          contents: fullPrompt,
+          config: {
+            systemInstruction: attemptSystemPrompt,
+            responseMimeType: responseMimeType || DEFAULT_RESPONSE_MIME_TYPE,
+            maxOutputTokens,
+          },
+        });
+
+        const duration = Date.now() - startTime;
+        const usage = response.usageMetadata || {};
+        const finishReason = response.candidates?.[0]?.finishReason;
+        const responseText = response.text || "";
+
+        console.log(
+          `[Gemini Provider] Gemini response received in ${duration} ms | finishReason=${finishReason} | ` +
+            `promptTokens=${usage.promptTokenCount ?? "?"} outputTokens=${usage.candidatesTokenCount ?? "?"} ` +
+            `thoughtsTokens=${usage.thoughtsTokenCount ?? 0} totalTokens=${usage.totalTokenCount ?? "?"} | ` +
+            `responseChars=${responseText.length}`
+        );
+
+        if (!responseText || !responseText.trim()) {
+          const emptyErr = new Error(`Gemini returned an empty response (finishReason=${finishReason || "UNKNOWN"}).`);
+          emptyErr.isEmptyResponse = true;
+          emptyErr.finishReason = finishReason;
+          throw emptyErr;
+        }
+
+        return {
+          response: responseText,
+          usage,
+          finishReason,
+          model,
+        };
+      } catch (err) {
+        console.error(
+          "[Gemini Provider] Gemini API Error:",
+          err.isEmptyResponse ? err.message : err.message || err
+        );
+
+        lastErr = err;
+
+        if (isRetryableError(err)) {
+          if (attempt < MAX_RETRIES) {
+            const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+            attempt += 1;
+            if (err.isEmptyResponse) lastFinishReason = err.finishReason;
+            console.warn(
+              `[Gemini Provider] ${
+                err.isEmptyResponse ? `Empty/blocked response (finishReason=${err.finishReason || "UNKNOWN"})` : "Transient error"
+              } — retrying attempt ${attempt}/${MAX_RETRIES} in ${delayMs}ms...`
+            );
+            await sleep(delayMs);
+            continue;
+          }
+
+          if (mIdx < models.length - 1) {
+            const nextModel = models[mIdx + 1];
+            console.warn(
+              `[Gemini Provider] Model ${model} failed with retryable error after ${MAX_RETRIES} retries. Trying fallback model: ${nextModel}`
+            );
+            break;
+          }
+        }
+
+        throw classifyGeminiError(err);
+      }
     }
   }
+
+  throw classifyGeminiError(lastErr || new Error("All configured Gemini models failed."));
 };
 
 /**
  * Streaming counterpart to generate(), for conversational callers.
- *
- * Deliberate differences from generate():
- *
- * 1. RETRY ONLY BEFORE THE FIRST TOKEN. Once a chunk has been forwarded to
- *    `onToken` the caller has already flushed it to the client over SSE —
- *    there is no way to un-send it, so a retry would duplicate or contradict
- *    text the user is already reading. `emitted` gates this.
- * 2. No `responseMimeType` default of JSON — a streamed structured document
- *    is not useful, so chat callers pass text/plain and that is the default
- *    here. generate() keeps the JSON default for its existing callers.
- * 3. AbortSignal is honoured both before and during the stream, so a client
- *    disconnect stops us pulling further chunks from Gemini.
+ * Supports model fallback when a stream fails BEFORE the first token has been emitted.
  */
 const generateStream = async ({
   systemPrompt,
@@ -319,133 +329,148 @@ const generateStream = async ({
   }
 
   const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
-  const model = getModelName();
+  const models = getModelNames();
   const cap = Number(maxOutputTokens) || getMaxOutputTokens("SMALL");
   const timeoutMs = getTimeoutMs();
 
   let fullPrompt = prompt || "";
   if (context && typeof context === "object" && Object.keys(context).length > 0) {
-    fullPrompt += `
-
-Context:
-${JSON.stringify(context, null, 2)}`;
+    fullPrompt += `\n\nContext:\n${JSON.stringify(context, null, 2)}`;
   }
 
-  let attempt = 0;
+  let lastErr = null;
 
-  while (true) {
-    // Reset per attempt: a retry that never emitted starts from a clean slate.
-    let emitted = false;
-    let text = "";
-    let usage = {};
-    let finishReason = null;
-    const startTime = Date.now();
+  for (let mIdx = 0; mIdx < models.length; mIdx += 1) {
+    const model = models[mIdx];
+    let attempt = 0;
 
-    try {
-      if (signal?.aborted) {
-        const err = new Error("Gemini request aborted.");
-        err.isAbort = true;
-        throw err;
-      }
+    while (true) {
+      // Reset per attempt: a retry that never emitted starts from a clean slate.
+      let emitted = false;
+      let text = "";
+      let usage = {};
+      let finishReason = null;
+      const startTime = Date.now();
 
-      console.log(
-        `[Gemini Provider] Streaming request to model: ${model} (maxOutputTokens: ${cap})` +
-          `${attempt > 0 ? ` [retry ${attempt}/${MAX_RETRIES}]` : ""}`
-      );
-
-      // Opening the stream is the last point a retry is safe, so it gets the
-      // deadline/abort race. Individual chunk reads are checked inline below.
-      const stream = await withDeadline(
-        ai.models.generateContentStream({
-          model,
-          contents: fullPrompt,
-          config: {
-            systemInstruction: systemPrompt,
-            responseMimeType: responseMimeType || "text/plain",
-            maxOutputTokens: cap,
-          },
-        }),
-        { signal, timeoutMs }
-      );
-
-      for await (const chunk of stream) {
+      try {
         if (signal?.aborted) {
           const err = new Error("Gemini request aborted.");
           err.isAbort = true;
           throw err;
         }
 
-        if (Date.now() - startTime > timeoutMs) {
-          const err = new Error("Gemini stream timed out.");
-          err.isTimeout = true;
-          throw err;
+        console.log(
+          `[Gemini Provider] Streaming request to model: ${model} (maxOutputTokens: ${cap})` +
+            `${attempt > 0 ? ` [retry ${attempt}/${MAX_RETRIES}]` : ""}`
+        );
+
+        // Opening the stream is the last point a retry is safe, so it gets the
+        // deadline/abort race. Individual chunk reads are checked inline below.
+        const stream = await withDeadline(
+          ai.models.generateContentStream({
+            model,
+            contents: fullPrompt,
+            config: {
+              systemInstruction: systemPrompt,
+              responseMimeType: responseMimeType || "text/plain",
+              maxOutputTokens: cap,
+            },
+          }),
+          { signal, timeoutMs }
+        );
+
+        for await (const chunk of stream) {
+          if (signal?.aborted) {
+            const err = new Error("Gemini request aborted.");
+            err.isAbort = true;
+            throw err;
+          }
+
+          if (Date.now() - startTime > timeoutMs) {
+            const err = new Error("Gemini stream timed out.");
+            err.isTimeout = true;
+            throw err;
+          }
+
+          const piece = chunk?.text || "";
+          if (piece) {
+            text += piece;
+            emitted = true;
+            if (typeof onToken === "function") onToken(piece);
+          }
+
+          if (chunk?.usageMetadata) usage = chunk.usageMetadata;
+          const cfr = chunk?.candidates?.[0]?.finishReason;
+          if (cfr) finishReason = cfr;
         }
 
-        const piece = chunk?.text || "";
-        if (piece) {
-          text += piece;
-          emitted = true;
-          if (typeof onToken === "function") onToken(piece);
+        const duration = Date.now() - startTime;
+        console.log(
+          `[Gemini Provider] Stream complete in ${duration} ms | finishReason=${finishReason} | ` +
+            `promptTokens=${usage.promptTokenCount ?? "?"} outputTokens=${usage.candidatesTokenCount ?? "?"} ` +
+            `totalTokens=${usage.totalTokenCount ?? "?"} | responseChars=${text.length}`
+        );
+
+        // Same blocked/empty detection as generate(): the SDK does not throw,
+        // it simply yields nothing. Retryable only because nothing was emitted.
+        if (!text.trim()) {
+          const emptyErr = new Error(
+            `Gemini returned an empty response (finishReason=${finishReason || "UNKNOWN"}).`
+          );
+          emptyErr.isEmptyResponse = true;
+          emptyErr.finishReason = finishReason;
+          throw emptyErr;
         }
 
-        if (chunk?.usageMetadata) usage = chunk.usageMetadata;
-        const cfr = chunk?.candidates?.[0]?.finishReason;
-        if (cfr) finishReason = cfr;
+        return { response: text, usage, finishReason, model, latency: { totalMs: duration } };
+      } catch (err) {
+        if (err.isAbort) {
+          // Caller-initiated. Not an error condition to classify or retry.
+          const abortErr = new Error("Request aborted.");
+          abortErr.isAbort = true;
+          throw abortErr;
+        }
+
+        console.error("[Gemini Provider] Gemini streaming error:", err.message || err);
+        lastErr = err;
+
+        // The core rule: never retry once the user has seen output.
+        if (emitted) {
+          // Partial output already delivered. Surface it rather than discarding
+          // what the user is reading; the caller decides how to present it.
+          const partialErr = new Error("AI response was interrupted. Please try again.");
+          partialErr.statusCode = 502;
+          partialErr.code = "GEMINI_STREAM_INTERRUPTED";
+          partialErr.partialResponse = text;
+          throw partialErr;
+        }
+
+        if (isRetryableError(err)) {
+          if (attempt < MAX_RETRIES) {
+            const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+            attempt += 1;
+            console.warn(
+              `[Gemini Provider] Stream failed before first token — retrying ${attempt}/${MAX_RETRIES} in ${delayMs}ms...`
+            );
+            await sleep(delayMs);
+            continue;
+          }
+
+          if (mIdx < models.length - 1) {
+            const nextModel = models[mIdx + 1];
+            console.warn(
+              `[Gemini Provider] Model ${model} failed before first token after ${MAX_RETRIES} retries. Trying fallback model: ${nextModel}`
+            );
+            break;
+          }
+        }
+
+        throw classifyGeminiError(err);
       }
-
-      const duration = Date.now() - startTime;
-      console.log(
-        `[Gemini Provider] Stream complete in ${duration} ms | finishReason=${finishReason} | ` +
-          `promptTokens=${usage.promptTokenCount ?? "?"} outputTokens=${usage.candidatesTokenCount ?? "?"} ` +
-          `totalTokens=${usage.totalTokenCount ?? "?"} | responseChars=${text.length}`
-      );
-
-      // Same blocked/empty detection as generate(): the SDK does not throw,
-      // it simply yields nothing. Retryable only because nothing was emitted.
-      if (!text.trim()) {
-        const emptyErr = new Error(
-          `Gemini returned an empty response (finishReason=${finishReason || "UNKNOWN"}).`
-        );
-        emptyErr.isEmptyResponse = true;
-        emptyErr.finishReason = finishReason;
-        throw emptyErr;
-      }
-
-      return { response: text, usage, finishReason, model, latency: { totalMs: duration } };
-    } catch (err) {
-      if (err.isAbort) {
-        // Caller-initiated. Not an error condition to classify or retry.
-        const abortErr = new Error("Request aborted.");
-        abortErr.isAbort = true;
-        throw abortErr;
-      }
-
-      console.error("[Gemini Provider] Gemini streaming error:", err.message || err);
-
-      // The core rule: never retry once the user has seen output.
-      if (!emitted && isRetryableError(err) && attempt < MAX_RETRIES) {
-        const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
-        attempt += 1;
-        console.warn(
-          `[Gemini Provider] Stream failed before first token — retrying ${attempt}/${MAX_RETRIES} in ${delayMs}ms...`
-        );
-        await sleep(delayMs);
-        continue;
-      }
-
-      if (emitted) {
-        // Partial output already delivered. Surface it rather than discarding
-        // what the user is reading; the caller decides how to present it.
-        const partialErr = new Error("AI response was interrupted. Please try again.");
-        partialErr.statusCode = 502;
-        partialErr.code = "GEMINI_STREAM_INTERRUPTED";
-        partialErr.partialResponse = text;
-        throw partialErr;
-      }
-
-      throw classifyGeminiError(err);
     }
   }
+
+  throw classifyGeminiError(lastErr || new Error("All configured Gemini models failed."));
 };
 
-module.exports = { generate, generateStream, getApiKey, getModelName };
+module.exports = { generate, generateStream, getApiKey, getModelName, getModelNames };
