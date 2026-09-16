@@ -23,6 +23,10 @@ class FakeGoogleGenAI {
         calls.push(params);
         return currentImpl(params);
       },
+      generateContentStream: async (params) => {
+        calls.push(params);
+        return currentImpl(params);
+      },
     };
   }
 }
@@ -143,3 +147,74 @@ test("6. Valid JSON response passes through unchanged (existing success path pre
   assert.equal(result.finishReason, "STOP");
   assert.equal(calls.length, 1);
 });
+
+test("7. getModelNames() parses primary and fallback models with trimming & deduplication", () => {
+  const origPrimary = process.env.GEMINI_MODEL;
+  const origFallbacks = process.env.GEMINI_FALLBACK_MODELS;
+
+  try {
+    process.env.GEMINI_MODEL = " gemini-3.6-flash ";
+    process.env.GEMINI_FALLBACK_MODELS = "gemini-3.5-flash, gemini-3.6-flash, gemini-3.5-flash-lite, ";
+
+    const models = geminiProvider.getModelNames();
+    assert.deepEqual(models, ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]);
+  } finally {
+    if (origPrimary !== undefined) process.env.GEMINI_MODEL = origPrimary;
+    else delete process.env.GEMINI_MODEL;
+    if (origFallbacks !== undefined) process.env.GEMINI_FALLBACK_MODELS = origFallbacks;
+    else delete process.env.GEMINI_FALLBACK_MODELS;
+  }
+});
+
+test("8. generate() falls back to fallback model when primary model exhausts retries", async () => {
+  const origFallbacks = process.env.GEMINI_FALLBACK_MODELS;
+  process.env.GEMINI_FALLBACK_MODELS = "gemini-3.5-flash";
+
+  try {
+    currentImpl = async (params) => {
+      if (params.model === "gemini-3.6-flash") {
+        throw make503Error();
+      }
+      return makeResponse({ text: '{"fallback":true}', finishReason: "STOP" });
+    };
+
+    const result = await geminiProvider.generate({ systemPrompt: "sys", prompt: "user", size: "SMALL" });
+
+    assert.equal(result.response, '{"fallback":true}');
+    assert.equal(result.model, "gemini-3.5-flash");
+    assert.equal(calls.length, 4, "3 attempts on primary model (1 initial + 2 retries) + 1 attempt on fallback model");
+    assert.equal(calls[0].model, "gemini-3.6-flash");
+    assert.equal(calls[3].model, "gemini-3.5-flash");
+  } finally {
+    if (origFallbacks !== undefined) process.env.GEMINI_FALLBACK_MODELS = origFallbacks;
+    else delete process.env.GEMINI_FALLBACK_MODELS;
+  }
+});
+
+test("9. generate() does NOT fall back to fallback model on non-retryable 401 auth error", async () => {
+  const origFallbacks = process.env.GEMINI_FALLBACK_MODELS;
+  process.env.GEMINI_FALLBACK_MODELS = "gemini-3.5-flash";
+
+  try {
+    currentImpl = async () => {
+      const err = new Error("401 Unauthorized: invalid API key");
+      err.status = 401;
+      throw err;
+    };
+
+    await assert.rejects(
+      () => geminiProvider.generate({ systemPrompt: "sys", prompt: "user", size: "SMALL" }),
+      (err) => {
+        assert.equal(err.code, "GEMINI_AUTH_ERROR");
+        return true;
+      }
+    );
+
+    assert.equal(calls.length, 1, "non-retryable auth error must fail immediately without falling back to secondary models");
+    assert.equal(calls[0].model, "gemini-3.6-flash");
+  } finally {
+    if (origFallbacks !== undefined) process.env.GEMINI_FALLBACK_MODELS = origFallbacks;
+    else delete process.env.GEMINI_FALLBACK_MODELS;
+  }
+});
+

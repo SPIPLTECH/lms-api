@@ -48,6 +48,7 @@ const conversationRoutes = require("./modules/conversations/conversation.routes"
 const messageRoutes = require("./modules/messages/message.routes");
 const landingRoutes = require("./modules/landing/landing.routes");
 const courseImportRoutes = require("./modules/course-import/routes");
+const aiAssistantRoutes = require("./modules/ai-assistant/aiAssistant.routes");
 const progressRoutes = require("./modules/progress/progress.routes");
 const app = express();
 app.disable('etag');
@@ -150,6 +151,10 @@ app.use("/upcoming-tasks", upcomingTasksRoutes);
 // remounted at the exact same URLs the frontend already calls:
 // app.use("/assessment/entry", entryAssessment.entryAssessmentRouter);
 // app.use("/student-state", entryAssessment.courseStateRouter);
+// AI Assistant (Gemini-only). Guest sub-route is public via optionalToken;
+// everything else requires a session. Separate from /conversations, which
+// is the human-to-human chat.
+app.use("/ai-assistant", aiAssistantRoutes);
 app.use("/course-import", courseImportRoutes);
 app.use("/api/ai", courseImportRoutes);
 app.use("/progress", progressRoutes);
