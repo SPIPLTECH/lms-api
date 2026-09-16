@@ -41,3 +41,7 @@ backup/
 .worktrees/
 
 .worktrees/
+
+# Student/instructor uploaded media: runtime data, not source. Files already
+# committed before this rule stay tracked; new uploads are not added.
+uploads/

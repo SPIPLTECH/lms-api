@@ -249,3 +249,64 @@ test("reorderQuizzes — two-phase batch update avoids swap collisions", async (
   });
 });
 
+test("createQuiz — an explicit order that is already taken shifts the scope's quizzes down", async (t) => {
+  const originals = {
+    findFirst: prisma.quiz.findFirst,
+    findMany: prisma.quiz.findMany,
+    update: prisma.quiz.update,
+    create: prisma.quiz.create,
+    findUnique: prisma.quiz.findUnique,
+    transaction: prisma.$transaction,
+    courseFindUnique: prisma.course.findUnique,
+  };
+  t.after(() => {
+    prisma.quiz.findFirst = originals.findFirst;
+    prisma.quiz.findMany = originals.findMany;
+    prisma.quiz.update = originals.update;
+    prisma.quiz.create = originals.create;
+    prisma.quiz.findUnique = originals.findUnique;
+    prisma.$transaction = originals.transaction;
+    prisma.course.findUnique = originals.courseFindUnique;
+  });
+
+  let occupancyWhere;
+  prisma.quiz.findFirst = async ({ where }) => {
+    occupancyWhere = where;
+    return { id: "existing-at-slot" };
+  };
+  let shiftWhere;
+  prisma.quiz.findMany = async ({ where }) => {
+    shiftWhere = where;
+    return [
+      { id: "q1", order: QUIZ_ORDER_BASE + 1 },
+      { id: "q2", order: QUIZ_ORDER_BASE + 2 },
+    ];
+  };
+  prisma.quiz.update = ({ where, data }) => ({ kind: "update", id: where.id, order: data.order });
+  prisma.quiz.create = ({ data }) => ({ kind: "create", data });
+  let transactionOps;
+  prisma.$transaction = async (ops) => {
+    transactionOps = ops;
+    return ops.map((op) => (op.kind === "create" ? { ...op.data, id: "new-quiz-id" } : op));
+  };
+  prisma.quiz.findUnique = async () => ({ id: "new-quiz-id", quizQuestions: [] });
+  prisma.course.findUnique = async () => ({ title: "Some Course" });
+
+  await quizService.createQuiz({ title: "Inserted Quiz", passingScore: 70, courseId: "c1", order: 1 });
+
+  const courseScope = { courseId: "c1", moduleId: null, lessonId: null, topicId: null };
+  assert.deepStrictEqual(occupancyWhere, { ...courseScope, order: QUIZ_ORDER_BASE + 1 });
+  assert.deepStrictEqual(shiftWhere, { ...courseScope, order: { gte: QUIZ_ORDER_BASE + 1, lt: ASSIGNMENT_ORDER_BASE } });
+
+  // Park on negatives, then land one slot later, then insert — all in one transaction.
+  assert.deepStrictEqual(
+    transactionOps.map((op) => (op.kind === "create" ? ["create", op.data.order] : [op.id, op.order])),
+    [
+      ["q1", -(QUIZ_ORDER_BASE + 1)],
+      ["q2", -(QUIZ_ORDER_BASE + 2)],
+      ["q1", QUIZ_ORDER_BASE + 2],
+      ["q2", QUIZ_ORDER_BASE + 3],
+      ["create", QUIZ_ORDER_BASE + 1],
+    ]
+  );
+});
