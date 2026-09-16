@@ -1,5 +1,9 @@
 const prisma = require("../../config/database");
 const { getNextAssignmentOrder } = require("../contents/contentOrder.util");
+const {
+    BREADCRUMB_INCLUDE,
+    resolveBreadcrumb,
+} = require("../../utils/helpers/courseBreadcrumb.helper");
 
 const getAssignments = async (studentId) => {
     const assignments = await prisma.assignment.findMany({
@@ -297,13 +301,10 @@ const getInstructorAssignments = async (instructorId, filter = {}) => {
     const assignments = await prisma.assignment.findMany({
         where,
         include: {
-            course: {
-                select: {
-                    id: true,
-                    title: true,
-                    status: true,
-                }
-            },
+            // Resolves Course / Module / Lesson / Topic from whichever level this
+            // assignment hangs off, and carries the course enrollment total that
+            // is the denominator of the instructor submission gauge.
+            ...BREADCRUMB_INCLUDE,
             // Ungraded submissions only — this is what "pending review" means for
             // an assignment, not the assignment's own workflow `status` field.
             _count: {
@@ -329,18 +330,40 @@ const getInstructorAssignments = async (instructorId, filter = {}) => {
         }
     });
 
-    return assignments.map(({ _count, submissions, ...assignment }) => ({
-        ...assignment,
-        pendingSubmissionsCount: _count.submissions,
-        submissions: submissions.map((sub) => ({
-            id: sub.id,
-            studentId: sub.studentId,
-            studentName: sub.student?.user?.name || "Student",
-            status: sub.status,
-            grade: sub.grade,
-            submittedAt: sub.submittedAt
-        }))
-    }));
+    // Total submissions per assignment — the gauge numerator. It needs its own
+    // query because Prisma cannot alias two differently-filtered counts of the
+    // same relation, and `_count.submissions` above is already the ungraded one.
+    const totals = assignments.length
+        ? await prisma.assignmentSubmission.groupBy({
+            by: ["assignmentId"],
+            where: { assignmentId: { in: assignments.map((a) => a.id) } },
+            _count: { _all: true },
+        })
+        : [];
+    const totalByAssignment = new Map(totals.map((t) => [t.assignmentId, t._count._all]));
+
+    // `module` is aliased so it never shadows Node's module binding in this scope.
+    return assignments.map(({ _count, submissions, course, module: mod, lesson, topic, ...assignment }) => {
+        const { enrolledCount, ...breadcrumb } = resolveBreadcrumb({ course, module: mod, lesson, topic });
+
+        return {
+            ...assignment,
+            ...breadcrumb,
+            pendingSubmissionsCount: _count.submissions,
+            submissionsCount: totalByAssignment.get(assignment.id) || 0,
+            enrolledCount,
+            // submissions is ordered newest-first, so its head IS the latest.
+            lastSubmittedAt: submissions[0]?.submittedAt || null,
+            submissions: submissions.map((sub) => ({
+                id: sub.id,
+                studentId: sub.studentId,
+                studentName: sub.student?.user?.name || "Student",
+                status: sub.status,
+                grade: sub.grade,
+                submittedAt: sub.submittedAt
+            }))
+        };
+    });
 };
 
 /**
@@ -355,7 +378,9 @@ const getInstructorAssignments = async (instructorId, filter = {}) => {
 const getAssignmentSubmissions = async (assignmentId) => {
     const assignment = await prisma.assignment.findUnique({
         where: { id: assignmentId },
-        select: { id: true, title: true, dueDate: true, marks: true }
+        // Relations resolve the Course / Module / Lesson / Topic heading the
+        // detail page shows, so a deep link does not need the list query.
+        select: { id: true, title: true, dueDate: true, marks: true, ...BREADCRUMB_INCLUDE }
     });
 
     if (!assignment) {
@@ -377,8 +402,11 @@ const getAssignmentSubmissions = async (assignmentId) => {
         }
     });
 
+    const { course, module: mod, lesson, topic, ...assignmentFields } = assignment;
+    const { enrolledCount, ...breadcrumb } = resolveBreadcrumb({ course, module: mod, lesson, topic });
+
     return {
-        assignment,
+        assignment: { ...assignmentFields, ...breadcrumb, enrolledCount },
         submissions: submissions.map((s) => ({
             id: s.id,
             studentId: s.studentId,

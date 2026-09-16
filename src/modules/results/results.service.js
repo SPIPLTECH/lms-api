@@ -1,5 +1,9 @@
 const prisma = require("../../config/database");
 const { evaluateAnswer } = require("../quizzes/quiz.service");
+const {
+  BREADCRUMB_INCLUDE,
+  resolveBreadcrumb,
+} = require("../../utils/helpers/courseBreadcrumb.helper");
 
 /** Course ids the instructor owns, optionally narrowed to a single course. */
 const resolveCourseIds = async (instructorId, courseId) => {
@@ -201,6 +205,117 @@ const buildQuestionAndTopicAnalysis = (submissions) => {
   return { questionWise, topicWise };
 };
 
+/**
+ * Final tests grouped BY TEST rather than by attempt, for the instructor
+ * Grading & Results view: one row per test with its Course / Module / Lesson /
+ * Topic breadcrumb, a submission gauge, and the student roster behind it.
+ *
+ * Deliberately different from getResults, which returns one flat row per
+ * ATTEMPT and a single scope-wide completionRate. Here every enrolled student
+ * appears whether or not they attempted — otherwise the gauge and the table it
+ * opens would disagree about the denominator.
+ *
+ * Quizzes may allow several attempts, so the row shown per student is their
+ * LATEST attempt, with attemptsCount alongside it.
+ */
+const getFinalTestOverview = async (instructorId, { courseId, quizId } = {}) => {
+  const courseIds = await resolveCourseIds(instructorId, courseId);
+  if (courseIds.length === 0) return [];
+
+  const quizzes = await prisma.quiz.findMany({
+    // quizId narrows to a single test for the detail page, still scoped to the
+    // instructor's own courses so it cannot be used to read another's.
+    where: { courseId: { in: courseIds }, quizTag: "FINAL", ...(quizId ? { id: quizId } : {}) },
+    include: BREADCRUMB_INCLUDE,
+    orderBy: { createdAt: "desc" }
+  });
+  if (quizzes.length === 0) return [];
+
+  // The roster is the enrolled students of each quiz's course. Batches are not
+  // consulted — they have been removed from the product surface.
+  const enrollments = await prisma.enrollment.findMany({
+    where: { courseId: { in: courseIds } },
+    select: {
+      courseId: true,
+      student: { select: { id: true, user: { select: { name: true, email: true } } } }
+    }
+  });
+
+  const rosterByCourse = new Map();
+  for (const e of enrollments) {
+    if (!rosterByCourse.has(e.courseId)) rosterByCourse.set(e.courseId, []);
+    rosterByCourse.get(e.courseId).push({
+      studentId: e.student.id,
+      studentName: e.student.user?.name || "Student",
+      studentEmail: e.student.user?.email || ""
+    });
+  }
+
+  const submissions = await prisma.quizSubmission.findMany({
+    where: { quizId: { in: quizzes.map((q) => q.id) } },
+    select: {
+      quizId: true,
+      studentId: true,
+      score: true,
+      totalMarks: true,
+      percentage: true,
+      passed: true,
+      submittedAt: true
+    },
+    orderBy: { submittedAt: "desc" }
+  });
+
+  // Newest first, so the FIRST row seen for a student is their latest attempt.
+  const latestByQuizStudent = new Map();
+  const attemptsByQuizStudent = new Map();
+  // The newest attempt on the test by anyone, for the "recently submitted" sort.
+  const latestByQuiz = new Map();
+  for (const s of submissions) {
+    const key = `${s.quizId}:${s.studentId}`;
+    if (!latestByQuizStudent.has(key)) latestByQuizStudent.set(key, s);
+    if (!latestByQuiz.has(s.quizId)) latestByQuiz.set(s.quizId, s.submittedAt);
+    attemptsByQuizStudent.set(key, (attemptsByQuizStudent.get(key) || 0) + 1);
+  }
+
+  return quizzes.map((quiz) => {
+    // enrolledCount is recomputed from the roster below so the gauge can never
+    // disagree with the table it opens.
+    const { enrolledCount: _courseEnrolled, ...breadcrumb } = resolveBreadcrumb(quiz);
+    const roster = rosterByCourse.get(quiz.courseId) || [];
+
+    const students = roster.map((student) => {
+      const key = `${quiz.id}:${student.studentId}`;
+      const attempt = latestByQuizStudent.get(key) || null;
+
+      return {
+        ...student,
+        attempted: Boolean(attempt),
+        attemptsCount: attemptsByQuizStudent.get(key) || 0,
+        score: attempt?.score ?? null,
+        totalMarks: attempt?.totalMarks ?? null,
+        percentage: attempt?.percentage ?? null,
+        passed: attempt?.passed ?? null,
+        submittedAt: attempt?.submittedAt ?? null
+      };
+    });
+
+    const attemptedCount = students.filter((s) => s.attempted).length;
+
+    return {
+      id: quiz.id,
+      title: quiz.title,
+      passingScore: quiz.passingScore,
+      ...breadcrumb,
+      enrolledCount: students.length,
+      attemptedCount,
+      notAttemptedCount: students.length - attemptedCount,
+      failedCount: students.filter((s) => s.attempted && s.passed === false).length,
+      lastSubmittedAt: latestByQuiz.get(quiz.id) || null,
+      students
+    };
+  });
+};
+
 const emptyResult = () => ({
   summary: {
     avgScore: 0,
@@ -217,5 +332,6 @@ const emptyResult = () => ({
 });
 
 module.exports = {
-  getResults
+  getResults,
+  getFinalTestOverview
 };

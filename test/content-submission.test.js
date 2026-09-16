@@ -127,16 +127,22 @@ test("instructor views of content assignments", async (t) => {
     contentFindMany: prisma.content.findMany,
     contentFindUnique: prisma.content.findUnique,
     submissionFindMany: prisma.contentSubmission.findMany,
+    submissionGroupBy: prisma.contentSubmission.groupBy,
   };
 
   t.after(() => {
     prisma.content.findMany = originals.contentFindMany;
     prisma.content.findUnique = originals.contentFindUnique;
     prisma.contentSubmission.findMany = originals.submissionFindMany;
+    prisma.contentSubmission.groupBy = originals.submissionGroupBy;
   });
 
   await t.test("lists only ASSIGNMENT blocks in the instructor's own courses", async () => {
     let captured = null;
+    // Mirrors the real select: the course node carries status and the
+    // enrolment count, and each ancestor carries its own title, so a
+    // topic-level block can still name its lesson and module.
+    const course = { id: "c1", title: "Course", status: "PUBLISHED", _count: { enrollments: 5 } };
     prisma.content.findMany = async (args) => {
       captured = args;
       return [
@@ -147,20 +153,27 @@ test("instructor views of content assignments", async (t) => {
           course: null,
           module: null,
           lesson: null,
-          topic: { title: "First topic", lesson: { title: "L1", module: { course: { id: "c1", title: "Course" } } } },
+          topic: { title: "First topic", lesson: { title: "L1", module: { title: "M1", course } } },
           _count: { submissions: 2 },
           createdAt: new Date(),
         },
       ];
     };
+    prisma.contentSubmission.groupBy = async () => [{ contentId: "ct1", _count: { _all: 3 } }];
 
     const result = await contentService.getInstructorAssignmentContents("i1", "INSTRUCTOR");
 
     assert.strictEqual(captured.where.type, "ASSIGNMENT");
     assert.ok(Array.isArray(captured.where.OR));
-    assert.deepStrictEqual(result[0].course, { id: "c1", title: "Course" });
+    assert.deepStrictEqual(result[0].course, { id: "c1", title: "Course", status: "PUBLISHED" });
+    // Breadcrumb resolves upward from the topic the block is attached to.
+    assert.strictEqual(result[0].moduleTitle, "M1");
     assert.strictEqual(result[0].lessonTitle, "L1");
+    assert.strictEqual(result[0].topicTitle, "First topic");
     assert.strictEqual(result[0].pendingSubmissionsCount, 2);
+    // Gauge: 3 of 5 enrolled students have submitted.
+    assert.strictEqual(result[0].submissionsCount, 3);
+    assert.strictEqual(result[0].enrolledCount, 5);
   });
 
   await t.test("ADMIN is not scoped to an owner", async () => {
