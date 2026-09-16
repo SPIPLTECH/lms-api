@@ -2,6 +2,10 @@ const prisma = require("../../config/database");
 const { sanitizeContent } = require("../../utils/sanitizer");
 const { getNextOrder } = require("./contentOrder.util");
 const progressService = require("../progress/progress.service");
+const {
+  BREADCRUMB_INCLUDE,
+  resolveBreadcrumb,
+} = require("../../utils/helpers/courseBreadcrumb.helper");
 
 const PARENT_FIELDS = ["courseId", "moduleId", "lessonId", "topicId"];
 
@@ -232,8 +236,6 @@ const submitContentAssignment = async (contentId, studentId, data, requestingUse
   return toSubmissionDto(submission);
 };
 
-const COURSE_SUMMARY = { select: { id: true, title: true, status: true } };
-
 /**
  * Every lesson-composer Assignment block (Content type ASSIGNMENT) in the
  * instructor's own courses — all of them for ADMIN — with how many student
@@ -253,15 +255,9 @@ const getInstructorAssignmentContents = async (userId, role) => {
   const contents = await prisma.content.findMany({
     where,
     include: {
-      course: COURSE_SUMMARY,
-      module: { select: { course: COURSE_SUMMARY } },
-      lesson: { select: { title: true, module: { select: { course: COURSE_SUMMARY } } } },
-      topic: {
-        select: {
-          title: true,
-          lesson: { select: { title: true, module: { select: { course: COURSE_SUMMARY } } } },
-        },
-      },
+      // Course / Module / Lesson / Topic from whichever level this block hangs
+      // off, plus the course enrollment total behind the submission gauge.
+      ...BREADCRUMB_INCLUDE,
       _count: { select: { submissions: { where: { grade: null } } } },
       // The newest few submissions, so a "recent submissions" feed has a
       // student and a timestamp — same cap as getInstructorAssignments.
@@ -274,19 +270,27 @@ const getInstructorAssignmentContents = async (userId, role) => {
     orderBy: { createdAt: "desc" },
   });
 
+  // Total submissions per block — the gauge numerator. Needs its own query:
+  // Prisma cannot alias two differently-filtered counts of one relation, and
+  // the `_count` above is already the ungraded (pending review) one.
+  const totals = contents.length
+    ? await prisma.contentSubmission.groupBy({
+        by: ["contentId"],
+        where: { contentId: { in: contents.map((c) => c.id) } },
+        _count: { _all: true },
+      })
+    : [];
+  const totalByContent = new Map(totals.map((t) => [t.contentId, t._count._all]));
+
   return contents.map((c) => ({
     id: c.id,
     title: c.title,
     description: c.htmlContent,
-    course:
-      c.course ||
-      c.module?.course ||
-      c.lesson?.module?.course ||
-      c.topic?.lesson?.module?.course ||
-      null,
-    lessonTitle: c.lesson?.title || c.topic?.lesson?.title || null,
-    topicTitle: c.topic?.title || null,
+    ...resolveBreadcrumb(c),
     pendingSubmissionsCount: c._count.submissions,
+    submissionsCount: totalByContent.get(c.id) || 0,
+    // submissions is ordered newest-first, so its head IS the latest.
+    lastSubmittedAt: c.submissions?.[0]?.submittedAt || null,
     submissions: (c.submissions || []).map((s) => ({
       id: s.id,
       studentName: s.student?.user?.name || "Student",
@@ -306,7 +310,8 @@ const getInstructorAssignmentContents = async (userId, role) => {
 const getContentSubmissions = async (contentId) => {
   const content = await prisma.content.findUnique({
     where: { id: contentId },
-    select: { id: true, title: true, type: true },
+    // Relations resolve the breadcrumb the detail page heads itself with.
+    select: { id: true, title: true, type: true, ...BREADCRUMB_INCLUDE },
   });
 
   if (!content || content.type !== "ASSIGNMENT") {
@@ -325,8 +330,10 @@ const getContentSubmissions = async (contentId) => {
     },
   });
 
+  const { enrolledCount, ...breadcrumb } = resolveBreadcrumb(content);
+
   return {
-    content: { id: content.id, title: content.title },
+    content: { id: content.id, title: content.title, ...breadcrumb, enrolledCount },
     submissions: submissions.map((s) => ({
       id: s.id,
       studentId: s.studentId,

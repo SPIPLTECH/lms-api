@@ -12,4 +12,12 @@ router.get(
   controller.getResults
 );
 
+// Grouped per Final test, rather than one row per attempt like GET /.
+router.get(
+  "/final-tests",
+  verifyToken,
+  checkRole(["INSTRUCTOR", "ADMIN"]),
+  controller.getFinalTestOverview
+);
+
 module.exports = router;
