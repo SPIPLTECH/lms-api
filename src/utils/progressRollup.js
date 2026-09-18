@@ -21,7 +21,13 @@ const prisma = require('../config/database');
  *    - Content: ContentProgress row with visited = true
  *    - Quiz: QuizProgress row with visited = true
  *    - Assignment: AssignmentProgress row with visited = true
- *    - Container (Topic/Lesson/Module/Course): explicitly marked visited OR all applicable children/items visited.
+ *    - Container (Topic/Lesson/Module/Course): ALL applicable children/items visited.
+ *      Purely derived, exactly like completion (rule 3) -- never sticky. A container
+ *      that was visited stops being visited the moment unseen content is added to it,
+ *      otherwise a Lesson keeps reporting visitedPercent 100 over items the student
+ *      has never opened. Note this means POST /progress/visited on a TOPIC/LESSON/MODULE
+ *      no longer survives the roll-up that immediately follows it; only item-level
+ *      (Content/Quiz/Assignment) visits are ground truth.
  * 6. Idempotent and transaction-aware. Preserves completedAt and visitedAt when remaining complete/visited.
  *
  * Pass `options.includeTree` to also receive the authoritative hierarchical progress
@@ -365,7 +371,7 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
         const completedAt = isCompleted ? (existing?.completed ? existing.completedAt : now) : null;
         topicCompletedAtMap.set(topic.id, completedAt);
 
-        const isVisited = existing?.visited || (hasItems && contentsVisited && quizzesVisited && assignmentsVisited);
+        const isVisited = (hasItems && contentsVisited && quizzesVisited && assignmentsVisited);
         topicVisitedStatus.set(topic.id, isVisited);
         const visitedAt = isVisited ? (existing?.visited ? existing.visitedAt : now) : null;
         topicVisitedAtMap.set(topic.id, visitedAt);
@@ -416,7 +422,7 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       const completedAt = isCompleted ? (existing?.completed ? existing.completedAt : now) : null;
       lessonCompletedAtMap.set(lesson.id, completedAt);
 
-      const isVisited = existing?.visited || (hasDirectItemsOrTopics && directContentsVisited && directQuizzesVisited && directAssignmentsVisited && topicsVisited);
+      const isVisited = (hasDirectItemsOrTopics && directContentsVisited && directQuizzesVisited && directAssignmentsVisited && topicsVisited);
       lessonVisitedStatus.set(lesson.id, isVisited);
       const visitedAt = isVisited ? (existing?.visited ? existing.visitedAt : now) : null;
       lessonVisitedAtMap.set(lesson.id, visitedAt);
@@ -463,7 +469,7 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     const completedAt = isCompleted ? (existing?.completed ? existing.completedAt : now) : null;
     moduleCompletedAtMap.set(mod.id, completedAt);
 
-    const isVisited = existing?.visited || (hasDirectItemsOrLessons && directContentsVisited && directQuizzesVisited && directAssignmentsVisited && lessonsVisited);
+    const isVisited = (hasDirectItemsOrLessons && directContentsVisited && directQuizzesVisited && directAssignmentsVisited && lessonsVisited);
     moduleVisitedStatus.set(mod.id, isVisited);
     const visitedAt = isVisited ? (existing?.visited ? existing.visitedAt : now) : null;
     moduleVisitedAtMap.set(mod.id, visitedAt);

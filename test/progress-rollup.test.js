@@ -457,6 +457,44 @@ test("Comprehensive Multi-Entity Progress Rollup & Analytics Engine Tests", asyn
     await prisma.user.deleteMany({ where: { id: calcUserId } }).catch(() => {});
   });
 
+  await t.test("12. VISITED INVALIDATION: Publishing new Content into a fully-visited Topic clears the Topic/Lesson visited flags", async () => {
+    // The completion analogue of this is test 6. Visited used to be sticky --
+    // once a container's derived visited flag flipped true it was OR-ed
+    // forward on every later roll-up, so a Topic the instructor later added
+    // unseen content to kept reporting visited (and its Lesson kept reporting
+    // visitedPercent 100) even though the student had never opened it.
+    await prisma.topic.create({
+      data: { id: "top_visit_inval", title: "Visit Invalidation Topic", order: 99, isPublished: true, lessonId: "les_multi_1" }
+    });
+    await prisma.content.create({
+      data: { id: "cnt_visit_1", title: "Only content", type: "TEXT", order: 1, topicId: "top_visit_inval" }
+    });
+
+    await progressService.markVisited(studentProfileId, { contentId: "cnt_visit_1" }, true);
+
+    let tp = await prisma.topicProgress.findUnique({
+      where: { studentId_topicId: { studentId: studentProfileId, topicId: "top_visit_inval" } }
+    });
+    assert.strictEqual(tp.visited, true, "Topic is visited once its only content has been visited");
+
+    // Instructor adds a second content the student has never opened.
+    await prisma.content.create({
+      data: { id: "cnt_visit_2", title: "Added after the student passed through", type: "TEXT", order: 2, topicId: "top_visit_inval" }
+    });
+
+    await recomputeCourseProgress(studentProfileId, courseId);
+
+    tp = await prisma.topicProgress.findUnique({
+      where: { studentId_topicId: { studentId: studentProfileId, topicId: "top_visit_inval" } }
+    });
+    assert.strictEqual(tp.visited, false, "Topic must stop reporting visited once unopened content is added to it");
+
+    const lp = await prisma.lessonProgress.findUnique({
+      where: { studentId_lessonId: { studentId: studentProfileId, lessonId: "les_multi_1" } }
+    });
+    assert.strictEqual(lp.visited, false, "The Lesson above it must stop reporting visited too");
+  });
+
   await t.test("11. LESSON IMMEDIATE-CHILD PROGRESSION: Incomplete topics at 50% contribute 0 units; progression moves 40% -> 60% -> 80% -> 100%", async () => {
     const regCourseId = "course_lesson_hierarchy_regression";
     const regStudentId = "sp_lesson_reg_student";
