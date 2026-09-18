@@ -13,7 +13,6 @@ const userRoutes = require("./modules/users/user.routes");
 const studentRoutes = require("./modules/students/student.route");
 const courseRoutes = require("./modules/courses/course.routes");
 const batchRoutes = require("./modules/batches/batch.routes");
-const importRoutes = require("./modules/import/routes/import.routes");
 const moduleRoutes = require("./modules/modules/module.routes");
 const lessonRoutes = require("./modules/lessons/lesson.routes");
 const topicRoutes = require("./modules/topics/topic.routes");
@@ -101,7 +100,6 @@ app.use("/teachers", teacherRoutes);
 app.use("/auth", authRoutes);
 app.use("/users", userRoutes);
 app.use("/students", studentRoutes);
-app.use("/courses/import", importRoutes);
 app.use("/courses", courseRoutes);
 app.use("/batches", batchRoutes);
 app.use("/modules", moduleRoutes);
@@ -146,11 +144,6 @@ app.use("/upcoming-tasks", upcomingTasksRoutes);
 // recommendation, motivation, teacher-insights, analytics, career,
 // learning-path, placement, admin-intelligence, mentor) were removed from
 // here — full backup + restoration package at backup/ai-agents/.
-// The AI Student Entry Phase feature (not one of the 12) was extracted
-// from inside assessment/student-state into its own module and kept live,
-// remounted at the exact same URLs the frontend already calls:
-// app.use("/assessment/entry", entryAssessment.entryAssessmentRouter);
-// app.use("/student-state", entryAssessment.courseStateRouter);
 // AI Assistant (Gemini-only). Guest sub-route is public via optionalToken;
 // everything else requires a session. Separate from /conversations, which
 // is the human-to-human chat.
