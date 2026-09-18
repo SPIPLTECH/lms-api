@@ -17,22 +17,14 @@ const getPublishedLessonIds = async (courseId) => {
   return lessons.map((lesson) => lesson.id);
 };
 
-// Sequential lesson gating for courses with dripContentEnabled: a lesson
-// unlocks once the lesson immediately before it (course-wide order — module
-// order, then lesson order) has been marked complete by this student. The
-// first lesson in the course is always unlocked. When drip is off, every
-// lesson is unlocked. Returns { lockMap: Map<lessonId, boolean locked>,
-// completedSet: Set<lessonId> } — completedSet is exposed alongside the lock
-// map because every caller that needs lock state also needs to know which
-// lessons are actually complete (e.g. to render a completion checkmark),
-// and this is already the one place in the codebase computing that set.
+// Every published lesson is unlocked — the sequential drip-content gating this
+// used to apply was removed along with the Course.dripContentEnabled column.
+// Returns { lockMap: Map<lessonId, boolean locked>, completedSet:
+// Set<lessonId> } — completedSet is exposed alongside the lock map because
+// every caller that needs lock state also needs to know which lessons are
+// actually complete (e.g. to render a completion checkmark), and this is
+// already the one place in the codebase computing that set.
 const buildLessonLockMap = async (courseId, studentId) => {
-  // The course lookup that stood here selected only dripContentEnabled. With
-  // that column gone the select was left empty, which Prisma rejects at
-  // runtime — so every caller of this (GET /courses/:id among them) answered
-  // 500 and the student course page reported "Course not found". Nothing read
-  // the result: the drip branch below is already short-circuited, so the query
-  // is simply removed rather than given something arbitrary to select.
   const lessonIds = await getPublishedLessonIds(courseId);
 
   const completedSet = new Set();
@@ -49,17 +41,7 @@ const buildLessonLockMap = async (courseId, studentId) => {
   }
 
   const lockMap = new Map();
-
-  if (true) { // drip content removed
-    lessonIds.forEach((lessonId) => lockMap.set(lessonId, false));
-    return { lockMap, completedSet };
-  }
-
-  let prevCompleted = true;
-  for (const lessonId of lessonIds) {
-    lockMap.set(lessonId, !prevCompleted);
-    prevCompleted = completedSet.has(lessonId);
-  }
+  lessonIds.forEach((lessonId) => lockMap.set(lessonId, false));
 
   return { lockMap, completedSet };
 };
