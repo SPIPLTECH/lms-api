@@ -184,7 +184,7 @@ const buildCourseStatsMap = async (courseIds) => {
 
   const progressRows =
     allLessonIds.length > 0 && allStudentIds.length > 0
-      ? await prisma.progress.findMany({
+      ? await prisma.lessonProgress.findMany({
           where: { lessonId: { in: allLessonIds }, studentId: { in: allStudentIds }, completed: true },
           select: { lessonId: true, studentId: true }
         })
@@ -1012,7 +1012,7 @@ const deleteCourse = async (courseId, userId, userRole) => {
   ] = await Promise.all([
     prisma.quizSubmission.count({ where: { quiz: { courseId } } }),
     prisma.assignmentSubmission.count({ where: { assignment: { courseId } } }),
-    prisma.progress.count({ where: { lesson: { module: { courseId } } } }),
+    prisma.lessonProgress.count({ where: { lesson: { module: { courseId } } } }),
     prisma.lessonQuery.count({ where: { lesson: { module: { courseId } } } }),
     prisma.stickyNote.count({ where: { lesson: { module: { courseId } } } }),
     prisma.batch.count({ where: { courseId } }),
@@ -1271,7 +1271,7 @@ const getCourseStudents = async (courseId) => {
 
   const [progressRows, submissionRows] = await Promise.all([
     lessonIds.length > 0 && studentIds.length > 0
-      ? prisma.progress.findMany({
+      ? prisma.lessonProgress.findMany({
           where: { studentId: { in: studentIds }, lessonId: { in: lessonIds }, completed: true },
           select: { studentId: true }
         })

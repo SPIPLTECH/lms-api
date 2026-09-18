@@ -37,7 +37,7 @@ const buildLessonLockMap = async (courseId, studentId) => {
 
   const completedSet = new Set();
   if (studentId) {
-    const completedRows = await prisma.progress.findMany({
+    const completedRows = await prisma.lessonProgress.findMany({
       where: {
         studentId,
         lessonId: { in: lessonIds },
