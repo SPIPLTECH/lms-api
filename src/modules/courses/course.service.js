@@ -805,6 +805,12 @@ const publishCourse = async (courseId, userId, userRole) => {
     throw new ApiError(403, "Forbidden: You do not own this course.");
   }
 
+  // Reported, not enforced. Most courses already published predate this
+  // check and would fail it (empty lessons, missing descriptions), so
+  // blocking here would strand them — the instructor gets told what is
+  // incomplete and still decides whether to publish.
+  const validation = await validateCourseForPublish(courseId);
+
   const updatedCourse = await prisma.$transaction(async (tx) => {
     const courseObj = await tx.course.update({
       where: { id: courseId },
@@ -872,7 +878,7 @@ const publishCourse = async (courseId, userId, userRole) => {
     console.error("Error sending publish notification:", err.message);
   }
 
-  return updatedCourse;
+  return { ...updatedCourse, publishWarnings: validation.errors };
 };
 
 /**
