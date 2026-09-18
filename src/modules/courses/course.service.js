@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
 const ApiError = require("../../utils/ApiError");
@@ -1139,112 +1140,83 @@ const duplicateCourse = async (courseId, instructorId) => {
       }
     });
 
-    if (source.contents.length > 0) {
-      await tx.content.createMany({
-        data: source.contents.map((content) => ({
-          order: content.order,
-          courseId: newCourse.id,
-          type: content.type,
-          title: content.title,
-          videoUrl: content.videoUrl,
-          fileUrl: content.fileUrl,
-          htmlContent: content.htmlContent,
-          externalUrl: content.externalUrl,
-          duration: content.duration,
-          data: content.data
-        }))
-      });
-    }
+    const contentFields = (content) => ({
+      order: content.order,
+      type: content.type,
+      title: content.title,
+      videoUrl: content.videoUrl,
+      fileUrl: content.fileUrl,
+      htmlContent: content.htmlContent,
+      externalUrl: content.externalUrl,
+      duration: content.duration,
+      data: content.data
+    });
+
+    // Ids are generated here rather than read back from each insert, so a
+    // child level can reference its parent without the parent having been
+    // written yet. That turns the walk below into one createMany per level
+    // instead of two round trips per node.
+    const moduleRows = [];
+    const lessonRows = [];
+    const topicRows = [];
+    const contentRows = source.contents.map((content) => ({
+      ...contentFields(content),
+      courseId: newCourse.id
+    }));
 
     for (const module of source.modules) {
-      const newModule = await tx.module.create({
-        data: {
-          title: module.title,
-          description: module.description,
-          order: module.order,
-          isPublished: false,
-          courseId: newCourse.id
-        }
+      const moduleId = crypto.randomUUID();
+      moduleRows.push({
+        id: moduleId,
+        title: module.title,
+        description: module.description,
+        order: module.order,
+        isPublished: false,
+        courseId: newCourse.id
       });
-
-      if (module.contents.length > 0) {
-        await tx.content.createMany({
-          data: module.contents.map((content) => ({
-            order: content.order,
-            moduleId: newModule.id,
-            type: content.type,
-            title: content.title,
-            videoUrl: content.videoUrl,
-            fileUrl: content.fileUrl,
-            htmlContent: content.htmlContent,
-            externalUrl: content.externalUrl,
-            duration: content.duration,
-            data: content.data
-          }))
-        });
+      for (const content of module.contents) {
+        contentRows.push({ ...contentFields(content), moduleId });
       }
 
       for (const lesson of module.lessons) {
-        const newLesson = await tx.lesson.create({
-          data: {
-            title: lesson.title,
-            description: lesson.description,
-            order: lesson.order,
-            isPublished: false,
-            moduleId: newModule.id
-          }
+        const lessonId = crypto.randomUUID();
+        lessonRows.push({
+          id: lessonId,
+          title: lesson.title,
+          description: lesson.description,
+          order: lesson.order,
+          isPublished: false,
+          moduleId
         });
-
-        if (lesson.contents.length > 0) {
-          await tx.content.createMany({
-            data: lesson.contents.map((content) => ({
-              order: content.order,
-              lessonId: newLesson.id,
-              type: content.type,
-              title: content.title,
-              videoUrl: content.videoUrl,
-              fileUrl: content.fileUrl,
-              htmlContent: content.htmlContent,
-              externalUrl: content.externalUrl,
-              duration: content.duration,
-              data: content.data
-            }))
-          });
+        for (const content of lesson.contents) {
+          contentRows.push({ ...contentFields(content), lessonId });
         }
 
         for (const topic of lesson.topics) {
-          const newTopic = await tx.topic.create({
-            data: {
-              title: topic.title,
-              description: topic.description,
-              order: topic.order,
-              isPublished: false,
-              lessonId: newLesson.id
-            }
+          const topicId = crypto.randomUUID();
+          topicRows.push({
+            id: topicId,
+            title: topic.title,
+            description: topic.description,
+            order: topic.order,
+            isPublished: false,
+            lessonId
           });
-
-          if (topic.contents.length > 0) {
-            await tx.content.createMany({
-              data: topic.contents.map((content) => ({
-                order: content.order,
-                topicId: newTopic.id,
-                type: content.type,
-                title: content.title,
-                videoUrl: content.videoUrl,
-                fileUrl: content.fileUrl,
-                htmlContent: content.htmlContent,
-                externalUrl: content.externalUrl,
-                duration: content.duration,
-                data: content.data
-              }))
-            });
+          for (const content of topic.contents) {
+            contentRows.push({ ...contentFields(content), topicId });
           }
         }
       }
     }
 
+    // Ordered so each level exists before the level that references it.
+    if (moduleRows.length > 0) await tx.module.createMany({ data: moduleRows });
+    if (lessonRows.length > 0) await tx.lesson.createMany({ data: lessonRows });
+    if (topicRows.length > 0) await tx.topic.createMany({ data: topicRows });
+    if (contentRows.length > 0) await tx.content.createMany({ data: contentRows });
+
     return newCourse;
-  });
+  }, { maxWait: 20000, timeout: 60000 });
 };
 
 const getCourseStudents = async (courseId) => {
