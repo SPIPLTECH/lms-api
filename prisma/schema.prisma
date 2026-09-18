@@ -1275,10 +1275,13 @@ enum AchievementType {
 }
 
 // SELF_TEST: learner practice, never timed. FINAL: the formal assessment of
-// its lesson/module, optionally timed. Orthogonal to the quiz's scope/level.
+// its lesson/module, optionally timed. QUALIFYING: a gating assessment a learner
+// must clear; treated like FINAL everywhere the code branches on SELF_TEST.
+// Orthogonal to the quiz's scope/level.
 enum QuizTag {
   SELF_TEST
   FINAL
+  QUALIFYING
 }
 
 enum QuestionType {
