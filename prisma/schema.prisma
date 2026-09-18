@@ -112,6 +112,8 @@ model StudentProfile {
   entryAssessments      EntryAssessment[]
   contentProgresses     ContentProgress[]
   topicProgresses       TopicProgress[]
+  subTopicProgresses    SubTopicProgress[]
+  conceptProgresses     ConceptProgress[]
   lessonProgresses      LessonProgress[]
   moduleProgresses      ModuleProgress[]
   quizProgresses        QuizProgress[]
@@ -262,8 +264,52 @@ model Topic {
   quizzes     Quiz[]
   assignments Assignment[]
   progresses  TopicProgress[]
+  subTopics   SubTopic[]
 
   @@unique([lessonId, order])
+}
+
+// Optional level between Lesson's Topic and Content. A Topic with no
+// SubTopic rows behaves exactly as it always has -- Topic-direct Content,
+// Quiz and Assignment stay first-class, so existing courses are unaffected.
+model SubTopic {
+  id          String             @id @default(cuid())
+  title       String
+  description String?
+  order       Int
+  isPublished Boolean            @default(false)
+  topicId     String
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  contents    Content[]
+  topic       Topic              @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  quizzes     Quiz[]
+  assignments Assignment[]
+  progresses  SubTopicProgress[]
+  concepts    Concept[]
+
+  @@unique([topicId, order])
+}
+
+// Optional level below SubTopic. Named for the course-authoring hierarchy --
+// unrelated to ConceptMastery/KnowledgeGap.concept, which are learner-model
+// knowledge components identified by a free-text string, not by this id.
+model Concept {
+  id          String            @id @default(cuid())
+  title       String
+  description String?
+  order       Int
+  isPublished Boolean           @default(false)
+  subTopicId  String
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  contents    Content[]
+  subTopic    SubTopic          @relation(fields: [subTopicId], references: [id], onDelete: Cascade)
+  quizzes     Quiz[]
+  assignments Assignment[]
+  progresses  ConceptProgress[]
+
+  @@unique([subTopicId, order])
 }
 
 model Content {
@@ -273,6 +319,8 @@ model Content {
   moduleId      String?
   lessonId      String?
   topicId       String?
+  subTopicId    String?
+  conceptId     String?
   type          ContentType
   title         String?
   videoUrl      String?
@@ -287,6 +335,8 @@ model Content {
   module        Module?             @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   lesson        Lesson?             @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   topic         Topic?              @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  subTopic      SubTopic?           @relation(fields: [subTopicId], references: [id], onDelete: Cascade)
+  concept       Concept?            @relation(fields: [conceptId], references: [id], onDelete: Cascade)
   progresses    ContentProgress[]
   submissions   ContentSubmission[]
   lessonQueries LessonQuery[]
@@ -295,6 +345,8 @@ model Content {
   @@unique([moduleId, order])
   @@unique([lessonId, order])
   @@unique([topicId, order])
+  @@unique([subTopicId, order])
+  @@unique([conceptId, order])
 }
 
 model LessonQuery {
@@ -395,6 +447,42 @@ model TopicProgress {
   @@unique([studentId, topicId])
   @@index([studentId])
   @@index([topicId])
+}
+
+model SubTopicProgress {
+  id          String         @id @default(cuid())
+  studentId   String
+  subTopicId  String
+  visited     Boolean        @default(false)
+  visitedAt   DateTime?
+  completed   Boolean        @default(false)
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subTopic    SubTopic       @relation(fields: [subTopicId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, subTopicId])
+  @@index([studentId])
+  @@index([subTopicId])
+}
+
+model ConceptProgress {
+  id          String         @id @default(cuid())
+  studentId   String
+  conceptId   String
+  visited     Boolean        @default(false)
+  visitedAt   DateTime?
+  completed   Boolean        @default(false)
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  concept     Concept        @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, conceptId])
+  @@index([studentId])
+  @@index([conceptId])
 }
 
 model LessonProgress {
@@ -509,6 +597,8 @@ model Quiz {
   moduleId         String?
   lessonId         String?
   topicId          String?
+  subTopicId       String?
+  conceptId        String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   questions        Question[]
@@ -517,6 +607,8 @@ model Quiz {
   module           Module?          @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   lesson           Lesson?          @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   topic            Topic?           @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  subTopic         SubTopic?        @relation(fields: [subTopicId], references: [id], onDelete: Cascade)
+  concept          Concept?         @relation(fields: [conceptId], references: [id], onDelete: Cascade)
   quizSubmissions  QuizSubmission[]
   quizAttempts     QuizAttempt[]
   quizProgresses   QuizProgress[]
@@ -531,6 +623,8 @@ model Quiz {
   @@index([batchId])
   @@index([moduleId])
   @@index([topicId])
+  @@index([subTopicId])
+  @@index([conceptId])
 }
 
 model Question {
@@ -834,12 +928,16 @@ model Assignment {
   moduleId       String?
   lessonId       String?
   topicId        String?
+  subTopicId     String?
+  conceptId      String?
   createdAt      DateTime               @default(now())
   updatedAt      DateTime               @updatedAt
   course         Course?                @relation(fields: [courseId], references: [id], onDelete: Cascade)
   module         Module?                @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   lesson         Lesson?                @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   topic          Topic?                 @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  subTopic       SubTopic?              @relation(fields: [subTopicId], references: [id], onDelete: Cascade)
+  concept        Concept?               @relation(fields: [conceptId], references: [id], onDelete: Cascade)
   submissions    AssignmentSubmission[]
   progresses     AssignmentProgress[]
   lessonQueries  LessonQuery[]
@@ -848,6 +946,8 @@ model Assignment {
   @@index([moduleId])
   @@index([lessonId])
   @@index([topicId])
+  @@index([subTopicId])
+  @@index([conceptId])
 }
 
 model AssignmentSubmission {

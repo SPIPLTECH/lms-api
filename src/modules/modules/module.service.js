@@ -1,5 +1,10 @@
 const prisma = require("../../config/database");
 const ApiError = require("../../utils/ApiError");
+const {
+  claimSequenceOrder,
+  releaseSequenceOrder,
+  assertCourseReorderAllowed,
+} = require("../contents/contentOrder.util");
 
 const getModules = async (courseId, role, userId) => {
   const where = {};
@@ -22,14 +27,30 @@ const getModules = async (courseId, role, userId) => {
       course: {
         select: { id: true, title: true }
       },
+      // Each level's own assignments travel with the tree, so the Course Map
+      // can merge them into that level's sequence by `order` instead of
+      // showing nothing (this tree carried no assignments at all, which is why
+      // a saved course's assignment rows never appeared in the Composer).
+      assignments: {
+        where: isStudentOrGuest ? { isPublished: true } : undefined,
+        orderBy: { order: "asc" }
+      },
       lessons: {
         where: isStudentOrGuest ? { isPublished: true } : undefined,
         orderBy: {
           order: "asc"
         },
         include: {
+          assignments: {
+            where: isStudentOrGuest ? { isPublished: true } : undefined,
+            orderBy: { order: "asc" }
+          },
           topics: {
             include: {
+              assignments: {
+                where: isStudentOrGuest ? { isPublished: true } : undefined,
+                orderBy: { order: "asc" }
+              },
               _count: {
                 select: { contents: true }
               }
@@ -77,12 +98,6 @@ const getModuleById = async (moduleId, role) => {
 };
 
 const createModule = async (data) => {
-  const lastModule = await prisma.module.findFirst({
-    where: { courseId: data.courseId },
-    orderBy: { order: "desc" },
-    select: { order: true }
-  });
-
   // A module added to an already-published course goes live with it, so new
   // material never sits invisible to students who are already enrolled.
   const course = await prisma.course.findUnique({
@@ -90,12 +105,17 @@ const createModule = async (data) => {
     select: { status: true }
   });
 
-  return await prisma.module.create({
-    data: {
-      ...data,
-      order: (lastModule?.order ?? 0) + 1,
-      isPublished: data.isPublished ?? course?.status === "PUBLISHED"
-    }
+  // Appended to the course's ONE common sequence — after the course's last
+  // Content, Quiz, Assignment or Module.
+  return await prisma.$transaction(async (tx) => {
+    const order = await claimSequenceOrder("courseId", data.courseId, null, tx, "module");
+    return tx.module.create({
+      data: {
+        ...data,
+        order,
+        isPublished: data.isPublished ?? course?.status === "PUBLISHED"
+      }
+    });
   });
 };
 
@@ -125,7 +145,12 @@ const deleteModule = async (
       lessons: {
         select: {
           id: true,
-          topics: { select: { id: true } }
+          topics: {
+            select: {
+              id: true,
+              subTopics: { select: { id: true, concepts: { select: { id: true } } } }
+            }
+          }
         }
       }
     }
@@ -136,16 +161,25 @@ const deleteModule = async (
   }
 
   const lessonIds = (existing.lessons || []).map((l) => l.id);
-  const topicIds = (existing.lessons || []).flatMap((l) => (l.topics || []).map((t) => t.id));
+  const topics = (existing.lessons || []).flatMap((l) => l.topics || []);
+  const topicIds = topics.map((t) => t.id);
+  const subTopics = topics.flatMap((t) => t.subTopics || []);
+  const subTopicIds = subTopics.map((s) => s.id);
+  const conceptIds = subTopics.flatMap((s) => (s.concepts || []).map((c) => c.id));
 
   return await prisma.$transaction(async (tx) => {
-    // 1. Delete all topic-level, lesson-level, and module-level quizzes under this module
+    // 1. Delete every quiz at or below this module. Descendant containers and
+    //    their Content cascade in the database, but Quiz does not cascade to
+    //    QuizQuestion or QuizSubmission, so SubTopic/Concept quizzes have to
+    //    be cleared here too or they are left orphaned.
     const quizzesToDelete = await tx.quiz.findMany({
       where: {
         OR: [
           { moduleId },
           ...(lessonIds.length > 0 ? [{ lessonId: { in: lessonIds } }] : []),
-          ...(topicIds.length > 0 ? [{ topicId: { in: topicIds } }] : [])
+          ...(topicIds.length > 0 ? [{ topicId: { in: topicIds } }] : []),
+          ...(subTopicIds.length > 0 ? [{ subTopicId: { in: subTopicIds } }] : []),
+          ...(conceptIds.length > 0 ? [{ conceptId: { in: conceptIds } }] : [])
         ]
       },
       select: { id: true }
@@ -159,7 +193,15 @@ const deleteModule = async (
       await tx.quiz.deleteMany({ where: { id: { in: quizIds } } });
     }
 
-    // 2. Delete topic contents
+    // 2. Delete contents and containers, deepest first
+    if (conceptIds.length > 0) {
+      await tx.content.deleteMany({ where: { conceptId: { in: conceptIds } } });
+      await tx.concept.deleteMany({ where: { id: { in: conceptIds } } });
+    }
+    if (subTopicIds.length > 0) {
+      await tx.content.deleteMany({ where: { subTopicId: { in: subTopicIds } } });
+      await tx.subTopic.deleteMany({ where: { id: { in: subTopicIds } } });
+    }
     if (topicIds.length > 0) {
       await tx.content.deleteMany({ where: { topicId: { in: topicIds } } });
       await tx.topic.deleteMany({ where: { id: { in: topicIds } } });
@@ -171,11 +213,15 @@ const deleteModule = async (
     }
 
     // 4. Delete module
-    return await tx.module.delete({
+    const deleted = await tx.module.delete({
       where: {
         id: moduleId
       }
     });
+
+    // 5. Close the module's slot in its course's common sequence
+    await releaseSequenceOrder("courseId", existing.courseId, existing.order, tx);
+    return deleted;
   });
 };
 
@@ -194,6 +240,10 @@ const reorderModules = async (
   if (!allBelongToCourse) {
     throw new ApiError(403, "One or more modules do not belong to this course.");
   }
+
+  // Course level only: modules stay in the Module group — after the course's
+  // own content, ahead of its assignments and quizzes.
+  await assertCourseReorderAllowed("module", modules);
 
   // Two-phase reorder: @@unique([courseId, order]) rejects a naive
   // parallel swap (A->2 while B still holds 2), so first move every

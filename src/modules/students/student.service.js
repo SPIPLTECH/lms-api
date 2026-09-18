@@ -73,7 +73,16 @@ function treeStats(hierarchy) {
     addLevel(mod, m);
     for (const lesson of mod.lessons || []) {
       addLevel(lesson, m);
-      for (const topic of lesson.topics || []) addLevel(topic, m);
+      for (const topic of lesson.topics || []) {
+        addLevel(topic, m);
+        // Item-level tallies must reach every container, or work a student
+        // did inside a SubTopic/Concept would be missing from the Directory's
+        // headline percentage while still counting in the roll-up.
+        for (const subTopic of topic.subTopics || []) {
+          addLevel(subTopic, m);
+          for (const concept of subTopic.concepts || []) addLevel(concept, m);
+        }
+      }
     }
     course.total += m.total;
     course.done += m.done;

@@ -10,6 +10,8 @@ const createQuizSchema = Joi.object({
   moduleId: Joi.string().optional().allow(null, ""),
   lessonId: Joi.string().optional().allow(null, ""),
   topicId: Joi.string().optional().allow(null, ""),
+  subTopicId: Joi.string().optional().allow(null, ""),
+  conceptId: Joi.string().optional().allow(null, ""),
   // Required, not defaulted: the instructor must actively say whether this is
   // practice or the real assessment. A default would silently pick for them.
   quizTag: Joi.string().valid(...QUIZ_TAGS).required(),
@@ -19,7 +21,8 @@ const createQuizSchema = Joi.object({
   // every Self-Test as unlimited (0) and never saves a Final below 1.
   attempts: Joi.number().integer().min(0).max(100).optional(),
   isPublished: Joi.boolean().optional(),
-  order: Joi.number().integer().min(1).optional(),
+  // A position in the parent's common sequence; 0 is a valid position.
+  order: Joi.number().integer().min(0).optional(),
   questions: Joi.array().optional(),
 });
 
@@ -36,7 +39,7 @@ const updateQuizSchema = Joi.object({
   // every Self-Test as unlimited (0) and never saves a Final below 1.
   attempts: Joi.number().integer().min(0).max(100).optional(),
   isPublished: Joi.boolean().optional(),
-  order: Joi.number().integer().min(1).optional(),
+  order: Joi.number().integer().min(0).optional(),
   questions: Joi.array().optional(),
 });
 

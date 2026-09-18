@@ -3,7 +3,12 @@ const notificationService = require("../notifications/notification.service");
 const learnerModelService = require("../learner-model/learnerModel.service");
 const { MISCONCEPTION_TAXONOMY, isKnownMisconceptionType } = require("../learner-model/misconceptionTaxonomy.config");
 const misconceptionClassifier = require("../learner-model/misconceptionClassifier.service");
-const { getNextQuizOrder, QUIZ_ORDER_BASE, ASSIGNMENT_ORDER_BASE } = require("../contents/contentOrder.util");
+const {
+  claimSequenceOrder,
+  releaseSequenceOrder,
+  mostSpecificParentField,
+  assertCourseReorderAllowed,
+} = require("../contents/contentOrder.util");
 
 
 // Tracks classifyAndApply() calls dispatched below fire-and-forget (never
@@ -384,7 +389,7 @@ const getQuizById = async (
  * batch — that path skips batch-linkage validation entirely, but still gets
  * the module/course consistency check below.
  */
-const validateQuizScope = async ({ batchId, courseId, moduleId, lessonId, topicId }) => {
+const validateQuizScope = async ({ batchId, courseId, moduleId, lessonId, topicId, subTopicId, conceptId }) => {
   if (batchId) {
     const batch = await prisma.batch.findUnique({
       where: { id: batchId },
@@ -454,49 +459,74 @@ const validateQuizScope = async ({ batchId, courseId, moduleId, lessonId, topicI
       throw error;
     }
   }
+
+  // SubTopic / Concept follow exactly the same two checks the four existing
+  // levels use: the parent must sit under the selected course, and must not
+  // contradict a more-specific parent the caller also supplied.
+  if (subTopicId) {
+    const subTopic = await prisma.subTopic.findUnique({
+      where: { id: subTopicId },
+      select: {
+        topicId: true,
+        topic: { select: { lesson: { select: { module: { select: { courseId: true } } } } } }
+      }
+    });
+
+    if (!subTopic || subTopic.topic.lesson.module.courseId !== courseId) {
+      const error = new Error("This subtopic does not belong to the selected course");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (topicId && subTopic.topicId !== topicId) {
+      const error = new Error("This subtopic does not belong to the selected topic");
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  if (conceptId) {
+    const concept = await prisma.concept.findUnique({
+      where: { id: conceptId },
+      select: {
+        subTopicId: true,
+        subTopic: {
+          select: {
+            topicId: true,
+            topic: { select: { lesson: { select: { module: { select: { courseId: true } } } } } }
+          }
+        }
+      }
+    });
+
+    if (!concept || concept.subTopic.topic.lesson.module.courseId !== courseId) {
+      const error = new Error("This concept does not belong to the selected course");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (subTopicId && concept.subTopicId !== subTopicId) {
+      const error = new Error("This concept does not belong to the selected subtopic");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (topicId && concept.subTopic.topicId !== topicId) {
+      const error = new Error("This concept does not belong to the selected topic");
+      error.statusCode = 400;
+      throw error;
+    }
+  }
 };
 
-const QUIZ_PARENT_PRECEDENCE = ["topicId", "lessonId", "moduleId", "courseId"];
+const QUIZ_PARENT_PRECEDENCE = ["conceptId", "subTopicId", "topicId", "lessonId", "moduleId", "courseId"];
 
 /** Most-specific non-null parent field on a quiz payload — courseId is
  * always present (schema-required), so this always resolves. Matches the
- * topic > lesson > module > course precedence this codebase already uses
- * elsewhere (validateQuizScope's nesting checks, the frontend's
- * isTopicQuiz/isLessonQuiz labeling). */
+ * concept > subtopic > topic > lesson > module > course precedence this
+ * codebase already uses elsewhere (validateQuizScope's nesting checks, the
+ * frontend's isTopicQuiz/isLessonQuiz labeling). */
 const resolveQuizParentField = (data) => QUIZ_PARENT_PRECEDENCE.find((f) => data[f]);
-
-/**
- * The rows that share one order sequence with a quiz — exactly the predicate
- * of the partial unique index that applies to it (quiz_topic_order_key,
- * quiz_lesson_order_key, quiz_module_order_key, quiz_course_order_key; see
- * scripts/add-quiz-order.sql). A quiz's order only has to be unique within
- * this set.
- */
-const quizOrderScopeWhere = (data) => {
-  if (data.topicId) return { topicId: data.topicId };
-  if (data.lessonId) return { lessonId: data.lessonId, topicId: null };
-  if (data.moduleId) return { moduleId: data.moduleId, lessonId: null, topicId: null };
-  return { courseId: data.courseId, moduleId: null, lessonId: null, topicId: null };
-};
-
-/**
- * Updates that move every quiz at or after `order` in the scope down one
- * slot, so a new quiz can take that position. Two phases, like
- * reorderQuizzes: each row first parks on a negative placeholder (its own
- * order, negated — unique because the orders are), then lands on order + 1,
- * so no single update ever collides with a neighbour that hasn't moved yet.
- * Returns the queries unexecuted, for the caller's transaction.
- */
-const buildQuizShiftUpdates = async (scopeWhere, order) => {
-  const toShift = await prisma.quiz.findMany({
-    where: { ...scopeWhere, order: { gte: order, lt: ASSIGNMENT_ORDER_BASE } },
-    select: { id: true, order: true },
-  });
-  return [
-    ...toShift.map((q) => prisma.quiz.update({ where: { id: q.id }, data: { order: -q.order } })),
-    ...toShift.map((q) => prisma.quiz.update({ where: { id: q.id }, data: { order: q.order + 1 } })),
-  ];
-};
 
 /** A Self-Test is never timed, and the server -- not the form -- owns that.
  * The *effective* tag decides, never the presence of a timeLimit key: a
@@ -533,55 +563,24 @@ const createQuiz = async (
   const { questions, ...quizData } = data;
 
   const orderField = resolveQuizParentField(quizData);
-  const explicitOrder = !(quizData.order === undefined || quizData.order === null);
-  if (!explicitOrder) {
-    quizData.order = await getNextQuizOrder(orderField, quizData[orderField]);
-  } else {
-    const requested = Number(quizData.order);
-    if (!Number.isInteger(requested)) {
-      const error = new Error("Quiz order must be an integer.");
-      error.statusCode = 400;
-      throw error;
-    }
-    if (requested >= QUIZ_ORDER_BASE && requested < ASSIGNMENT_ORDER_BASE) {
-      // Already a valid zone-banded value (e.g. resent from another quiz's order) — use as-is.
-      quizData.order = requested;
-    } else {
-      // Treat as a local index (1-based position among quizzes in this scope).
-      // Clamp so neither a non-positive index nor an absurdly large one can
-      // rebase outside the Quiz zone in either direction.
-      const localIndex = Math.min(Math.max(requested, 1), ASSIGNMENT_ORDER_BASE - QUIZ_ORDER_BASE - 1);
-      quizData.order = QUIZ_ORDER_BASE + localIndex;
-    }
-  }
+  const requestedOrder =
+    quizData.order === undefined || quizData.order === null ? null : quizData.order;
 
-  const createQuery = () =>
-    prisma.quiz.create({
+  // The quiz takes its position in its most specific parent's ONE common
+  // sequence (shared with that parent's Content, Assignments and child
+  // entity): appended after the last item of any type, or — the Composer's
+  // "add quiz here" — inserted at the given position with every later item
+  // of any type moved down one, atomically with the insert.
+  const quiz = await prisma.$transaction(async (tx) => {
+    quizData.order = await claimSequenceOrder(orderField, quizData[orderField], requestedOrder, tx, "quiz");
+    return tx.quiz.create({
       data: {
         ...applyTagAttemptRule(quizData.quizTag, applyTagTimerRule(quizData.quizTag, quizData)),
         moduleId: quizData.moduleId || null,
         lessonId: quizData.lessonId || null
       }
     });
-
-  // A quiz inserted at a chosen position (the Composer's "add quiz here")
-  // asks for a slot another quiz in its scope may already hold. Taking it
-  // as-is violated the scope's unique (…, order) index and failed the whole
-  // request with a 500; instead, the quizzes from that slot on move down one,
-  // atomically with the insert. An auto-computed order is always past the
-  // scope's last quiz, so it never needs this.
-  let quiz;
-  const scopeWhere = quizOrderScopeWhere(quizData);
-  const occupied =
-    explicitOrder &&
-    (await prisma.quiz.findFirst({ where: { ...scopeWhere, order: quizData.order }, select: { id: true } }));
-  if (occupied) {
-    const shiftUpdates = await buildQuizShiftUpdates(scopeWhere, quizData.order);
-    const results = await prisma.$transaction([...shiftUpdates, createQuery()]);
-    quiz = results[results.length - 1];
-  } else {
-    quiz = await createQuery();
-  }
+  });
 
   if (Array.isArray(questions) && questions.length > 0) {
     for (let idx = 0; idx < questions.length; idx++) {
@@ -776,10 +775,16 @@ const deleteQuiz = async (
     throw error;
   }
 
-  return prisma.quiz.delete({
-    where: {
-      id: quizId
-    }
+  // Removing a quiz closes its slot in its most specific parent's common sequence.
+  return prisma.$transaction(async (tx) => {
+    const deleted = await tx.quiz.delete({
+      where: {
+        id: quizId
+      }
+    });
+    const parentField = mostSpecificParentField(existing);
+    await releaseSequenceOrder(parentField, parentField && existing[parentField], existing.order, tx);
+    return deleted;
   });
 };
 
@@ -1471,6 +1476,11 @@ const generateSelfAssessmentQuiz = async (courseId, questionCount = 5) => {
 // placeholder, then to its final order. Mirrors content.service.js's
 // reorderContents exactly.
 const reorderQuizzes = async (quizzes) => {
+  // Course level only: a course quiz stays in the last group — it can never
+  // be moved above a course content, module or assignment. Quizzes at every
+  // other level are free.
+  await assertCourseReorderAllowed("quiz", quizzes);
+
   const offsetUpdates = quizzes.map((quiz, index) =>
     prisma.quiz.update({
       where: { id: quiz.id },
