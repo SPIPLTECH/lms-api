@@ -83,6 +83,10 @@ test("submitQuiz returns once the attempt is committed, deferring side effects",
         findFirst: async () => null,
         create: async ({ data }) => ({ id: "attempt-1", submittedAt: new Date(), ...data })
       },
+      // The attempt's question-level records, written in the same transaction.
+      questionAttempt: {
+        createMany: async ({ data }) => ({ count: data.length })
+      },
       quizSubmission: {
         findUnique: async () => null,
         upsert: async ({ create }) => ({ id: "submission-1", ...create })

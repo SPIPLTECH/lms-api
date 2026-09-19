@@ -120,7 +120,10 @@ const submitQuiz = async (req, res, next) => {
       student.id,
       req.params.quizId,
       req.body.answers || [],
-      req.body.timeTakenSeconds ?? null
+      req.body.timeTakenSeconds ?? null,
+      // Per-question visit/skip/hint activity from the attempt UI. Optional:
+      // an older client sends only `answers` and still submits.
+      req.body.questionStates || []
     );
 
     res.status(201).json({

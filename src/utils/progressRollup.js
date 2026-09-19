@@ -1,4 +1,5 @@
 const prisma = require('../config/database');
+const { QUALIFYING_TAG, getCourseQualifications } = require('./qualification');
 
 /**
  * Authoritative bottom-up multi-entity progress roll-up engine.
@@ -60,6 +61,14 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
   };
   const assignmentSelect = { id: true, title: true, dueDate: true };
 
+  // A QUALIFYING quiz is the test that lets a student SKIP its lesson/topic,
+  // not an item inside it. Counting it as required learning would mean a
+  // topic could only be completed by passing the very test that exempts the
+  // student from it — and a student who never intends to skip would be left
+  // with a permanently incomplete topic. Every quiz lookup below therefore
+  // filters it out; qualification is read separately, from the attempts.
+  const GRADED_QUIZ_TAGS = { quizTag: { not: QUALIFYING_TAG } };
+
   // 1. Fetch live published hierarchy including direct Contents, Quizzes, Assignments at all levels
   const course = await client.course.findUnique({
     where: { id: courseId },
@@ -69,12 +78,12 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       status: true,
       contents: {
         where: { moduleId: null, lessonId: null, topicId: null },
-        orderBy: { order: 'asc' },
+        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
         select: contentSelect
       },
       quizzes: {
-        where: { isPublished: true, moduleId: null, lessonId: null, topicId: null },
-        orderBy: { order: 'asc' },
+        where: { isPublished: true, moduleId: null, lessonId: null, topicId: null , ...GRADED_QUIZ_TAGS },
+        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
         select: quizSelect
       },
       assignments: {
@@ -83,19 +92,19 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       },
       modules: {
         where: { isPublished: true },
-        orderBy: { order: 'asc' },
+        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
         select: {
           id: true,
           title: true,
           order: true,
           contents: {
             where: { lessonId: null, topicId: null },
-            orderBy: { order: 'asc' },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
             select: contentSelect
           },
           quizzes: {
-            where: { isPublished: true, lessonId: null, topicId: null },
-            orderBy: { order: 'asc' },
+            where: { isPublished: true, lessonId: null, topicId: null , ...GRADED_QUIZ_TAGS },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
             select: quizSelect
           },
           assignments: {
@@ -104,19 +113,19 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
           },
           lessons: {
             where: { isPublished: true },
-            orderBy: { order: 'asc' },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
             select: {
               id: true,
               title: true,
               order: true,
               contents: {
                 where: { topicId: null },
-                orderBy: { order: 'asc' },
+                orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                 select: contentSelect
               },
               quizzes: {
-                where: { isPublished: true, topicId: null },
-                orderBy: { order: 'asc' },
+                where: { isPublished: true, topicId: null , ...GRADED_QUIZ_TAGS },
+                orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                 select: quizSelect
               },
               assignments: {
@@ -125,18 +134,18 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
               },
               topics: {
                 where: { isPublished: true },
-                orderBy: { order: 'asc' },
+                orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                 select: {
                   id: true,
                   title: true,
                   order: true,
                   contents: {
-                    orderBy: { order: 'asc' },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                     select: contentSelect
                   },
                   quizzes: {
-                    where: { isPublished: true },
-                    orderBy: { order: 'asc' },
+                    where: { isPublished: true , ...GRADED_QUIZ_TAGS },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                     select: quizSelect
                   },
                   assignments: {
@@ -215,7 +224,8 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     apRecords,
     existingTopicProgresses,
     existingLessonProgresses,
-    existingModuleProgresses
+    existingModuleProgresses,
+    qualifications
   ] = await Promise.all([
     allContentIds.size > 0
       ? client.contentProgress.findMany({
@@ -264,8 +274,24 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
           where: { studentId, moduleId: { in: moduleIds } },
           select: { moduleId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
         })
-      : []
+      : [],
+    // The lessons/topics this student has qualified out of, read from the
+    // Phase 1 attempt log rather than stored anywhere of its own.
+    getCourseQualifications(studentId, courseId, client)
   ]);
+
+  const { qualifiedTopicIds, qualifiedLessonIds } = qualifications;
+
+  // Qualification stands in for completion when deciding what a student may
+  // move past, and counts toward the course percentage — otherwise a student
+  // who legitimately skipped a lesson could never reach 100% or earn their
+  // certificate. The two stay separate everywhere they are REPORTED (each
+  // node carries its own `completed` and `qualified`), so "skipped after
+  // qualifying" is never mistaken for "studied".
+  const isTopicSatisfied = (topicId) =>
+    topicCompletionStatus.get(topicId) === true || qualifiedTopicIds.has(topicId);
+  const isLessonSatisfied = (lessonId) =>
+    lessonCompletionStatus.get(lessonId) === true || qualifiedLessonIds.has(lessonId);
 
   // A. Content Progress
   const completedContentSet = new Set();
@@ -370,12 +396,19 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
         const visitedAt = isVisited ? (existing?.visited ? existing.visitedAt : now) : null;
         topicVisitedAtMap.set(topic.id, visitedAt);
 
+        // Materialized from the qualifying attempts, exactly as `completed`
+        // above is materialized from the topic's items. qualifiedAt is the
+        // first passing attempt's timestamp, so it does not move when the
+        // student retakes the test.
+        const isQualified = qualifiedTopicIds.has(topic.id);
+        const qualifiedAt = isQualified ? qualifiedTopicIds.get(topic.id) : null;
+
         if (persist) {
           topicUpsertPromises.push(
             client.topicProgress.upsert({
               where: { studentId_topicId: { studentId, topicId: topic.id } },
-              create: { studentId, topicId: topic.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
-              update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
+              create: { studentId, topicId: topic.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt, qualified: isQualified, qualifiedAt },
+              update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt, qualified: isQualified, qualifiedAt }
             })
           );
         }
@@ -402,7 +435,9 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       const directContentsCompleted = lessonContents.every((c) => completedContentSet.has(c.id));
       const directQuizzesCompleted = lessonQuizzes.every((q) => completedQuizSet.has(q.id));
       const directAssignmentsCompleted = lessonAssignments.every((a) => completedAssignmentSet.has(a.id));
-      const topicsCompleted = applicableTopics.every((t) => topicCompletionStatus.get(t.id) === true);
+      // A qualified topic no longer holds its lesson back: the student
+      // demonstrated they already knew it.
+      const topicsCompleted = applicableTopics.every((t) => isTopicSatisfied(t.id));
 
       const directContentsVisited = lessonContents.every((c) => visitedContentSet.has(c.id));
       const directQuizzesVisited = lessonQuizzes.every((q) => visitedQuizSet.has(q.id));
@@ -421,12 +456,15 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       const visitedAt = isVisited ? (existing?.visited ? existing.visitedAt : now) : null;
       lessonVisitedAtMap.set(lesson.id, visitedAt);
 
+      const isQualified = qualifiedLessonIds.has(lesson.id);
+      const qualifiedAt = isQualified ? qualifiedLessonIds.get(lesson.id) : null;
+
       if (persist) {
         lessonUpsertPromises.push(
           client.lessonProgress.upsert({
             where: { studentId_lessonId: { studentId, lessonId: lesson.id } },
-            create: { studentId, lessonId: lesson.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
-            update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
+            create: { studentId, lessonId: lesson.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt, qualified: isQualified, qualifiedAt },
+            update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt, qualified: isQualified, qualifiedAt }
           })
         );
       }
@@ -449,7 +487,9 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     const directContentsCompleted = moduleContents.every((c) => completedContentSet.has(c.id));
     const directQuizzesCompleted = moduleQuizzes.every((q) => completedQuizSet.has(q.id));
     const directAssignmentsCompleted = moduleAssignments.every((a) => completedAssignmentSet.has(a.id));
-    const lessonsCompleted = applicableLessons.every((l) => lessonCompletionStatus.get(l.id) === true);
+    // As with topics inside a lesson: a lesson the student qualified out of
+    // does not hold its module back.
+    const lessonsCompleted = applicableLessons.every((l) => isLessonSatisfied(l.id));
 
     const directContentsVisited = moduleContents.every((c) => visitedContentSet.has(c.id));
     const directQuizzesVisited = moduleQuizzes.every((q) => visitedQuizSet.has(q.id));
@@ -575,6 +615,13 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
           applicable: topicHasApplicableItemsMap.get(topic.id) === true,
           completed: topicCompletionStatus.get(topic.id) === true,
           completedAt: topicCompletedAtMap.get(topic.id) ?? null,
+          // Skipped after passing this topic's qualifying test. Reported
+          // separately from `completed` so the player can say "skipped" and
+          // not "done", while `satisfied` is the single flag progression
+          // reads — no caller has to remember to check both.
+          qualified: qualifiedTopicIds.has(topic.id),
+          qualifiedAt: qualifiedTopicIds.get(topic.id) ?? null,
+          satisfied: isTopicSatisfied(topic.id),
           visited: topicVisitedStatus.get(topic.id) === true,
           visitedAt: topicVisitedAtMap.get(topic.id) ?? null
         };
@@ -583,7 +630,7 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       const direct = buildDirect(lesson);
       const applicableTopics = topicsTree.filter((t) => t.applicable);
       const totalItems = direct.directTotalItems + applicableTopics.length;
-      const completedItems = direct.directCompletedItems + applicableTopics.filter((t) => t.completed).length;
+      const completedItems = direct.directCompletedItems + applicableTopics.filter((t) => t.satisfied).length;
       const visitedItems = direct.directVisitedItems + applicableTopics.filter((t) => t.visited).length;
 
       return {
@@ -600,6 +647,9 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
         applicable: lessonHasApplicableItemsMap.get(lesson.id) === true,
         completed: lessonCompletionStatus.get(lesson.id) === true,
         completedAt: lessonCompletedAtMap.get(lesson.id) ?? null,
+        qualified: qualifiedLessonIds.has(lesson.id),
+        qualifiedAt: qualifiedLessonIds.get(lesson.id) ?? null,
+        satisfied: isLessonSatisfied(lesson.id),
         visited: lessonVisitedStatus.get(lesson.id) === true,
         visitedAt: lessonVisitedAtMap.get(lesson.id) ?? null
       };
@@ -608,7 +658,7 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     const direct = buildDirect(mod);
     const applicableLessons = lessonsTree.filter((l) => l.applicable);
     const totalItems = direct.directTotalItems + applicableLessons.length;
-    const completedItems = direct.directCompletedItems + applicableLessons.filter((l) => l.completed).length;
+    const completedItems = direct.directCompletedItems + applicableLessons.filter((l) => l.satisfied).length;
     const visitedItems = direct.directVisitedItems + applicableLessons.filter((l) => l.visited).length;
 
     return {
@@ -625,6 +675,12 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       applicable: moduleHasApplicableItemsMap.get(mod.id) === true,
       completed: moduleCompletionStatus.get(mod.id) === true,
       completedAt: moduleCompletedAtMap.get(mod.id) ?? null,
+      // A module is never itself skippable — qualification is offered at
+      // lesson and topic level only. Carried anyway so every node in the tree
+      // answers the same three questions and callers need no special case.
+      qualified: false,
+      qualifiedAt: null,
+      satisfied: moduleCompletionStatus.get(mod.id) === true,
       visited: moduleVisitedStatus.get(mod.id) === true,
       visitedAt: moduleVisitedAtMap.get(mod.id) ?? null
     };
@@ -690,6 +746,11 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     progressPercent,
     visitedPercent,
     completed: isCourseCompleted,
+    // A course is not skippable as a whole; carried for shape parity with
+    // every other node in the tree.
+    qualified: false,
+    qualifiedAt: null,
+    satisfied: isCourseCompleted,
     visited: isCourseVisited
   };
 

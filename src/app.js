@@ -57,7 +57,25 @@ app.disable('etag');
 // header, so the browser preflights it. Without Access-Control-Max-Age that
 // preflight result is only cached for ~5s, adding an extra OPTIONS round trip
 // ahead of most requests. 7200s is the longest Chromium honours.
-app.use(cors({ maxAge: 7200 }));
+// CORS_ALLOWED_ORIGINS, when set, is a comma-separated allowlist. Left unset
+// the behaviour is exactly what it was — every origin accepted — because
+// tightening this blindly would break whatever is already deployed against it.
+//
+// Reflecting every origin is survivable here specifically because this API
+// authenticates from an Authorization header and never from a cookie, so a
+// third-party page gets no ambient credentials to ride on. It is still worth
+// closing in production, which is what the variable is for.
+const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    maxAge: 7200,
+    ...(allowedOrigins.length > 0 ? { origin: allowedOrigins } : {})
+  })
+);
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },

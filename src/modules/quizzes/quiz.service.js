@@ -1,9 +1,15 @@
 const prisma = require("../../config/database");
+const { Prisma } = require("@prisma/client");
 const notificationService = require("../notifications/notification.service");
 const learnerModelService = require("../learner-model/learnerModel.service");
 const { MISCONCEPTION_TAXONOMY, isKnownMisconceptionType } = require("../learner-model/misconceptionTaxonomy.config");
 const misconceptionClassifier = require("../learner-model/misconceptionClassifier.service");
 const { getNextQuizOrder, QUIZ_ORDER_BASE, ASSIGNMENT_ORDER_BASE } = require("../contents/contentOrder.util");
+const { buildQualificationOutcome } = require("../../utils/qualificationResult");
+const { QUALIFYING_TAG } = require("../../utils/qualification");
+// One rule for the attempt allowance, shared with nextAction.service so a
+// student is never told a limit that submit would not enforce.
+const { effectiveMaxAttempts, buildAttemptAllowance } = require("../../utils/attemptAllowance");
 
 
 // Tracks classifyAndApply() calls dispatched below fire-and-forget (never
@@ -199,9 +205,10 @@ const calculateSubmissionResult = (quiz, answers = []) => {
   const rawQuestions = quiz.quizQuestions ? quiz.quizQuestions.map(qq => ({
     ...qq.question,
     marks: qq.marks ?? qq.question?.marks ?? 1,
-    negativeMarks: qq.question?.negativeMarks ?? 0
+    negativeMarks: qq.question?.negativeMarks ?? 0,
+    order: qq.order ?? qq.question?.order ?? null
   })) : [];
-  
+
   const totalMarks = rawQuestions.reduce((sum, question) => sum + (question.marks || 1), 0);
   const answerMap = new Map((answers || []).map((ans) => [ans.questionId, ans.answer]));
 
@@ -210,22 +217,57 @@ const calculateSubmissionResult = (quiz, answers = []) => {
   // (the learner-model evidence bridge) can observe each answered question
   // individually instead of only the quiz-level pass/fail.
   const questionEvidence = [];
+  // Every question in the quiz, answered or not, with what it was worth and
+  // what it earned — the graded half of a QuestionAttempt row, and what the
+  // attempt summary is folded from. Unlike questionEvidence above (answered
+  // questions only, because an unanswered question is not evidence of
+  // anything), this always covers the full question set.
+  const questionResults = [];
 
   rawQuestions.forEach((question) => {
     const answer = answerMap.get(question.id);
+    const questionMaxMarks = question.marks !== undefined ? Number(question.marks) : 1;
 
-    if (answer !== undefined && answer !== null && answer !== "") {
+    if (answer === undefined || answer === null || answer === "") {
+      questionResults.push({
+        questionId: question.id,
+        order: question.order ?? null,
+        answered: false,
+        answer: null,
+        isCorrect: null,
+        marksObtained: 0,
+        maxMarks: questionMaxMarks
+      });
+      return;
+    }
+
+    {
       const qType = question.questionType || question.type;
       const scoreMultiplier = evaluateAnswer(answer, question.correctAnswer, qType);
 
-      const questionMarks = question.marks !== undefined ? Number(question.marks) : 1;
+      const questionMarks = questionMaxMarks;
       const negativeMarks = question.negativeMarks ? Number(question.negativeMarks) : 0;
 
+      // What this one question moved the score by — the same arithmetic the
+      // running total below uses, kept per question so the attempt's marks
+      // add up to its score without a second, divergent calculation.
+      let marksObtained = 0;
       if (scoreMultiplier > 0) {
-        score += scoreMultiplier * questionMarks;
+        marksObtained = scoreMultiplier * questionMarks;
       } else if (scoreMultiplier === 0 && negativeMarks > 0) {
-        score -= negativeMarks;
+        marksObtained = -negativeMarks;
       }
+      score += marksObtained;
+
+      questionResults.push({
+        questionId: question.id,
+        order: question.order ?? null,
+        answered: true,
+        answer,
+        isCorrect: scoreMultiplier >= 1,
+        marksObtained: Number(marksObtained.toFixed(2)),
+        maxMarks: questionMarks
+      });
 
       // A question without a curated topic must NOT fall into a shared
       // "Uncategorized" bucket: two unrelated untagged questions would then
@@ -267,7 +309,8 @@ const calculateSubmissionResult = (quiz, answers = []) => {
     totalMarks,
     percentage,
     passed: percentage >= (quiz.passingScore || 0),
-    questionEvidence
+    questionEvidence,
+    questionResults
   };
 };
 
@@ -354,23 +397,69 @@ const getQuizById = async (
 
   let allQuestions = [...junctionQuestions];
 
-  // Students attempting the quiz should not receive the answer key up front.
-  if (role === "STUDENT" || role === "GUEST") {
-    allQuestions = allQuestions.map(
-      ({ correctAnswer, explanation, ...rest }) => rest
-    );
-  }
-
   // A student also gets how many attempts they have left, so the attempt UI
   // can stop them before they answer instead of the submit being refused.
+  // Read before the stripping below, because which attempt they are on is
+  // what decides whether hints may be sent at all.
+  const attemptsUsed = studentId ? await countAttemptsUsed(studentId, quizId) : 0;
   const attemptStatus = studentId
-    ? buildAttemptAllowance(effectiveMaxAttempts(quiz), await countAttemptsUsed(studentId, quizId))
+    ? buildAttemptAllowance(effectiveMaxAttempts(quiz), attemptsUsed)
     : undefined;
 
+  // Hints are a qualifying-test affordance only, and only from the second
+  // attempt onward. A first attempt has to measure what the student already
+  // knows — that is the entire basis on which they are allowed to skip the
+  // content — so helping them through it would defeat the test. From the
+  // second attempt the question is no longer "do you already know this?" but
+  // "can you get there?", and a nudge is appropriate.
+  //
+  // `attemptsUsed` counts SUBMITTED attempts, so the attempt now in progress
+  // is attemptsUsed + 1. It is recomputed from the QuizAttempt log on every
+  // request, which is why a refresh mid-attempt still knows which attempt
+  // this is.
+  //
+  // Every other kind of quiz is untouched: a Self-Test, a Final or any
+  // ordinary lesson quiz never exposes a hint, whatever attempt it is on.
+  const currentAttemptNumber = attemptsUsed + 1;
+  const hintsUnlocked = quiz.quizTag === QUALIFYING_TAG && currentAttemptNumber >= 2;
+
+  // Students attempting the quiz should not receive the answer key up front —
+  // nor a hint they have not earned. Withheld here rather than hidden in the
+  // client: a hint that reached the browser on a first attempt would be
+  // readable in the network response however the UI chose to render it.
+  if (role === "STUDENT" || role === "GUEST") {
+    allQuestions = allQuestions.map(({ correctAnswer, explanation, hint, ...rest }) => ({
+      ...rest,
+      // `hasHint` travels regardless, so the attempt UI can tell "there is no
+      // hint for this question" from "you cannot see it yet" without being
+      // told what the hint says.
+      hasHint: Boolean(hint && String(hint).trim()),
+      ...(hintsUnlocked && hint ? { hint } : {})
+    }));
+  }
+
+  // `quizQuestions` is the raw junction relation, and every row on it carries
+  // the UNSANITIZED question — correctAnswer, explanation and hint included.
+  // Spreading `quiz` shipped that alongside the sanitized `questions` array,
+  // so everything carefully stripped above was still sitting in the same
+  // response one key over, readable in the network tab by any student
+  // attempting the quiz. It is dropped here for students and guests.
+  //
+  // No student-facing code reads it: the attempt UI uses `questions`, and the
+  // instructor views that do read it (the composer, the course sidebar) are
+  // unaffected and already prefer `questions` anyway.
+  const { quizQuestions, ...quizFields } = quiz;
+  const isStudentOrGuest = role === "STUDENT" || role === "GUEST";
+
   return {
-    ...quiz,
+    ...(isStudentOrGuest ? quizFields : quiz),
     questions: allQuestions,
-    ...(attemptStatus && { attemptStatus })
+    ...(attemptStatus && {
+      attemptStatus,
+      // What the attempt UI needs to render the hint control, decided here.
+      currentAttemptNumber,
+      hintsUnlocked
+    })
   };
 };
 
@@ -505,12 +594,39 @@ const buildQuizShiftUpdates = async (scopeWhere, order) => {
 const applyTagTimerRule = (effectiveTag, quizData) =>
   effectiveTag === "SELF_TEST" ? { ...quizData, timeLimit: null } : quizData;
 
+/**
+ * A QUALIFYING quiz is scored and limited like a Final — it decides whether a
+ * student may skip real material, so it keeps a real attempt limit and may be
+ * timed. It differs only in what passing MEANS, which is handled outside the
+ * quiz module entirely (see utils/qualification.js).
+ */
+const isGatedTag = (tag) => tag === "FINAL" || tag === "QUALIFYING";
+
+/**
+ * A qualifying test must say what it qualifies the student to skip, and that
+ * is the lesson or topic it is attached to. Without one it would be a test
+ * that exempts the student from nothing — rejected here rather than saved as
+ * a quiz that can never do its job. Refused at module and course level too:
+ * skipping is offered at lesson and topic level only.
+ */
+const assertQualifyingTargetPresent = (tag, quizData) => {
+  if (tag !== "QUALIFYING") return;
+  if (quizData.lessonId || quizData.topicId) return;
+
+  const error = new Error(
+    "A qualifying test must be attached to the lesson or topic it lets the student skip."
+  );
+  error.statusCode = 400;
+  throw error;
+};
+
 /** Attempts follow the tag the same way. A Self-Test is practice and is
- * stored as unlimited (0). A Final always carries a real limit of at least
- * one: a blank or 0 request, or a quiz that was a Self-Test until this edit,
- * becomes 1. An edit that doesn't touch attempts leaves a Final's limit alone. */
+ * stored as unlimited (0). A Final or Qualifying test always carries a real
+ * limit of at least one: a blank or 0 request, or a quiz that was a Self-Test
+ * until this edit, becomes 1. An edit that doesn't touch attempts leaves an
+ * existing limit alone. */
 const applyTagAttemptRule = (effectiveTag, quizData, existingAttempts) => {
-  if (effectiveTag === "SELF_TEST") return { ...quizData, attempts: 0 };
+  if (!isGatedTag(effectiveTag)) return { ...quizData, attempts: 0 };
   if (quizData.attempts !== undefined) {
     return { ...quizData, attempts: Math.max(1, Math.round(Number(quizData.attempts)) || 1) };
   }
@@ -529,6 +645,7 @@ const createQuiz = async (
   userId = null
 ) => {
   await validateQuizScope(data);
+  assertQualifyingTargetPresent(data.quizTag, data);
 
   const { questions, ...quizData } = data;
 
@@ -605,6 +722,10 @@ const createQuiz = async (
                 ? JSON.stringify(q.correctAnswer)
                 : String(q.correctAnswer ?? ""),
             explanation: q.explanation || "",
+            // A mid-attempt nudge, distinct from the post-submission explanation
+            // above. Null rather than "" when absent, so "no hint authored" stays
+            // distinguishable from an empty one.
+            hint: q.hint?.trim() ? q.hint.trim() : null,
             marks: Number(q.marks) || 1,
             difficulty: (q.difficulty || "MEDIUM").toUpperCase(),
             isRequired: q.isMandatory !== false,
@@ -673,6 +794,14 @@ const updateQuiz = async (
   // whether a time limit may survive.
   const effectiveTag = quizData.quizTag ?? existing.quizTag;
 
+  // Retagging an existing quiz as QUALIFYING is only valid if it already
+  // hangs off a lesson or topic — the scope columns aren't editable here, so
+  // the check reads the stored row rather than the payload.
+  assertQualifyingTargetPresent(effectiveTag, {
+    lessonId: quizData.lessonId ?? existing.lessonId,
+    topicId: quizData.topicId ?? existing.topicId
+  });
+
   const updatedQuiz = await prisma.quiz.update({
     where: {
       id: quizId
@@ -705,6 +834,10 @@ const updateQuiz = async (
                 ? JSON.stringify(q.correctAnswer)
                 : String(q.correctAnswer ?? ""),
             explanation: q.explanation || "",
+            // A mid-attempt nudge, distinct from the post-submission explanation
+            // above. Null rather than "" when absent, so "no hint authored" stays
+            // distinguishable from an empty one.
+            hint: q.hint?.trim() ? q.hint.trim() : null,
             marks: Number(q.marks) || 1,
             difficulty: (q.difficulty || "MEDIUM").toUpperCase(),
             isRequired: q.isMandatory !== false,
@@ -725,6 +858,10 @@ const updateQuiz = async (
                   ? JSON.stringify(q.correctAnswer)
                   : String(q.correctAnswer ?? ""),
               explanation: q.explanation || "",
+              // A mid-attempt nudge, distinct from the post-submission explanation
+              // above. Null rather than "" when absent, so "no hint authored" stays
+              // distinguishable from an empty one.
+              hint: q.hint?.trim() ? q.hint.trim() : null,
               marks: Number(q.marks) || 1,
               difficulty: (q.difficulty || "MEDIUM").toUpperCase(),
               isRequired: q.isMandatory !== false,
@@ -741,6 +878,10 @@ const updateQuiz = async (
                   ? JSON.stringify(q.correctAnswer)
                   : String(q.correctAnswer ?? ""),
               explanation: q.explanation || "",
+              // A mid-attempt nudge, distinct from the post-submission explanation
+              // above. Null rather than "" when absent, so "no hint authored" stays
+              // distinguishable from an empty one.
+              hint: q.hint?.trim() ? q.hint.trim() : null,
               marks: Number(q.marks) || 1,
               difficulty: (q.difficulty || "MEDIUM").toUpperCase(),
               isRequired: q.isMandatory !== false,
@@ -783,38 +924,120 @@ const deleteQuiz = async (
   });
 };
 
-/** Quiz.attempts is how many attempts each student gets; 0 means unlimited. */
-const isUnlimitedAttempts = (maxAttempts) => !(Number(maxAttempts) > 0);
+/** A date the client sent, or null — never an Invalid Date reaching Prisma. */
+const toDateOrNull = (value) => {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
 
 /**
- * The limit that actually applies. A Self-Test can always be retaken whatever
- * is stored — rows saved before that rule still hold the schema default of 1.
- * A Final uses its stored limit (1 unless the instructor changed it).
+ * The status a question ended the attempt in, from the facts about it.
+ * Answering always wins — a question the student skipped and then went back
+ * and answered is ANSWERED, not SKIPPED. Skip outranks a bare visit, since
+ * skipping is a deliberate "not this one" and visiting is not.
  */
-const effectiveMaxAttempts = (quiz) => (quiz.quizTag === "SELF_TEST" ? 0 : quiz.attempts);
+const resolveQuestionStatus = ({ answered, skipped, visited }) => {
+  if (answered) return "ANSWERED";
+  if (skipped) return "SKIPPED";
+  if (visited) return "VISITED";
+  return "NOT_VISITED";
+};
 
-/** Where a student stands against a quiz's attempt limit. */
-const buildAttemptAllowance = (maxAttempts, attemptsUsed) => {
-  const unlimited = isUnlimitedAttempts(maxAttempts);
+/**
+ * One QuestionAttempt row per question in the quiz, ready to write under a
+ * QuizAttempt.
+ *
+ * The grading half (answered / answer / isCorrect / marksObtained / maxMarks)
+ * comes from `result`, i.e. from the server's own scoring — never from the
+ * client. The activity half (visited / skipped / hintViewed / timestamps) can
+ * only come from the attempt UI, so it is read from `questionStates`, and is
+ * simply absent for a client that doesn't send it.
+ *
+ * Client-reported state for a question that isn't in this quiz is dropped:
+ * the question set drives the rows, so a stale or crafted payload can't add
+ * records for questions the student was never shown.
+ */
+const buildQuestionAttemptRows = (result, questionStates = []) => {
+  const stateMap = new Map(
+    (questionStates || [])
+      .filter((state) => state && state.questionId)
+      .map((state) => [state.questionId, state])
+  );
+
+  return (result.questionResults || []).map((questionResult) => {
+    const state = stateMap.get(questionResult.questionId) || {};
+    const answered = questionResult.answered;
+    // An answered question was necessarily visited, whatever the client said.
+    const visited = answered || Boolean(state.visited) || state.status === "VISITED" ||
+      state.status === "ANSWERED" || state.status === "SKIPPED";
+    const skipped = Boolean(state.skipped) || state.status === "SKIPPED";
+
+    return {
+      questionId: questionResult.questionId,
+      answer: questionResult.answer ?? null,
+      status: resolveQuestionStatus({ answered, skipped, visited }),
+      visited,
+      skipped,
+      answered,
+      isCorrect: questionResult.isCorrect,
+      marksObtained: questionResult.marksObtained,
+      maxMarks: questionResult.maxMarks,
+      hintViewed: Boolean(state.hintViewed),
+      order: questionResult.order ?? null,
+      firstVisitedAt: toDateOrNull(state.firstVisitedAt),
+      lastVisitedAt: toDateOrNull(state.lastVisitedAt),
+      answeredAt: answered ? toDateOrNull(state.answeredAt) : null,
+      skippedAt: skipped ? toDateOrNull(state.skippedAt) : null
+    };
+  });
+};
+
+/**
+ * The attempt summary, folded from its question rows — every figure the
+ * result page shows is counted here, from the records, rather than kept as
+ * its own column that could drift out of step with them.
+ */
+const summarizeQuestionAttempts = (rows = []) => {
+  const answered = rows.filter((r) => r.answered);
+  const correct = answered.filter((r) => r.isCorrect === true);
+  const visited = rows.filter((r) => r.visited);
+  const marksObtained = Number(
+    rows.reduce((sum, r) => sum + Number(r.marksObtained || 0), 0).toFixed(2)
+  );
+  const maxMarks = Number(rows.reduce((sum, r) => sum + Number(r.maxMarks || 0), 0).toFixed(2));
+  // Mirrors calculateSubmissionResult: an attempt is never scored below zero,
+  // however much negative marking it collected.
+  const score = Math.max(0, marksObtained);
+
   return {
-    attemptsUsed,
-    maxAttempts: unlimited ? null : maxAttempts,
-    unlimitedAttempts: unlimited,
-    attemptsRemaining: unlimited ? null : Math.max(0, maxAttempts - attemptsUsed),
-    canAttempt: unlimited || attemptsUsed < maxAttempts
+    totalQuestions: rows.length,
+    answeredCount: answered.length,
+    unansweredCount: rows.length - answered.length,
+    skippedCount: rows.filter((r) => r.skipped).length,
+    visitedCount: visited.length,
+    notVisitedCount: rows.length - visited.length,
+    correctCount: correct.length,
+    incorrectCount: answered.length - correct.length,
+    hintViewedCount: rows.filter((r) => r.hintViewed).length,
+    marksObtained,
+    maxMarks,
+    score,
+    percentage: maxMarks === 0 ? 0 : Math.round((score / maxMarks) * 100)
   };
 };
 
-/** Correct / incorrect / unanswered tallies for one graded attempt. */
-const countAnswerOutcomes = (quiz, result) => {
-  const totalQuestions = quiz.quizQuestions?.length ?? 0;
-  const answered = result.questionEvidence.length;
-  const correctCount = result.questionEvidence.filter((e) => e.isCorrect).length;
-  return {
-    correctCount,
-    incorrectCount: answered - correctCount,
-    unansweredCount: Math.max(0, totalQuestions - answered)
-  };
+/**
+ * The three tallies QuizAttempt carries as columns. They are folded from the
+ * same question rows as everything else — the columns exist because attempts
+ * submitted before question-level tracking have no rows to fold, and the
+ * Submissions page still has to render them.
+ */
+const countAnswerOutcomes = (result, questionStates = []) => {
+  const { correctCount, incorrectCount, unansweredCount } = summarizeQuestionAttempts(
+    buildQuestionAttemptRows(result, questionStates)
+  );
+  return { correctCount, incorrectCount, unansweredCount };
 };
 
 const parseStoredAnswers = (answers) => {
@@ -838,7 +1061,7 @@ const parseStoredAnswers = (answers) => {
  */
 const legacySubmissionAsAttempt = (submission, quiz = null) => {
   const outcomes = quiz
-    ? countAnswerOutcomes(quiz, calculateSubmissionResult(quiz, parseStoredAnswers(submission.answers)))
+    ? countAnswerOutcomes(calculateSubmissionResult(quiz, parseStoredAnswers(submission.answers)))
     : { correctCount: null, incorrectCount: null, unansweredCount: null };
 
   return {
@@ -872,10 +1095,16 @@ const countAttemptsUsed = async (studentId, quizId) => {
   return legacy ? 1 : 0;
 };
 
-const submitQuiz = async (studentId, quizId, answers = [], timeTakenSeconds = null) => {
+const submitQuiz = async (
+  studentId,
+  quizId,
+  answers = [],
+  timeTakenSeconds = null,
+  questionStates = []
+) => {
   const quiz = await prisma.quiz.findUnique({
     where: { id: quizId },
-    include: { quizQuestions: { include: { question: true } } }
+    include: { quizQuestions: { orderBy: { order: "asc" }, include: { question: true } } }
   });
 
   if (!quiz) {
@@ -885,7 +1114,16 @@ const submitQuiz = async (studentId, quizId, answers = [], timeTakenSeconds = nu
   }
 
   const result = calculateSubmissionResult(quiz, answers);
-  const outcomes = countAnswerOutcomes(quiz, result);
+  // One record per question, graded server-side, with the attempt UI's visit
+  // and skip history merged in. Everything the attempt reports about itself
+  // is folded from these — see summarizeQuestionAttempts.
+  const questionAttemptRows = buildQuestionAttemptRows(result, questionStates);
+  const summary = summarizeQuestionAttempts(questionAttemptRows);
+  const outcomes = {
+    correctCount: summary.correctCount,
+    incorrectCount: summary.incorrectCount,
+    unansweredCount: summary.unansweredCount
+  };
 
   // The attempt-log row and the latest-attempt QuizSubmission are written in
   // one transaction, with the attempt limit checked inside it, so a double
@@ -936,6 +1174,23 @@ const submitQuiz = async (studentId, quizId, answers = [], timeTakenSeconds = nu
           timeTakenSeconds
         }
       });
+
+      // Written under the attempt just created, in the same transaction, so
+      // an attempt can never be committed without its question records. They
+      // are keyed by this attempt's id, so nothing here can reach an earlier
+      // attempt's rows — a retake adds a fresh set and leaves the previous
+      // attempt exactly as it was submitted.
+      if (questionAttemptRows.length > 0) {
+        await tx.questionAttempt.createMany({
+          data: questionAttemptRows.map((row) => ({
+            ...row,
+            // A nullable Json column needs Prisma's explicit null sentinel;
+            // a bare `null` is rejected at runtime.
+            answer: row.answer === null ? Prisma.DbNull : row.answer,
+            quizAttemptId: createdAttempt.id
+          }))
+        });
+      }
 
       const latest = await tx.quizSubmission.upsert({
         where: {
@@ -1151,6 +1406,32 @@ const submitQuiz = async (studentId, quizId, answers = [], timeTakenSeconds = nu
   };
 };
 
+/**
+ * Whether this result may show the answer key.
+ *
+ * For every ordinary quiz: yes. The attempt is over and reviewing the answers
+ * is the point of a result page.
+ *
+ * For a QUALIFYING test it is yes ONLY once the student can no longer change
+ * the outcome — they passed, or they are out of attempts. While a retake is
+ * still available, handing over the answer key would let a student fail
+ * attempt 1, read every correct answer off their own result page, and score
+ * 100% on attempt 2. That is qualification forged through a legitimate
+ * endpoint: the lesson gets skipped without the knowledge the test exists to
+ * establish, and it makes the attempt-2 hint rule pointless, since the
+ * answers themselves were already handed over.
+ *
+ * Their own answers, score and per-question correctness are still shown —
+ * the student learns exactly what they got wrong, just not what was right.
+ */
+const mayRevealAnswerKey = ({ quiz, passed, canAttempt }) => {
+  if (!quiz || quiz.quizTag !== QUALIFYING_TAG) return true;
+  return passed === true || canAttempt !== true;
+};
+
+/** Question fields that give the answer away, stripped as a set. */
+const stripAnswerKey = ({ correctAnswer, explanation, hint, ...rest }) => rest;
+
 /** One attempt as it appears in an attempt-history list. */
 const toAttemptSummary = (attempt) => ({
   id: attempt.id,
@@ -1165,11 +1446,13 @@ const toAttemptSummary = (attempt) => ({
 
 /**
  * A student's result for a quiz — the latest attempt, or the one named by
- * attemptId — plus the quiz's full question set (including answer keys) for
- * the result-review page, the student's whole attempt history, and their
- * remaining allowance. Unlike getQuizById, this always includes
- * correctAnswer/explanation — the student has already submitted, so there's
- * nothing left to protect. Null when there is no such attempt.
+ * attemptId — plus the quiz's question set for the result-review page, the
+ * student's whole attempt history, and their remaining allowance. Null when
+ * there is no such attempt.
+ *
+ * Normally this includes correctAnswer/explanation: the student has submitted,
+ * so there is nothing left to protect. A QUALIFYING test is the exception
+ * while it can still be retaken — see withholdAnswerKeyWhileRetakeable.
  */
 const getQuizResult = async (studentId, quizId, attemptId = null) => {
   const [submission, logged, quiz] = await Promise.all([
@@ -1183,7 +1466,17 @@ const getQuizResult = async (studentId, quizId, attemptId = null) => {
     }),
     prisma.quizAttempt.findMany({
       where: { studentId, quizId },
-      orderBy: { attemptNumber: "asc" }
+      orderBy: { attemptNumber: "asc" },
+      include: {
+        // Each attempt keeps its own question records, so opening an earlier
+        // attempt reads that attempt's answers and statuses, not the latest's.
+        // The question's concept comes along for a qualifying test's weak-area
+        // report; it is a single extra join, not a second query.
+        questionAttempts: {
+          orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+          include: { question: { select: { id: true, topic: true, moduleId: true } } }
+        }
+      }
     }),
     prisma.quiz.findUnique({
       where: { id: quizId },
@@ -1213,11 +1506,38 @@ const getQuizResult = async (studentId, quizId, attemptId = null) => {
 
   if (!selected) return null;
 
-  const questions = (quiz?.quizQuestions || []).map((qq) => ({
-    ...qq.question,
-    marks: qq.marks ?? qq.question?.marks ?? 1,
-    order: qq.order
-  }));
+  const allowance = buildAttemptAllowance(quiz ? effectiveMaxAttempts(quiz) : 0, history.length);
+  // Decided against the student's standing across the WHOLE quiz, not the one
+  // attempt being viewed: opening attempt 1 while attempt 2 is still to come
+  // must not reveal what attempt 2 is about to ask.
+  const revealAnswerKey = mayRevealAnswerKey({
+    quiz,
+    passed: history.some((a) => a.passed === true),
+    canAttempt: allowance.canAttempt
+  });
+
+  const questions = (quiz?.quizQuestions || []).map((qq) => {
+    const question = {
+      ...qq.question,
+      marks: qq.marks ?? qq.question?.marks ?? 1,
+      order: qq.order
+    };
+    return revealAnswerKey ? question : stripAnswerKey(question);
+  });
+
+  // An attempt submitted before question-level tracking existed has no rows
+  // to read, so its records are reconstructed from the answers it stored —
+  // grading only, since a past attempt's visit and skip history was never
+  // captured and cannot be invented. Nothing is written back: a submitted
+  // attempt is immutable.
+  const questionAttempts =
+    selected.questionAttempts?.length > 0
+      ? selected.questionAttempts
+      : quiz
+        ? buildQuestionAttemptRows(
+            calculateSubmissionResult(quiz, parseStoredAnswers(selected.answers))
+          )
+        : [];
 
   return {
     id: selected.id,
@@ -1239,9 +1559,31 @@ const getQuizResult = async (studentId, quizId, attemptId = null) => {
     incorrectCount: selected.incorrectCount,
     unansweredCount: selected.unansweredCount,
     totalQuestions: questions.length,
+    // The question-level record of this attempt, and the tallies folded from
+    // it — answered/unanswered/skipped/visited/correct/marks. Counted from
+    // the records on every read, never from stored counters.
+    questionAttempts,
+    summary: summarizeQuestionAttempts(questionAttempts),
+    // Present only for a QUALIFYING quiz: whether this attempt earned the
+    // skip, and when it didn't, the concepts that went wrong and the content
+    // to go back to. Null for an ordinary Self-Test or Final.
+    qualification: quiz
+      ? await buildQualificationOutcome(quiz, { ...selected, questionAttempts }, null, {
+          allowance,
+          history: history.map(toAttemptSummary)
+        })
+      : null,
+    // True only once the answers are safe to show — false on a qualifying
+    // test the student can still retake. The review UI reads this instead of
+    // inferring it, so it never renders an answer column that isn't there.
+    answerKeyRevealed: revealAnswerKey,
     attempts: history.map(toAttemptSummary),
-    ...buildAttemptAllowance(quiz ? effectiveMaxAttempts(quiz) : 0, history.length),
-    quiz: quiz ? { ...quiz, questions } : null
+    ...allowance,
+    // The raw junction relation carries the UNSANITIZED question, so it would
+    // hand back exactly what `questions` above just stripped.
+    quiz: quiz
+      ? { ...(revealAnswerKey ? quiz : (({ quizQuestions, ...rest }) => rest)(quiz)), questions }
+      : null
   };
 };
 
@@ -1492,6 +1834,9 @@ module.exports = {
   evaluateAnswer,
   resolveMisconceptionTag,
   calculateSubmissionResult,
+  resolveQuestionStatus,
+  buildQuestionAttemptRows,
+  summarizeQuestionAttempts,
   getQuizzes,
   getQuizById,
   createQuiz,
