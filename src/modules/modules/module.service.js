@@ -45,7 +45,11 @@ const getModules = async (courseId, role, userId) => {
             where: isStudentOrGuest ? { isPublished: true } : undefined,
             orderBy: { order: "asc" }
           },
+          // Without an orderBy Postgres returns topics in physical row order,
+          // which shifts whenever a topic row is rewritten (e.g. a sequence
+          // shift), so the lesson's topic cards reshuffled on refetch.
           topics: {
+            orderBy: [{ order: "asc" }, { createdAt: "asc" }],
             include: {
               assignments: {
                 where: isStudentOrGuest ? { isPublished: true } : undefined,
@@ -77,6 +81,7 @@ const getModuleById = async (moduleId, role) => {
         },
         include: {
           topics: {
+            orderBy: [{ order: "asc" }, { createdAt: "asc" }],
             include: {
               _count: {
                 select: { contents: true }

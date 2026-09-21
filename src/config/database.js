@@ -36,9 +36,16 @@ if (isTestRun && !testUrl) {
   );
 }
 
-const prisma = new PrismaClient(
-  testUrl ? { datasources: { db: { url: testUrl } } } : undefined
-);
+const prisma = new PrismaClient({
+  ...(testUrl ? { datasources: { db: { url: testUrl } } } : {}),
+  // Creating/deleting any course item claims its slot in the parent's common
+  // sequence (contentOrder.util) inside an interactive transaction: one
+  // aggregate per sequence member plus the shift writes, all sequential. At
+  // ~500ms per round trip to the remote database that alone overruns
+  // Prisma's 5s default and the create fails with P2028. Callers that pass
+  // their own options (the importers) still override these.
+  transactionOptions: { maxWait: 10000, timeout: 30000 }
+});
 
 // MOCK Progress to return empty data so backend logic doesn't crash
 prisma.progress = new Proxy({}, {
