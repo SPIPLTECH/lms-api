@@ -1,6 +1,6 @@
 const bcrypt = require("bcrypt");
 const prisma = require("../src/config/database");
-const { QUIZ_ORDER_BASE } = require("../src/modules/contents/contentOrder.util");
+const { getNextOrder } = require("../src/modules/contents/contentOrder.util");
 
 /**
  * Seeds one complete, working course plus the accounts to explore it with.
@@ -16,9 +16,10 @@ const { QUIZ_ORDER_BASE } = require("../src/modules/contents/contentOrder.util")
  *    matching those two, and refuses partial matches on purpose. Seed data
  *    that doesn't line up would leave the whole adaptive surface silently
  *    empty, which is exactly what happened on the previous database.
- *  - The quiz `order` values sit in the Quiz zone band (QUIZ_ORDER_BASE+),
- *    matching what getNextQuizOrder would assign, so the seeded course orders
- *    the same way a hand-built one does.
+ *  - The quiz `order` values are the next slot in their lesson's common
+ *    sequence (shared with its topics, content and assignments), matching
+ *    what claimSequenceOrder would assign, so the seeded course orders the
+ *    same way a hand-built one does.
  */
 
 // Each account carries its own password: the instructor is a real account the
@@ -369,7 +370,7 @@ async function seed() {
       passingScore: 60,
       attempts: 0,
       isPublished: true,
-      order: QUIZ_ORDER_BASE + 1
+      order: await getNextOrder("lessonId", "seed_les_1", prisma)
     }
   });
   await linkQuestions(selfTest.id, [
@@ -390,7 +391,7 @@ async function seed() {
       passingScore: 70,
       attempts: 3,
       isPublished: true,
-      order: QUIZ_ORDER_BASE + 1
+      order: await getNextOrder("lessonId", "seed_les_3", prisma)
     }
   });
   await linkQuestions(qualifying.id, [

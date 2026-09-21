@@ -2,6 +2,40 @@ const prisma = require('../../config/database');
 const { recomputeCourseProgress, ensureProgressInitialized } = require('../../utils/progressRollup');
 const { buildLearningPath, resolveAccess, resolveNextItem } = require('../../utils/learningPath');
 const { getCourseQualifyingQuizzes } = require('../../utils/qualification');
+const {
+  COURSE_ID_INCLUDE,
+  resolveCourseId
+} = require('../../utils/helpers/courseBreadcrumb.helper');
+
+const MODULE_COURSE = { select: { module: { select: { courseId: true } } } };
+
+/**
+ * COURSE_ID_INCLUDE plus the lesson/topic ids along the way, so the learning
+ * path gate can locate a Content row attached at any of the six levels.
+ */
+const PATH_ACCESS_INCLUDE = {
+  ...COURSE_ID_INCLUDE,
+  topic: { select: { lessonId: true, lesson: MODULE_COURSE } },
+  subTopic: { select: { topicId: true, topic: { select: { lessonId: true, lesson: MODULE_COURSE } } } },
+  concept: {
+    select: {
+      subTopic: { select: { topicId: true, topic: { select: { lessonId: true, lesson: MODULE_COURSE } } } }
+    }
+  }
+};
+
+/**
+ * The lesson/topic a Content row sits in on the learning path. SubTopic and
+ * Concept are not path steps themselves, so their content is gated by the
+ * topic they belong to.
+ */
+const pathTargetOf = (content) => {
+  const subTopic = content.subTopic || content.concept?.subTopic || null;
+  const topicId = content.topicId || subTopic?.topicId || null;
+  const lessonId =
+    content.lessonId || content.topic?.lessonId || subTopic?.topic?.lessonId || null;
+  return { lessonId, topicId };
+};
 
 /**
  * Upserts ContentProgress rows for `contentIds` to `completed`, preserving
@@ -72,6 +106,8 @@ function attachFlatProjections(rollup) {
   const completedContentIds = [];
   const completedQuizIds = [];
   const completedAssignmentIds = [];
+  const completedConceptIds = [];
+  const completedSubTopicIds = [];
   const completedTopicIds = [];
   const completedLessonIds = [];
   const completedModuleIds = [];
@@ -79,6 +115,8 @@ function attachFlatProjections(rollup) {
   const visitedContentIds = [];
   const visitedQuizIds = [];
   const visitedAssignmentIds = [];
+  const visitedConceptIds = [];
+  const visitedSubTopicIds = [];
   const visitedTopicIds = [];
   const visitedLessonIds = [];
   const visitedModuleIds = [];
@@ -98,19 +136,31 @@ function attachFlatProjections(rollup) {
     });
   };
 
+  // Records a container's own completed/visited flags into the right pair of
+  // flat arrays. The nested walk below stays a plain set of loops so the tree
+  // shape is still readable at a glance.
+  const collectContainer = (entity, completedIds, visitedIds) => {
+    collectDirect(entity);
+    if (entity.completed) completedIds.push(entity.id);
+    if (entity.visited) visitedIds.push(entity.id);
+  };
+
   collectDirect(hierarchy);
   for (const mod of hierarchy.modules) {
-    collectDirect(mod);
-    if (mod.completed) completedModuleIds.push(mod.id);
-    if (mod.visited) visitedModuleIds.push(mod.id);
+    collectContainer(mod, completedModuleIds, visitedModuleIds);
     for (const lesson of mod.lessons) {
-      collectDirect(lesson);
-      if (lesson.completed) completedLessonIds.push(lesson.id);
-      if (lesson.visited) visitedLessonIds.push(lesson.id);
+      collectContainer(lesson, completedLessonIds, visitedLessonIds);
       for (const topic of lesson.topics) {
-        collectDirect(topic);
-        if (topic.completed) completedTopicIds.push(topic.id);
-        if (topic.visited) visitedTopicIds.push(topic.id);
+        collectContainer(topic, completedTopicIds, visitedTopicIds);
+        // `subTopics` is always present on a freshly computed tree, but an
+        // older cached rollup passed back in would not have it -- default to
+        // [] rather than throwing.
+        for (const subTopic of topic.subTopics || []) {
+          collectContainer(subTopic, completedSubTopicIds, visitedSubTopicIds);
+          for (const concept of subTopic.concepts || []) {
+            collectContainer(concept, completedConceptIds, visitedConceptIds);
+          }
+        }
       }
     }
   }
@@ -118,6 +168,8 @@ function attachFlatProjections(rollup) {
   return {
     ...rollup,
     hierarchy,
+    // Existing field names and meanings are unchanged, so current API
+    // consumers keep working untouched.
     moduleProgresses: completedModuleIds,
     lessonProgresses: completedLessonIds,
     topicProgresses: completedTopicIds,
@@ -129,7 +181,12 @@ function attachFlatProjections(rollup) {
     visitedTopicProgresses: visitedTopicIds,
     visitedContentIds,
     visitedQuizIds,
-    visitedAssignmentIds
+    visitedAssignmentIds,
+    // New, additive: empty arrays for any course without SubTopics/Concepts.
+    subTopicProgresses: completedSubTopicIds,
+    conceptProgresses: completedConceptIds,
+    visitedSubTopicProgresses: visitedSubTopicIds,
+    visitedConceptProgresses: visitedConceptIds
   };
 }
 
@@ -168,23 +225,7 @@ async function completeContent(studentId, contentId, completed = true, requestin
   const [contents, existingRows] = await Promise.all([
     prisma.content.findMany({
       where: { id: { in: contentIds } },
-      include: {
-        topic: {
-          include: {
-            lesson: {
-              include: {
-                module: true
-              }
-            }
-          }
-        },
-        lesson: {
-          include: {
-            module: true
-          }
-        },
-        module: true
-      }
+      include: PATH_ACCESS_INCLUDE
     }),
     prisma.contentProgress.findMany({ where: { studentId, contentId: { in: contentIds } } })
   ]);
@@ -195,15 +236,9 @@ async function completeContent(studentId, contentId, completed = true, requestin
     throw error;
   }
 
-  const courseIdOf = (content) =>
-    content.topic?.lesson?.module?.courseId ||
-    content.lesson?.module?.courseId ||
-    content.module?.courseId ||
-    content.courseId;
-
   const courseIds = new Set();
   for (const content of contents) {
-    const courseId = courseIdOf(content);
+    const courseId = resolveCourseId(content);
     if (courseId) courseIds.add(courseId);
   }
 
@@ -219,10 +254,7 @@ async function completeContent(studentId, contentId, completed = true, requestin
     if (requestingUser.role === 'STUDENT') {
       await Promise.all(
         contents.map((content) =>
-          assertLearningPathAccess(studentId, courseIdOf(content), {
-            lessonId: content.topic?.lessonId || content.lessonId || null,
-            topicId: content.topicId || null
-          })
+          assertLearningPathAccess(studentId, resolveCourseId(content), pathTargetOf(content))
         )
       );
     }
@@ -275,7 +307,22 @@ async function completeLesson(studentId, lessonId, completed = true, requestingU
       topics: {
         where: { isPublished: true },
         include: {
-          contents: true
+          contents: true,
+          // Without these two levels "mark lesson complete" would write only
+          // the Topic-direct rows, and the roll-up would immediately recompute
+          // the lesson as INCOMPLETE -- the mutation would report success
+          // while the percentage never moved. Published-only, matching the
+          // existing topics filter, so drafts are never force-completed.
+          subTopics: {
+            where: { isPublished: true },
+            include: {
+              contents: true,
+              concepts: {
+                where: { isPublished: true },
+                include: { contents: true }
+              }
+            }
+          }
         }
       }
     }
@@ -296,8 +343,12 @@ async function completeLesson(studentId, lessonId, completed = true, requestingU
   const contentIds = [];
   lesson.contents.forEach((c) => contentIds.push(c.id));
   for (const topic of lesson.topics) {
-    for (const c of topic.contents) {
-      contentIds.push(c.id);
+    topic.contents.forEach((c) => contentIds.push(c.id));
+    for (const subTopic of topic.subTopics) {
+      subTopic.contents.forEach((c) => contentIds.push(c.id));
+      for (const concept of subTopic.concepts) {
+        concept.contents.forEach((c) => contentIds.push(c.id));
+      }
     }
   }
 
@@ -333,129 +384,137 @@ async function completeLesson(studentId, lessonId, completed = true, requestingU
  * and triggers bottom-up course progress rollup.
  */
 async function markVisited(studentId, params, visited = true, requestingUser = null) {
-  let { entityType, entityId, contentId, quizId, assignmentId, topicId, lessonId, moduleId } =
-    typeof params === 'string' ? { entityId: params } : (params || {});
+  let {
+    entityType,
+    entityId,
+    contentId,
+    quizId,
+    assignmentId,
+    conceptId,
+    subTopicId,
+    topicId,
+    lessonId,
+    moduleId
+  } = typeof params === 'string' ? { entityId: params } : (params || {});
 
+  // Most-specific id wins, so a caller that sends both a conceptId and its
+  // ancestor topicId marks the concept -- matching the precedence used for
+  // Quiz parents and by the ownership dispatchers.
   if (contentId) { entityType = 'CONTENT'; entityId = contentId; }
   else if (quizId) { entityType = 'QUIZ'; entityId = quizId; }
   else if (assignmentId) { entityType = 'ASSIGNMENT'; entityId = assignmentId; }
+  else if (conceptId) { entityType = 'CONCEPT'; entityId = conceptId; }
+  else if (subTopicId) { entityType = 'SUBTOPIC'; entityId = subTopicId; }
   else if (topicId) { entityType = 'TOPIC'; entityId = topicId; }
   else if (lessonId) { entityType = 'LESSON'; entityId = lessonId; }
   else if (moduleId) { entityType = 'MODULE'; entityId = moduleId; }
 
   entityType = (entityType || '').toUpperCase();
 
-  let courseId = null;
+  // How to find each entity's owning course, and which progress table records
+  // its visit. Replaces a six-branch if/else in which the three leaf branches
+  // repeated the same include and the same coalescing chain verbatim -- that
+  // duplication is exactly what would have silently dropped SubTopic/Concept
+  // items, because each copy stopped at `topic`.
+  //
+  // Leaf items (CONTENT/QUIZ/ASSIGNMENT) hang off any of the six levels, so
+  // they resolve their course via COURSE_ID_INCLUDE. Containers know their
+  // own place in the tree, so each names its own upward path.
+  const ENTITY_HANDLERS = {
+    CONTENT: {
+      model: () => prisma.content,
+      include: COURSE_ID_INCLUDE,
+      notFound: 'Content not found',
+      progress: () => prisma.contentProgress,
+      idField: 'contentId'
+    },
+    QUIZ: {
+      model: () => prisma.quiz,
+      include: COURSE_ID_INCLUDE,
+      notFound: 'Quiz not found',
+      progress: () => prisma.quizProgress,
+      idField: 'quizId'
+    },
+    ASSIGNMENT: {
+      model: () => prisma.assignment,
+      include: COURSE_ID_INCLUDE,
+      notFound: 'Assignment not found',
+      progress: () => prisma.assignmentProgress,
+      idField: 'assignmentId'
+    },
+    CONCEPT: {
+      model: () => prisma.concept,
+      include: {
+        subTopic: {
+          include: { topic: { include: { lesson: { include: { module: true } } } } }
+        }
+      },
+      courseIdOf: (c) => c.subTopic?.topic?.lesson?.module?.courseId,
+      notFound: 'Concept not found',
+      progress: () => prisma.conceptProgress,
+      idField: 'conceptId'
+    },
+    SUBTOPIC: {
+      model: () => prisma.subTopic,
+      include: { topic: { include: { lesson: { include: { module: true } } } } },
+      courseIdOf: (s) => s.topic?.lesson?.module?.courseId,
+      notFound: 'SubTopic not found',
+      progress: () => prisma.subTopicProgress,
+      idField: 'subTopicId'
+    },
+    TOPIC: {
+      model: () => prisma.topic,
+      include: { lesson: { include: { module: true } } },
+      courseIdOf: (t) => t.lesson?.module?.courseId,
+      notFound: 'Topic not found',
+      progress: () => prisma.topicProgress,
+      idField: 'topicId'
+    },
+    LESSON: {
+      model: () => prisma.lesson,
+      include: { module: true },
+      courseIdOf: (l) => l.module?.courseId,
+      notFound: 'Lesson not found',
+      progress: () => prisma.lessonProgress,
+      idField: 'lessonId'
+    },
+    MODULE: {
+      model: () => prisma.module,
+      include: undefined,
+      courseIdOf: (m) => m.courseId,
+      notFound: 'Module not found',
+      progress: () => prisma.moduleProgress,
+      idField: 'moduleId'
+    }
+  };
+
+  const handler = ENTITY_HANDLERS[entityType];
+  if (!handler) {
+    throw Object.assign(new Error('Invalid entity type for visited progress'), { statusCode: 400 });
+  }
+
+  const entity = await handler.model().findUnique({
+    where: { id: entityId },
+    ...(handler.include ? { include: handler.include } : {})
+  });
+  if (!entity) throw Object.assign(new Error(handler.notFound), { statusCode: 404 });
+
+  const courseId = handler.courseIdOf ? handler.courseIdOf(entity) : resolveCourseId(entity);
+
+  if (requestingUser && courseId) {
+    await assertCourseProgressAccess(requestingUser, studentId, courseId);
+  }
+
   // Whether this call actually changed anything. Revisiting an
   // already-visited item is a no-op: no upsert, and (below) no rollup either
   // -- there is nothing new for a rollup to recompute, so it must not
   // burn a full course recompute on every re-open of the same content.
-  let changed = true;
-
-  if (entityType === 'CONTENT') {
-    const content = await prisma.content.findUnique({
-      where: { id: entityId },
-      include: {
-        topic: { include: { lesson: { include: { module: true } } } },
-        lesson: { include: { module: true } },
-        module: true
-      }
-    });
-    if (!content) throw Object.assign(new Error('Content not found'), { statusCode: 404 });
-    courseId = content.topic?.lesson?.module?.courseId || content.lesson?.module?.courseId || content.module?.courseId || content.courseId;
-    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
-
-    ({ changed } = await upsertVisitedIfNeeded(
-      prisma.contentProgress,
-      { studentId_contentId: { studentId, contentId: entityId } },
-      { studentId, contentId: entityId },
-      visited
-    ));
-  } else if (entityType === 'QUIZ') {
-    const quiz = await prisma.quiz.findUnique({
-      where: { id: entityId },
-      include: {
-        topic: { include: { lesson: { include: { module: true } } } },
-        lesson: { include: { module: true } },
-        module: true
-      }
-    });
-    if (!quiz) throw Object.assign(new Error('Quiz not found'), { statusCode: 404 });
-    courseId = quiz.topic?.lesson?.module?.courseId || quiz.lesson?.module?.courseId || quiz.module?.courseId || quiz.courseId;
-    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
-
-    ({ changed } = await upsertVisitedIfNeeded(
-      prisma.quizProgress,
-      { studentId_quizId: { studentId, quizId: entityId } },
-      { studentId, quizId: entityId },
-      visited
-    ));
-  } else if (entityType === 'ASSIGNMENT') {
-    const assignment = await prisma.assignment.findUnique({
-      where: { id: entityId },
-      include: {
-        topic: { include: { lesson: { include: { module: true } } } },
-        lesson: { include: { module: true } },
-        module: true
-      }
-    });
-    if (!assignment) throw Object.assign(new Error('Assignment not found'), { statusCode: 404 });
-    courseId = assignment.topic?.lesson?.module?.courseId || assignment.lesson?.module?.courseId || assignment.module?.courseId || assignment.courseId;
-    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
-
-    ({ changed } = await upsertVisitedIfNeeded(
-      prisma.assignmentProgress,
-      { studentId_assignmentId: { studentId, assignmentId: entityId } },
-      { studentId, assignmentId: entityId },
-      visited
-    ));
-  } else if (entityType === 'TOPIC') {
-    const topic = await prisma.topic.findUnique({
-      where: { id: entityId },
-      include: { lesson: { include: { module: true } } }
-    });
-    if (!topic) throw Object.assign(new Error('Topic not found'), { statusCode: 404 });
-    courseId = topic.lesson.module.courseId;
-    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
-
-    ({ changed } = await upsertVisitedIfNeeded(
-      prisma.topicProgress,
-      { studentId_topicId: { studentId, topicId: entityId } },
-      { studentId, topicId: entityId },
-      visited
-    ));
-  } else if (entityType === 'LESSON') {
-    const lesson = await prisma.lesson.findUnique({
-      where: { id: entityId },
-      include: { module: true }
-    });
-    if (!lesson) throw Object.assign(new Error('Lesson not found'), { statusCode: 404 });
-    courseId = lesson.module.courseId;
-    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
-
-    ({ changed } = await upsertVisitedIfNeeded(
-      prisma.lessonProgress,
-      { studentId_lessonId: { studentId, lessonId: entityId } },
-      { studentId, lessonId: entityId },
-      visited
-    ));
-  } else if (entityType === 'MODULE') {
-    const moduleItem = await prisma.module.findUnique({
-      where: { id: entityId }
-    });
-    if (!moduleItem) throw Object.assign(new Error('Module not found'), { statusCode: 404 });
-    courseId = moduleItem.courseId;
-    if (requestingUser && courseId) await assertCourseProgressAccess(requestingUser, studentId, courseId);
-
-    ({ changed } = await upsertVisitedIfNeeded(
-      prisma.moduleProgress,
-      { studentId_moduleId: { studentId, moduleId: entityId } },
-      { studentId, moduleId: entityId },
-      visited
-    ));
-  } else {
-    throw Object.assign(new Error('Invalid entity type for visited progress'), { statusCode: 400 });
-  }
+  const { changed } = await upsertVisitedIfNeeded(
+    handler.progress(),
+    { [`studentId_${handler.idField}`]: { studentId, [handler.idField]: entityId } },
+    { studentId, [handler.idField]: entityId },
+    visited
+  );
 
   let rollup = null;
   if (courseId && changed) {

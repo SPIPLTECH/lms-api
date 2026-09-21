@@ -76,10 +76,12 @@ test("every ordered relation in the roll-up has a total sort", async () => {
   assert.ok(total.length >= 11, `expected every ordered relation to be tiebroken, found ${total.length}`);
 });
 
-test("the ordering fix did not touch the deliberate zone-banding design", async () => {
+test("the ordering fix kept the common per-parent sequence", async () => {
+  // Quiz/Assignment zone bands were replaced by one sequence per parent,
+  // shared by Content, Quizzes, Assignments and child containers.
   const source = readCode("src/modules/contents/contentOrder.util.js");
-  assert.match(source, /QUIZ_ORDER_BASE/, "zone banding is still where it was");
-  assert.match(source, /ASSIGNMENT_ORDER_BASE/);
+  assert.match(source, /claimSequenceOrder/, "the common sequence is still where it was");
+  assert.doesNotMatch(source, /QUIZ_ORDER_BASE|ASSIGNMENT_ORDER_BASE/);
 });
 
 // ---------------------------------------------------------------------------

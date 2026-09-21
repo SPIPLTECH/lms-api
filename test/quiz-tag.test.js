@@ -4,6 +4,7 @@ const assert = require("node:assert");
 const quizService = require("../src/modules/quizzes/quiz.service");
 const { createQuizSchema, updateQuizSchema } = require("../src/modules/quizzes/quiz.validation");
 const prisma = require("../src/config/database");
+const { createTransactionStub } = require("./sequence-db.fake");
 
 // The invariant under test: quizTag === "SELF_TEST" implies timeLimit === null,
 // enforced in the service so no client can save a timed Self-Test.
@@ -28,6 +29,14 @@ test("createQuiz — a Self-Test is written untimed even when a limit is sent", 
   prisma.course.findUnique = async () => ({ id: "c1" });
   prisma.content.findFirst = async () => null;
   prisma.quiz.findFirst = async () => null;
+  // createQuiz claims its position in the parent's common sequence inside
+  // prisma.$transaction — run that callback against the mocks installed here,
+  // so these stay unit tests rather than reaching the live database.
+  const originalTransaction = prisma.$transaction;
+  prisma.$transaction = createTransactionStub(prisma).$transaction;
+  t.after(() => {
+    prisma.$transaction = originalTransaction;
+  });
   // createQuiz returns getQuizById(...) at the end -- stubbed so these stay
   // unit tests rather than quietly reaching the live database.
   prisma.quiz.findUnique = async () => ({ id: "q1", quizQuestions: [] });
@@ -211,6 +220,14 @@ test("createQuiz — attempts follow the tag", async (t) => {
   prisma.course.findUnique = async () => ({ id: "c1" });
   prisma.content.findFirst = async () => null;
   prisma.quiz.findFirst = async () => null;
+  // createQuiz claims its position in the parent's common sequence inside
+  // prisma.$transaction — run that callback against the mocks installed here,
+  // so these stay unit tests rather than reaching the live database.
+  const originalTransaction = prisma.$transaction;
+  prisma.$transaction = createTransactionStub(prisma).$transaction;
+  t.after(() => {
+    prisma.$transaction = originalTransaction;
+  });
   prisma.quiz.findUnique = async () => ({ id: "q1", quizQuestions: [] });
 
   const captureCreate = () => {
