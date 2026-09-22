@@ -1,4 +1,7 @@
 const prisma = require("../config/database");
+const { recomputeCourseProgress } = require("./progressRollup");
+const { getCourseQualifyingQuizzes } = require("./qualification");
+const { buildLearningPath } = require("./learningPath");
 
 // The lesson ids a student can actually see and complete for a course, in
 // course order: published lessons within published modules only. A lesson
@@ -17,51 +20,72 @@ const getPublishedLessonIds = async (courseId) => {
   return lessons.map((lesson) => lesson.id);
 };
 
-// Sequential lesson gating for courses with dripContentEnabled: a lesson
-// unlocks once the lesson immediately before it (course-wide order — module
-// order, then lesson order) has been marked complete by this student. The
-// first lesson in the course is always unlocked. When drip is off, every
-// lesson is unlocked. Returns { lockMap: Map<lessonId, boolean locked>,
-// completedSet: Set<lessonId> } — completedSet is exposed alongside the lock
-// map because every caller that needs lock state also needs to know which
-// lessons are actually complete (e.g. to render a completion checkmark),
-// and this is already the one place in the codebase computing that set.
+/**
+ * Sequential lesson gating for the course endpoint.
+ *
+ * This used to be the drip-content gate. Drip was removed, the function was
+ * left short-circuited open (`if (true) { ...everything unlocked }`), and what
+ * remained read a `Progress` table that no longer exists — config/database.js
+ * mocks it to return nothing, so the completion set was always empty too. It
+ * is now the real sequential gate.
+ *
+ * It does not reimplement the rule. It asks learningPath.js, the same module
+ * GET /progress/learning-path and the access check use, so the lesson the
+ * course endpoint calls locked is the lesson every other part of the system
+ * calls locked. That matters for the cases a hand-rolled version gets wrong:
+ * a lesson with nothing trackable in it never blocks (matching the roll-up's
+ * own rule that empty containers don't hold up a parent), and a lesson the
+ * student qualified out of counts as settled just like a completed one.
+ *
+ * The roll-up runs read-only here — this is a GET, and reading a course must
+ * not write progress rows or bump lastAccessedAt.
+ *
+ * Returns { lockMap, completedSet, qualifiedSet }: callers that need lock
+ * state invariably also need which lessons are genuinely finished (to draw a
+ * checkmark) and which were skipped after qualifying (to draw that
+ * distinctly).
+ */
 const buildLessonLockMap = async (courseId, studentId) => {
-  // The course lookup that stood here selected only dripContentEnabled. With
-  // that column gone the select was left empty, which Prisma rejects at
-  // runtime — so every caller of this (GET /courses/:id among them) answered
-  // 500 and the student course page reported "Course not found". Nothing read
-  // the result: the drip branch below is already short-circuited, so the query
-  // is simply removed rather than given something arbitrary to select.
   const lessonIds = await getPublishedLessonIds(courseId);
 
-  const completedSet = new Set();
-  if (studentId) {
-    const completedRows = await prisma.progress.findMany({
-      where: {
-        studentId,
-        lessonId: { in: lessonIds },
-        completed: true,
-      },
-      select: { lessonId: true },
-    });
-    completedRows.forEach((row) => completedSet.add(row.lessonId));
-  }
-
   const lockMap = new Map();
+  const completedSet = new Set();
+  const qualifiedSet = new Set();
 
-  if (true) { // drip content removed
+  // Not a student, or nothing to gate.
+  if (!studentId || lessonIds.length === 0) {
     lessonIds.forEach((lessonId) => lockMap.set(lessonId, false));
-    return { lockMap, completedSet };
+    return { lockMap, completedSet, qualifiedSet };
   }
 
-  let prevCompleted = true;
+  let path;
+  try {
+    const [rollup, qualifyingQuizzes] = await Promise.all([
+      recomputeCourseProgress(studentId, courseId, null, { includeTree: true, persist: false }),
+      getCourseQualifyingQuizzes(courseId),
+    ]);
+    path = buildLearningPath(rollup.hierarchy, qualifyingQuizzes);
+  } catch {
+    // Progress is advisory for rendering a course: if the roll-up can't be
+    // computed, show the course rather than locking a student out of material
+    // they may well have earned. The write paths (completeContent, and the
+    // access assertion on the player) enforce the gate regardless.
+    lessonIds.forEach((lessonId) => lockMap.set(lessonId, false));
+    return { lockMap, completedSet, qualifiedSet };
+  }
+
+  const byLessonId = new Map(
+    path.filter((entry) => entry.kind === "LESSON").map((entry) => [entry.id, entry])
+  );
+
   for (const lessonId of lessonIds) {
-    lockMap.set(lessonId, !prevCompleted);
-    prevCompleted = completedSet.has(lessonId);
+    const entry = byLessonId.get(lessonId);
+    lockMap.set(lessonId, entry?.locked === true);
+    if (entry?.completed) completedSet.add(lessonId);
+    if (entry?.qualified) qualifiedSet.add(lessonId);
   }
 
-  return { lockMap, completedSet };
+  return { lockMap, completedSet, qualifiedSet };
 };
 
 module.exports = { buildLessonLockMap, getPublishedLessonIds };

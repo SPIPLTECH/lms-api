@@ -439,6 +439,16 @@ model TopicProgress {
   visitedAt   DateTime?
   completed   Boolean        @default(false)
   completedAt DateTime?
+  // The student passed this topic's QUALIFYING quiz and skipped it. Kept
+  // apart from `completed` on purpose: skipped is not studied. Progression
+  // treats the two alike (a qualified topic no longer blocks what follows,
+  // and counts toward the course percentage), but every read can still tell
+  // them apart, and the topic's own contents stay in the course and stay
+  // openable. Recomputed by progressRollup from the qualifying attempts, the
+  // same way `completed` is recomputed from the topic's items — never the
+  // source of truth, always the materialized view of one.
+  qualified   Boolean        @default(false)
+  qualifiedAt DateTime?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
   student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
@@ -493,6 +503,9 @@ model LessonProgress {
   visitedAt   DateTime?
   completed   Boolean        @default(false)
   completedAt DateTime?
+  // Skipped by passing this lesson's QUALIFYING quiz — see TopicProgress.
+  qualified   Boolean        @default(false)
+  qualifiedAt DateTime?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
   student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
@@ -645,6 +658,17 @@ model Question {
 
   explanation String? @db.Text
 
+  // A nudge toward the answer, shown DURING an attempt — as opposed to
+  // `explanation` above, which justifies the answer after submission and
+  // would give the answer away outright.
+  //
+  // Only a qualifying test surfaces it, and only from the student's second
+  // attempt onward (see getQuizById): on a first attempt the test has to
+  // measure what the student already knows, which is the whole basis for
+  // letting them skip the content. It is withheld server-side, never merely
+  // hidden in the UI, so a first attempt cannot read it off the wire.
+  hint String? @db.Text
+
   subject       String?         @default("General")
   topic         String?         @default("General")
   tags          String?         @default("")
@@ -658,6 +682,8 @@ model Question {
   isRequired    Boolean        @default(true)
   isPublished   Boolean        @default(true)
   quizQuestions QuizQuestion[]
+
+  questionAttempts QuestionAttempt[]
 
   order Int?
 
@@ -745,10 +771,78 @@ model QuizAttempt {
   submittedAt      DateTime       @default(now())
   quiz             Quiz           @relation(fields: [quizId], references: [id], onDelete: Cascade)
   student          StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  questionAttempts QuestionAttempt[]
 
   @@unique([studentId, quizId, attemptNumber])
   @@index([quizId])
   @@index([studentId])
+}
+
+// One row per question per attempt — the question-level record the attempt
+// summary is derived from, and what makes an attempt reviewable question by
+// question rather than as one opaque `QuizAttempt.answers` blob.
+//
+// Written once, at submit, inside the same transaction as its QuizAttempt:
+// a submitted attempt and its question rows are never out of step, and an
+// earlier attempt's rows are never touched by a later one (each attempt owns
+// its own set, keyed by quizAttemptId).
+//
+// `status` is where the question ENDED UP. `visited`/`skipped` are "did this
+// ever happen" flags, which `status` alone cannot express — a question the
+// student skipped and later answered ends ANSWERED with `skipped` still true.
+// `answered` is kept in step with `status === ANSWERED` by the service and
+// exists so the summary tallies read the same way for every flag.
+//
+// Deliberately NOT stored here: per-attempt counters (answered/skipped/
+// correct totals). Those are folded from these rows — see
+// summarizeQuestionAttempts() in quiz.service.js.
+model QuestionAttempt {
+  id            String                @id @default(cuid())
+  quizAttemptId String
+  questionId    String
+
+  // The student's final answer for this question, in the same shape the
+  // submit payload uses (string, string[], or an object for MATCH_PAIRS).
+  // Null when the question was never answered.
+  answer Json?
+
+  status   QuestionAttemptStatus @default(NOT_VISITED)
+  visited  Boolean               @default(false)
+  skipped  Boolean               @default(false)
+  answered Boolean               @default(false)
+
+  // Graded server-side at submit. `isCorrect` is null for a question that was
+  // never answered — "not correct" and "not attempted" are different facts.
+  // `marksObtained` can go negative where the question carries negative marks.
+  isCorrect     Boolean?
+  marksObtained Float    @default(0)
+  maxMarks      Float    @default(1)
+
+  // Reserved for the hint feature — no quiz UI exposes hints today, so this
+  // stays false until one does. Here now so adding hints needs no migration.
+  hintViewed Boolean @default(false)
+
+  // The question's position in the quiz at the time of the attempt, so a
+  // later reorder can't scramble how a past attempt reads back.
+  order Int?
+
+  firstVisitedAt DateTime?
+  lastVisitedAt  DateTime?
+  answeredAt     DateTime?
+  skippedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  quizAttempt QuizAttempt @relation(fields: [quizAttemptId], references: [id], onDelete: Cascade)
+  question    Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  // One record per question per attempt — changing an answer updates this row,
+  // it never adds a second one.
+  @@unique([quizAttemptId, questionId])
+  @@index([quizAttemptId])
+  @@index([questionId])
+  @@index([status])
 }
 
 model Certificate {
@@ -1375,9 +1469,29 @@ enum AchievementType {
 
 // SELF_TEST: learner practice, never timed. FINAL: the formal assessment of
 // its lesson/module, optionally timed. Orthogonal to the quiz's scope/level.
+//
+// QUALIFYING: the odd one out — it is not learning material inside its
+// lesson/topic, it is the test that lets a student SKIP that lesson/topic.
+// Its scope column (lessonId or topicId) therefore names its TARGET, not its
+// container, and it is excluded from progress roll-up entirely: requiring a
+// student to pass the test that exempts them from a topic in order to
+// complete that topic would be circular. A student qualifies by passing it
+// under the quiz's own passingScore — see qualification.js.
 enum QuizTag {
   SELF_TEST
   FINAL
+  QUALIFYING
+}
+
+// Where one question stands within a quiz attempt. NOT_VISITED -> VISITED on
+// opening it; VISITED -> ANSWERED on an answer, or -> SKIPPED on Skip. A
+// SKIPPED question that is later answered becomes ANSWERED; clearing an
+// answer drops it back to VISITED (or SKIPPED, if it had been skipped).
+enum QuestionAttemptStatus {
+  NOT_VISITED
+  VISITED
+  ANSWERED
+  SKIPPED
 }
 
 enum QuestionType {

@@ -542,6 +542,12 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
         include: {
           contents: { orderBy: { order: "asc" } },
           quizzes: {
+            // A qualifying test is not learning content — it is the test that lets
+            // a student SKIP this lesson/topic, and it is reached through the skip
+            // flow (GET /progress/learning-path), not by working through the course.
+            // Listing it here would put it in the course map as an item to do,
+            // which is the opposite of what it is for. Instructors still see it.
+            ...(isStudentOrGuest ? { where: { quizTag: { not: "QUALIFYING" } } } : {}),
             orderBy: { order: "asc" },
             include: {
               quizQuestions: {
@@ -574,6 +580,12 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
             include: {
               contents: { orderBy: { order: "asc" } },
               quizzes: {
+                // A qualifying test is not learning content — it is the test that lets
+                // a student SKIP this lesson/topic, and it is reached through the skip
+                // flow (GET /progress/learning-path), not by working through the course.
+                // Listing it here would put it in the course map as an item to do,
+                // which is the opposite of what it is for. Instructors still see it.
+                ...(isStudentOrGuest ? { where: { quizTag: { not: "QUALIFYING" } } } : {}),
                 orderBy: { order: "asc" },
                 include: {
                   quizQuestions: {
@@ -604,6 +616,12 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
                 },
                 include: {
                   quizzes: {
+                    // A qualifying test is not learning content — it is the test that lets
+                    // a student SKIP this lesson/topic, and it is reached through the skip
+                    // flow (GET /progress/learning-path), not by working through the course.
+                    // Listing it here would put it in the course map as an item to do,
+                    // which is the opposite of what it is for. Instructors still see it.
+                    ...(isStudentOrGuest ? { where: { quizTag: { not: "QUALIFYING" } } } : {}),
                     orderBy: { order: "asc" },
                     include: {
                       quizQuestions: {
@@ -673,6 +691,12 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
       } : {}),
 
       quizzes: {
+        // A qualifying test is not learning content — it is the test that lets
+        // a student SKIP this lesson/topic, and it is reached through the skip
+        // flow (GET /progress/learning-path), not by working through the course.
+        // Listing it here would put it in the course map as an item to do,
+        // which is the opposite of what it is for. Instructors still see it.
+        ...(isStudentOrGuest ? { where: { quizTag: { not: "QUALIFYING" } } } : {}),
         orderBy: { order: "asc" },
         include: {
           quizQuestions: {
@@ -711,12 +735,17 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
   }
 
   if (role === "STUDENT") {
-    const { lockMap, completedSet } = await buildLessonLockMap(courseId, studentProfileId);
+    const { lockMap, completedSet, qualifiedSet } = await buildLessonLockMap(courseId, studentProfileId);
     course.modules.forEach((moduleItem) => {
       moduleItem.lessons.forEach((lesson) => {
         const locked = lockMap.get(lesson.id) ?? false;
         lesson.locked = locked;
         lesson.completed = completedSet.has(lesson.id);
+        // Skipped after passing this lesson's qualifying test. Kept apart
+        // from `completed` so the UI can say which it was; the lesson's own
+        // contents are deliberately still sent, because a skipped lesson
+        // stays in the course and stays open to the student.
+        lesson.qualified = qualifiedSet.has(lesson.id);
         if (locked) {
           lesson.topics = [];
           lesson.contents = [];

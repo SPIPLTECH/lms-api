@@ -1,4 +1,5 @@
 const prisma = require('../config/database');
+const { QUALIFYING_TAG, getCourseQualifications } = require('./qualification');
 
 /**
  * Authoritative bottom-up multi-entity progress roll-up engine.
@@ -102,6 +103,14 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
   // (shared with Content, Quizzes and child entities), like contentSelect/quizSelect.
   const assignmentSelect = { id: true, title: true, order: true, dueDate: true };
 
+  // A QUALIFYING quiz is the test that lets a student SKIP its lesson/topic,
+  // not an item inside it. Counting it as required learning would mean a
+  // topic could only be completed by passing the very test that exempts the
+  // student from it — and a student who never intends to skip would be left
+  // with a permanently incomplete topic. Every quiz lookup below therefore
+  // filters it out; qualification is read separately, from the attempts.
+  const GRADED_QUIZ_TAGS = { quizTag: { not: QUALIFYING_TAG } };
+
   // 1. Fetch live published hierarchy including direct Contents, Quizzes, Assignments at all levels
   const course = await client.course.findUnique({
     where: { id: courseId },
@@ -111,12 +120,12 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       status: true,
       contents: {
         where: { ...OWN_ITEMS_ONLY.course },
-        orderBy: { order: 'asc' },
+        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
         select: contentSelect
       },
       quizzes: {
-        where: { isPublished: true, ...OWN_ITEMS_ONLY.course },
-        orderBy: { order: 'asc' },
+        where: { isPublished: true, ...OWN_ITEMS_ONLY.course, ...GRADED_QUIZ_TAGS },
+        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
         select: quizSelect
       },
       assignments: {
@@ -125,19 +134,19 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       },
       modules: {
         where: { isPublished: true },
-        orderBy: { order: 'asc' },
+        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
         select: {
           id: true,
           title: true,
           order: true,
           contents: {
             where: { ...OWN_ITEMS_ONLY.module },
-            orderBy: { order: 'asc' },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
             select: contentSelect
           },
           quizzes: {
-            where: { isPublished: true, ...OWN_ITEMS_ONLY.module },
-            orderBy: { order: 'asc' },
+            where: { isPublished: true, ...OWN_ITEMS_ONLY.module, ...GRADED_QUIZ_TAGS },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
             select: quizSelect
           },
           assignments: {
@@ -146,19 +155,19 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
           },
           lessons: {
             where: { isPublished: true },
-            orderBy: { order: 'asc' },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
             select: {
               id: true,
               title: true,
               order: true,
               contents: {
                 where: { ...OWN_ITEMS_ONLY.lesson },
-                orderBy: { order: 'asc' },
+                orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                 select: contentSelect
               },
               quizzes: {
-                where: { isPublished: true, ...OWN_ITEMS_ONLY.lesson },
-                orderBy: { order: 'asc' },
+                where: { isPublished: true, ...OWN_ITEMS_ONLY.lesson, ...GRADED_QUIZ_TAGS },
+                orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                 select: quizSelect
               },
               assignments: {
@@ -167,19 +176,19 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
               },
               topics: {
                 where: { isPublished: true },
-                orderBy: { order: 'asc' },
+                orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                 select: {
                   id: true,
                   title: true,
                   order: true,
                   contents: {
                     where: { ...OWN_ITEMS_ONLY.topic },
-                    orderBy: { order: 'asc' },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                     select: contentSelect
                   },
                   quizzes: {
-                    where: { isPublished: true, ...OWN_ITEMS_ONLY.topic },
-                    orderBy: { order: 'asc' },
+                    where: { isPublished: true, ...OWN_ITEMS_ONLY.topic, ...GRADED_QUIZ_TAGS },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                     select: quizSelect
                   },
                   assignments: {
@@ -188,19 +197,19 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
                   },
                   subTopics: {
                     where: { isPublished: true },
-                    orderBy: { order: 'asc' },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                     select: {
                       id: true,
                       title: true,
                       order: true,
                       contents: {
                         where: { ...OWN_ITEMS_ONLY.subTopic },
-                        orderBy: { order: 'asc' },
+                        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                         select: contentSelect
                       },
                       quizzes: {
-                        where: { isPublished: true, ...OWN_ITEMS_ONLY.subTopic },
-                        orderBy: { order: 'asc' },
+                        where: { isPublished: true, ...OWN_ITEMS_ONLY.subTopic, ...GRADED_QUIZ_TAGS },
+                        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                         select: quizSelect
                       },
                       assignments: {
@@ -209,18 +218,18 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
                       },
                       concepts: {
                         where: { isPublished: true },
-                        orderBy: { order: 'asc' },
+                        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                         select: {
                           id: true,
                           title: true,
                           order: true,
                           contents: {
-                            orderBy: { order: 'asc' },
+                            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                             select: contentSelect
                           },
                           quizzes: {
-                            where: { isPublished: true },
-                            orderBy: { order: 'asc' },
+                            where: { isPublished: true, ...GRADED_QUIZ_TAGS },
+                            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                             select: quizSelect
                           },
                           assignments: {
@@ -320,7 +329,8 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     existingSubTopicProgresses,
     existingTopicProgresses,
     existingLessonProgresses,
-    existingModuleProgresses
+    existingModuleProgresses,
+    qualifications
   ] = await Promise.all([
     allContentIds.size > 0
       ? client.contentProgress.findMany({
@@ -381,8 +391,13 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
           where: { studentId, moduleId: { in: moduleIds } },
           select: { moduleId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
         })
-      : []
+      : [],
+    // The lessons/topics this student has qualified out of, read from the
+    // Phase 1 attempt log rather than stored anywhere of its own.
+    getCourseQualifications(studentId, courseId, client)
   ]);
+
+  const { qualifiedTopicIds, qualifiedLessonIds } = qualifications;
 
   // A. Content Progress
   const completedContentSet = new Set();
@@ -427,6 +442,32 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     if (ap.completed) completedAssignmentSet.add(ap.assignmentId);
   });
 
+  // D. Qualification completes the whole skipped subtree. A student who passed
+  // a topic's/lesson's qualifying test has it -- and everything inside it --
+  // counted as completed, so the skipped node, its items and every percentage
+  // above it read "done" rather than "0 of N". Derived here on every roll-up
+  // rather than written as ContentProgress/QuizProgress rows, so no item-level
+  // activity is fabricated; `qualified` still records that it was a skip.
+  const completeSubtree = (entity) => {
+    entity.contents.forEach((c) => completedContentSet.add(c.id));
+    entity.quizzes.forEach((q) => completedQuizSet.add(q.id));
+    entity.assignments.forEach((a) => completedAssignmentSet.add(a.id));
+    for (const child of entity.topics || entity.subTopics || entity.concepts || []) {
+      completeSubtree(child);
+    }
+  };
+  for (const mod of course.modules) {
+    for (const lesson of mod.lessons) {
+      if (qualifiedLessonIds.has(lesson.id)) {
+        completeSubtree(lesson);
+        continue;
+      }
+      for (const topic of lesson.topics) {
+        if (qualifiedTopicIds.has(topic.id)) completeSubtree(topic);
+      }
+    }
+  }
+
   const conceptProgressMap = new Map(existingConceptProgresses.map((cp) => [cp.conceptId, cp]));
   const subTopicProgressMap = new Map(existingSubTopicProgresses.map((sp) => [sp.subTopicId, sp]));
   const topicProgressMap = new Map(existingTopicProgresses.map((tp) => [tp.topicId, tp]));
@@ -441,8 +482,17 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     completed: new Map(),
     visited: new Map(),
     completedAt: new Map(),
-    visitedAt: new Map()
+    visitedAt: new Map(),
+    qualified: new Map(),
+    qualifiedAt: new Map(),
+    // completed OR qualified -- the single flag a PARENT reads when deciding
+    // whether this child still holds it back.
+    satisfied: new Map()
   });
+
+  // Only Topic and Lesson offer a qualifying test; every other level passes
+  // this, so `satisfied` there is simply `completed`.
+  const NOT_QUALIFIABLE = new Map();
 
   // The deepest level has no child containers.
   const NO_CHILDREN = newStatus();
@@ -482,7 +532,9 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       entity.contents.every((c) => completedContentSet.has(c.id)) &&
       entity.quizzes.every((q) => completedQuizSet.has(q.id)) &&
       entity.assignments.every((a) => completedAssignmentSet.has(a.id)) &&
-      applicableChildren.every((c) => childStatus.completed.get(c.id) === true);
+      // A child the student qualified out of no longer holds its parent
+      // back: the student demonstrated they already knew it.
+      applicableChildren.every((c) => childStatus.satisfied.get(c.id) === true);
 
     const isVisited =
       existing?.visited ||
@@ -510,25 +562,45 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
    * Promise.all, exactly as the previous per-level loops did, instead of one
    * awaited round trip per container.
    */
-  const runLevel = ({ entities, childrenOf, childStatus, progressMap, delegate, idField }) => {
+  const runLevel = ({
+    entities,
+    childrenOf,
+    childStatus,
+    progressMap,
+    delegate,
+    idField,
+    qualifiedIds = NOT_QUALIFIABLE
+  }) => {
     const status = newStatus();
     const upserts = [];
+    const qualifiable = qualifiedIds !== NOT_QUALIFIABLE;
 
     for (const entity of entities) {
       const r = computeContainer(entity, childrenOf(entity), progressMap.get(entity.id), childStatus);
+
+      // Materialized from the qualifying attempts, exactly as `completed` is
+      // materialized from the container's items. qualifiedAt is the first
+      // passing attempt's timestamp, so it does not move when the student
+      // retakes the test.
+      const isQualified = qualifiedIds.has(entity.id);
+      const qualifiedAt = isQualified ? qualifiedIds.get(entity.id) : null;
 
       status.applicable.set(entity.id, r.applicable);
       status.completed.set(entity.id, r.completed);
       status.visited.set(entity.id, r.visited);
       status.completedAt.set(entity.id, r.completedAt);
       status.visitedAt.set(entity.id, r.visitedAt);
+      status.qualified.set(entity.id, isQualified);
+      status.qualifiedAt.set(entity.id, qualifiedAt);
+      status.satisfied.set(entity.id, r.completed || isQualified);
 
       if (persist) {
         const row = {
           completed: r.completed,
           completedAt: r.completedAt,
           visited: r.visited,
-          visitedAt: r.visitedAt
+          visitedAt: r.visitedAt,
+          ...(qualifiable ? { qualified: isQualified, qualifiedAt } : {})
         };
         upserts.push(
           delegate.upsert({
@@ -580,7 +652,8 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     childStatus: subTopicRun.status,
     progressMap: topicProgressMap,
     delegate: client.topicProgress,
-    idField: 'topicId'
+    idField: 'topicId',
+    qualifiedIds: qualifiedTopicIds
   });
   if (persist) await Promise.all(topicRun.upserts);
 
@@ -590,7 +663,8 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     childStatus: topicRun.status,
     progressMap: lessonProgressMap,
     delegate: client.lessonProgress,
-    idField: 'lessonId'
+    idField: 'lessonId',
+    qualifiedIds: qualifiedLessonIds
   });
   if (persist) await Promise.all(lessonRun.upserts);
 
@@ -698,7 +772,7 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     const applicableChildren = childrenTree.filter((c) => c.applicable);
     const totalItems = direct.directTotalItems + applicableChildren.length;
     const completedItems =
-      direct.directCompletedItems + applicableChildren.filter((c) => c.completed).length;
+      direct.directCompletedItems + applicableChildren.filter((c) => c.satisfied).length;
     const visitedItems =
       direct.directVisitedItems + applicableChildren.filter((c) => c.visited).length;
 
@@ -716,6 +790,13 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       applicable: status.applicable.get(entity.id) === true,
       completed: status.completed.get(entity.id) === true,
       completedAt: status.completedAt.get(entity.id) ?? null,
+      // Skipped after passing this node's qualifying test (Topic/Lesson only;
+      // always false elsewhere). Reported separately from `completed` so the
+      // player can say "skipped" and not "done", while `satisfied` is the
+      // single flag progression reads — no caller has to check both.
+      qualified: status.qualified.get(entity.id) === true,
+      qualifiedAt: status.qualifiedAt.get(entity.id) ?? null,
+      satisfied: status.satisfied.get(entity.id) === true,
       visited: status.visited.get(entity.id) === true,
       visitedAt: status.visitedAt.get(entity.id) ?? null
     };
@@ -797,6 +878,11 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     progressPercent,
     visitedPercent,
     completed: isCourseCompleted,
+    // A course is not skippable as a whole; carried for shape parity with
+    // every other node in the tree.
+    qualified: false,
+    qualifiedAt: null,
+    satisfied: isCourseCompleted,
     visited: isCourseVisited
   };
 

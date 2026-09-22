@@ -1,9 +1,41 @@
 const prisma = require('../../config/database');
 const { recomputeCourseProgress, ensureProgressInitialized } = require('../../utils/progressRollup');
+const { buildLearningPath, resolveAccess, resolveNextItem } = require('../../utils/learningPath');
+const { getCourseQualifyingQuizzes } = require('../../utils/qualification');
 const {
   COURSE_ID_INCLUDE,
   resolveCourseId
 } = require('../../utils/helpers/courseBreadcrumb.helper');
+
+const MODULE_COURSE = { select: { module: { select: { courseId: true } } } };
+
+/**
+ * COURSE_ID_INCLUDE plus the lesson/topic ids along the way, so the learning
+ * path gate can locate a Content row attached at any of the six levels.
+ */
+const PATH_ACCESS_INCLUDE = {
+  ...COURSE_ID_INCLUDE,
+  topic: { select: { lessonId: true, lesson: MODULE_COURSE } },
+  subTopic: { select: { topicId: true, topic: { select: { lessonId: true, lesson: MODULE_COURSE } } } },
+  concept: {
+    select: {
+      subTopic: { select: { topicId: true, topic: { select: { lessonId: true, lesson: MODULE_COURSE } } } }
+    }
+  }
+};
+
+/**
+ * The lesson/topic a Content row sits in on the learning path. SubTopic and
+ * Concept are not path steps themselves, so their content is gated by the
+ * topic they belong to.
+ */
+const pathTargetOf = (content) => {
+  const subTopic = content.subTopic || content.concept?.subTopic || null;
+  const topicId = content.topicId || subTopic?.topicId || null;
+  const lessonId =
+    content.lessonId || content.topic?.lessonId || subTopic?.topic?.lessonId || null;
+  return { lessonId, topicId };
+};
 
 /**
  * Upserts ContentProgress rows for `contentIds` to `completed`, preserving
@@ -193,7 +225,7 @@ async function completeContent(studentId, contentId, completed = true, requestin
   const [contents, existingRows] = await Promise.all([
     prisma.content.findMany({
       where: { id: { in: contentIds } },
-      include: COURSE_ID_INCLUDE
+      include: PATH_ACCESS_INCLUDE
     }),
     prisma.contentProgress.findMany({ where: { studentId, contentId: { in: contentIds } } })
   ]);
@@ -212,6 +244,20 @@ async function completeContent(studentId, contentId, completed = true, requestin
 
   if (requestingUser) {
     await Promise.all([...courseIds].map((courseId) => assertCourseProgressAccess(requestingUser, studentId, courseId)));
+
+    // Sequential learning, enforced where it actually matters: a student may
+    // not record progress inside a lesson/topic they have not reached. The
+    // player already refuses to navigate there, but a client that skips that
+    // check — or calls this endpoint directly — must be refused too, or the
+    // gate is decoration. Only students are gated: an instructor or admin
+    // correcting a student's progress is not walking the path.
+    if (requestingUser.role === 'STUDENT') {
+      await Promise.all(
+        contents.map((content) =>
+          assertLearningPathAccess(studentId, resolveCourseId(content), pathTargetOf(content))
+        )
+      );
+    }
   }
 
   await upsertContentCompletions(studentId, contentIds, completed, existingRows);
@@ -555,6 +601,48 @@ async function getStudentCourseProgress(studentId, courseId) {
 }
 
 /**
+ * The student's ordered path through a course: every module/lesson/topic in
+ * course order with its status (completed / qualified / current / available /
+ * locked) and, where one is on offer, the qualifying test that would let them
+ * skip it.
+ *
+ * Computed from the same roll-up the progress tree is built from, so the
+ * sequence the player draws and the sequence the API enforces are the same
+ * one. Returns an array — the ordering is the point, and callers index into
+ * it — with the path's derived summary attached separately by the controller.
+ */
+async function getStudentLearningPath(studentId, courseId) {
+  const [rollup, qualifyingQuizzes] = await Promise.all([
+    recomputeCourseProgress(studentId, courseId, null, { includeTree: true }),
+    // Student-scoped, so each qualifying quiz carries this student's remaining
+    // allowance and the path can stop offering a skip they cannot take.
+    getCourseQualifyingQuizzes(courseId, null, studentId)
+  ]);
+
+  return buildLearningPath(rollup.hierarchy, qualifyingQuizzes);
+}
+
+/**
+ * Throws unless the student may open this lesson/topic right now.
+ *
+ * The backend's own answer to "can they be here?" — so a student who reaches
+ * locked content by typing a URL, or by calling the API directly, is refused
+ * the same way the player refuses them. Never trusts a client-side gate.
+ */
+async function assertLearningPathAccess(studentId, courseId, { lessonId = null, topicId = null } = {}) {
+  if (!lessonId && !topicId) return;
+
+  const path = await getStudentLearningPath(studentId, courseId);
+  const { allowed, reason } = resolveAccess(path, { lessonId, topicId });
+
+  if (!allowed) {
+    const error = new Error(reason);
+    error.statusCode = 403;
+    throw error;
+  }
+}
+
+/**
  * Retrieves progress overview across all enrolled courses for a student.
  */
 async function getStudentOverallProgress(studentId) {
@@ -669,6 +757,9 @@ module.exports = {
   completeLesson,
   markVisited,
   getStudentCourseProgress,
+  getStudentLearningPath,
+  assertLearningPathAccess,
+  resolveNextItem,
   getStudentOverallProgress,
   getInstructorCourseProgress,
   ensureProgressInitialized
