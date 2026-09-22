@@ -126,14 +126,14 @@ test("SubTopic + Concept hierarchy", async (t) => {
     // Quiz + Assignment on the two NEW levels, proving CQA works there.
     await prisma.quiz.createMany({
       data: [
-        { id: "stc_quiz_subtopic", title: "ST quiz", order: 1000001, passingScore: 50, isPublished: true, courseId, subTopicId: ids.subTopic },
-        { id: "stc_quiz_concept", title: "C quiz", order: 1000001, passingScore: 50, isPublished: true, courseId, conceptId: ids.concept },
+        { id: "stc_quiz_subtopic", title: "ST quiz", order: 2, passingScore: 50, isPublished: true, courseId, subTopicId: ids.subTopic },
+        { id: "stc_quiz_concept", title: "C quiz", order: 2, passingScore: 50, isPublished: true, courseId, conceptId: ids.concept },
       ],
     });
     await prisma.assignment.createMany({
       data: [
-        { id: "stc_asg_subtopic", title: "ST asg", order: 2000001, dueDate: new Date("2030-01-01"), isPublished: true, courseId, subTopicId: ids.subTopic },
-        { id: "stc_asg_concept", title: "C asg", order: 2000001, dueDate: new Date("2030-01-01"), isPublished: true, courseId, conceptId: ids.concept },
+        { id: "stc_asg_subtopic", title: "ST asg", order: 3, dueDate: new Date("2030-01-01"), isPublished: true, courseId, subTopicId: ids.subTopic },
+        { id: "stc_asg_concept", title: "C asg", order: 3, dueDate: new Date("2030-01-01"), isPublished: true, courseId, conceptId: ids.concept },
       ],
     });
   });
@@ -365,7 +365,9 @@ test("SubTopic + Concept hierarchy", async (t) => {
     assert.strictEqual(created.isPublished, true, "inherits published state of a PUBLISHED course");
 
     const c2 = await conceptService.createConcept({ title: "C2", subTopicId: ids.subTopic });
-    assert.strictEqual(c2.order, 2);
+    // One common sequence per parent: C2 lands one past the SubTopic's last
+    // item of ANY type (content 1, quiz 2, assignment 3), not after C1 alone.
+    assert.strictEqual(c2.order, 4);
 
     const list = await subTopicService.getSubTopics(ids.topicNew, "INSTRUCTOR", instructorId);
     assert.deepStrictEqual(list.map((s) => s.title), ["ST1", "ST2"]);
@@ -412,7 +414,7 @@ test("SubTopic + Concept hierarchy", async (t) => {
       data: { id: "stc_cnt_doomed", order: 1, conceptId: cn.id, type: "TEXT" },
     });
     const quiz = await prisma.quiz.create({
-      data: { title: "doomed quiz", order: 1000002, passingScore: 50, courseId, conceptId: cn.id },
+      data: { title: "doomed quiz", order: 2, passingScore: 50, courseId, conceptId: cn.id },
     });
 
     await subTopicService.deleteSubTopic(st.id);

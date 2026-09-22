@@ -139,9 +139,12 @@ const buildLearningPath = (hierarchy, qualifyingQuizzes = { byTopicId: new Map()
     // may want to read it after all.
     const locked = isOutstanding(entry) && blockingIndexFor(entry, index) !== -1;
 
+    // A qualified node is completed by the roll-up (its whole subtree counts as
+    // done), so it reads COMPLETED; QUALIFIED is left only for a qualified node
+    // with nothing in it to complete. `qualified` still records the skip.
     let status;
-    if (qualified) status = PATH_STATUS.QUALIFIED;
-    else if (node.completed === true) status = PATH_STATUS.COMPLETED;
+    if (node.completed === true) status = PATH_STATUS.COMPLETED;
+    else if (qualified) status = PATH_STATUS.QUALIFIED;
     else if (locked) status = PATH_STATUS.LOCKED;
     else if (index === currentIndex) status = PATH_STATUS.CURRENT;
     else status = PATH_STATUS.AVAILABLE;

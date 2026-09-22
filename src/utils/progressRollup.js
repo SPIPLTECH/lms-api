@@ -442,6 +442,32 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     if (ap.completed) completedAssignmentSet.add(ap.assignmentId);
   });
 
+  // D. Qualification completes the whole skipped subtree. A student who passed
+  // a topic's/lesson's qualifying test has it -- and everything inside it --
+  // counted as completed, so the skipped node, its items and every percentage
+  // above it read "done" rather than "0 of N". Derived here on every roll-up
+  // rather than written as ContentProgress/QuizProgress rows, so no item-level
+  // activity is fabricated; `qualified` still records that it was a skip.
+  const completeSubtree = (entity) => {
+    entity.contents.forEach((c) => completedContentSet.add(c.id));
+    entity.quizzes.forEach((q) => completedQuizSet.add(q.id));
+    entity.assignments.forEach((a) => completedAssignmentSet.add(a.id));
+    for (const child of entity.topics || entity.subTopics || entity.concepts || []) {
+      completeSubtree(child);
+    }
+  };
+  for (const mod of course.modules) {
+    for (const lesson of mod.lessons) {
+      if (qualifiedLessonIds.has(lesson.id)) {
+        completeSubtree(lesson);
+        continue;
+      }
+      for (const topic of lesson.topics) {
+        if (qualifiedTopicIds.has(topic.id)) completeSubtree(topic);
+      }
+    }
+  }
+
   const conceptProgressMap = new Map(existingConceptProgresses.map((cp) => [cp.conceptId, cp]));
   const subTopicProgressMap = new Map(existingSubTopicProgresses.map((sp) => [sp.subTopicId, sp]));
   const topicProgressMap = new Map(existingTopicProgresses.map((tp) => [tp.topicId, tp]));
