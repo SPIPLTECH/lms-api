@@ -6,6 +6,7 @@ const morgan = require("morgan");
 const path = require("path");
 
 const errorHandler = require("./middleware/error.middleware");
+const { corsOriginDelegate } = require("./config/allowedOrigins");
 
 const teacherRoutes = require("./modules/teacher/teacher.route");
 const authRoutes = require("./modules/auth/auth.routes");
@@ -67,15 +68,20 @@ app.disable('etag');
 // authenticates from an Authorization header and never from a cookie, so a
 // third-party page gets no ambient credentials to ride on. It is still worth
 // closing in production, which is what the variable is for.
-const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || "")
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+//
+// When it IS set, the decision is delegated to src/config/allowedOrigins.js so
+// that this layer and the Socket.io layer agree — including about LAN origins,
+// whose IP changes with the network and so cannot be listed up front. The gate
+// stays on CORS_ALLOWED_ORIGINS alone (not FRONTEND_URL, which the shared
+// module also reads) so that merely having FRONTEND_URL set cannot silently
+// turn this layer restrictive.
+const corsAllowlistConfigured =
+  (process.env.CORS_ALLOWED_ORIGINS || "").trim().length > 0;
 
 app.use(
   cors({
     maxAge: 7200,
-    ...(allowedOrigins.length > 0 ? { origin: allowedOrigins } : {})
+    ...(corsAllowlistConfigured ? { origin: corsOriginDelegate } : {})
   })
 );
 app.use(

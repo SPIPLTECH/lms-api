@@ -100,7 +100,13 @@ test("no JWT secret has a hardcoded fallback", async () => {
 test("CORS can be locked to an allowlist from the environment", async () => {
   const source = readCode("src/app.js");
   assert.match(source, /CORS_ALLOWED_ORIGINS/, "an allowlist is configurable");
-  assert.match(source, /origin: allowedOrigins/, "and is applied when present");
+  // The allowlist decision moved into src/config/allowedOrigins.js so the
+  // Express and Socket.io layers share one policy. What this still guards is
+  // that app.js hands `origin` to that policy rather than leaving CORS open
+  // when an allowlist IS configured. The policy's own behaviour — which
+  // origins it accepts, including LAN ones — is covered by
+  // test/allowed-origins.test.js.
+  assert.match(source, /origin: corsOriginDelegate/, "and is applied when present");
 });
 
 test("no credential is committed in source", async () => {
