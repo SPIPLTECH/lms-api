@@ -1,7 +1,7 @@
 const prisma =
   require("../../config/database");
 const ApiError = require("../../utils/ApiError");
-const { claimSequenceOrder, releaseSequenceOrder } = require("../contents/contentOrder.util");
+const { claimSequenceOrder, releaseSequenceOrder, assertSequenceOrdersFree } = require("../contents/contentOrder.util");
 const notificationService = require("../notifications/notification.service");
 const youtubeTranscript = require("../../utils/youtubeTranscript");
 
@@ -360,6 +360,9 @@ const reorderLessons = async (
   if (!allBelongToModule) {
     throw new ApiError(403, "One or more lessons do not belong to this module.");
   }
+
+  // No lesson may land on a slot a module content, quiz or assignment holds.
+  await assertSequenceOrdersFree("lesson", lessons);
 
   // Two-phase reorder: @@unique([moduleId, order]) rejects a naive
   // parallel swap (A->2 while B still holds 2), so first move every

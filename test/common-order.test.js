@@ -52,7 +52,8 @@ function useSequenceDb(t) {
   patch(prisma, "$transaction", db.$transaction);
   // The Course-level reorder guard reads the course's items through prisma,
   // and the two-phase reorders write through it.
-  for (const delegate of ["content", "quiz", "assignment", "module"]) {
+  // The cross-type slot guard reads every member table of the parent's sequence.
+  for (const delegate of ["content", "quiz", "assignment", "module", "lesson", "topic", "subTopic", "concept"]) {
     patch(prisma[delegate], "findMany", db[delegate].findMany);
     patch(prisma[delegate], "update", db[delegate].update);
   }
@@ -517,6 +518,124 @@ test("lower levels are unaffected: a Module-level Quiz still takes its insertion
   // And a Module-level reorder may put that Quiz first.
   await quizService.reorderQuizzes([{ id: db.tables.quiz[0].id, order: 0 }]);
   assert.strictEqual(db.tables.quiz[0].order, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Moving existing items: two items of different types may never end up in the
+// same slot, which is what made a later delete fail with P2002.
+// ---------------------------------------------------------------------------
+
+test("a per-type reorder may not take a slot another type holds", async (t) => {
+  const db = useSequenceDb(t);
+  const inModule = { moduleId: MODULE };
+
+  const c1 = await content(inModule, "C1");
+  const l1 = await lessonService.createLesson({ moduleId: MODULE, title: "L1", isPublished: false });
+  const q1 = await quiz(inModule, "Q1");
+  const a1 = await assignment(inModule, "A1");
+  const before = db.sequenceOf("moduleId", MODULE);
+  assert.deepStrictEqual(before, ["content:C1@1", "lesson:L1@2", "quiz:Q1@3", "assignment:A1@4"]);
+
+  const rejected = (promise) => assert.rejects(promise, (error) => error.statusCode === 409);
+
+  // Half of a Content <-> Lesson swap: the Content alone onto the Lesson's slot.
+  await rejected(contentService.reorderContents([{ id: c1.id, order: 2 }]));
+  await rejected(lessonService.reorderLessons(MODULE, [{ id: l1.id, order: 1 }]));
+  await rejected(quizService.reorderQuizzes([{ id: q1.id, order: 4 }]));
+  await rejected(assignmentService.reorderAssignments([{ id: a1.id, order: 3 }]));
+
+  // Every rejection happened before anything was written.
+  assert.deepStrictEqual(db.sequenceOf("moduleId", MODULE), before);
+});
+
+test("a per-type reorder among its own type is still allowed", async (t) => {
+  const db = useSequenceDb(t);
+  const inModule = { moduleId: MODULE };
+
+  const c1 = await content(inModule, "C1");
+  await lessonService.createLesson({ moduleId: MODULE, title: "L1", isPublished: false });
+  const c2 = await content(inModule, "C2");
+
+  await contentService.reorderContents([
+    { id: c1.id, order: 3 },
+    { id: c2.id, order: 1 },
+  ]);
+  assert.deepStrictEqual(db.sequenceOf("moduleId", MODULE), ["content:C2@1", "lesson:L1@2", "content:C1@3"]);
+});
+
+test("swapping two items of different types moves both, and a later delete still closes its slot", async (t) => {
+  const db = useSequenceDb(t);
+  const inModule = { moduleId: MODULE };
+
+  await content(inModule, "C1");
+  const l1 = await lessonService.createLesson({ moduleId: MODULE, title: "L1", isPublished: false });
+  const c2 = await content(inModule, "C2");
+  await lessonService.createLesson({ moduleId: MODULE, title: "L2", isPublished: false });
+
+  const swapped = await orderUtil.swapSequenceItems({ kind: "content", id: c2.id }, { kind: "lesson", id: l1.id });
+  assert.deepStrictEqual(swapped, [
+    { kind: "content", id: c2.id, order: 2 },
+    { kind: "lesson", id: l1.id, order: 3 },
+  ]);
+  assert.deepStrictEqual(db.sequenceOf("moduleId", MODULE), [
+    "content:C1@1",
+    "content:C2@2",
+    "lesson:L1@3",
+    "lesson:L2@4",
+  ]);
+  assert.strictEqual(db.locks.at(-1), `sequence:moduleId:${MODULE}`);
+
+  // The reported failure: deleting the moved Content shifted the next Lesson
+  // onto a Lesson left behind in the Content's slot.
+  await contentService.deleteContent(c2.id);
+  assert.deepStrictEqual(db.sequenceOf("moduleId", MODULE), ["content:C1@1", "lesson:L1@2", "lesson:L2@3"]);
+});
+
+test("swapping two items of the same type trades their orders", async (t) => {
+  const db = useSequenceDb(t);
+
+  const q1 = await quiz({ moduleId: MODULE, lessonId: LESSON }, "Q1");
+  await topicService.createTopic({ lessonId: LESSON, title: "T1", isPublished: false });
+  const q2 = await quiz({ moduleId: MODULE, lessonId: LESSON }, "Q2");
+
+  await orderUtil.swapSequenceItems({ kind: "quiz", id: q1.id }, { kind: "quiz", id: q2.id });
+  assert.deepStrictEqual(db.sequenceOf("lessonId", LESSON), ["quiz:Q2@1", "topic:T1@2", "quiz:Q1@3"]);
+});
+
+test("a swap is refused across parents, across Course groups, and for unknown items", async (t) => {
+  const db = useSequenceDb(t);
+
+  const inModule = await content({ moduleId: MODULE }, "M-content");
+  const inLesson = await content({ lessonId: LESSON }, "L-content");
+  const courseContent = await content({ courseId: COURSE }, "C-content");
+  const mod = await moduleService.createModule({ courseId: COURSE, title: "Module-1", isPublished: false });
+  const before = db.sequenceOf("courseId", COURSE);
+
+  const rejected = (promise, statusCode) => assert.rejects(promise, (error) => error.statusCode === statusCode);
+
+  await rejected(
+    orderUtil.swapSequenceItems({ kind: "content", id: inModule.id }, { kind: "content", id: inLesson.id }),
+    400
+  );
+  // Course Content may not trade places with a Module.
+  await rejected(
+    orderUtil.swapSequenceItems({ kind: "content", id: courseContent.id }, { kind: "module", id: mod.id }),
+    400
+  );
+  await rejected(
+    orderUtil.swapSequenceItems({ kind: "content", id: inModule.id }, { kind: "content", id: "missing" }),
+    404
+  );
+  await rejected(
+    orderUtil.swapSequenceItems({ kind: "content", id: inModule.id }, { kind: "question", id: "x" }),
+    400
+  );
+  await rejected(
+    orderUtil.swapSequenceItems({ kind: "content", id: inModule.id }, { kind: "content", id: inModule.id }),
+    400
+  );
+
+  assert.deepStrictEqual(db.sequenceOf("courseId", COURSE), before);
 });
 
 test("sequenceMembers: a parent's sequence spans Content, Quiz, Assignment and its child entity", () => {

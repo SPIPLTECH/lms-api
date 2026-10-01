@@ -2,6 +2,10 @@ const contentService = require(
   "./content.service"
 );
 const prisma = require("../../config/database");
+const {
+  swapSequenceItems,
+  isSequenceItemOwnedBy,
+} = require("./contentOrder.util");
 
 const getContents = async (
   req,
@@ -106,6 +110,34 @@ const reorderContents = async (
       await contentService.reorderContents(
         req.body.contents
       );
+
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const swapSequenceOrder = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const { first, second } = req.body;
+
+    // Both items must share a parent (the swap enforces it), so owning the
+    // first item's course is owning the second's.
+    if (req.user.role !== "ADMIN") {
+      const owned = await isSequenceItemOwnedBy(first.kind, first.id, req.user.id);
+      if (!owned) {
+        return res.status(403).json({
+          success: false,
+          message: "You do not have permission to reorder this item."
+        });
+      }
+    }
+
+    const result = await swapSequenceItems(first, second);
 
     res.json(result);
   } catch (error) {
@@ -231,6 +263,7 @@ module.exports = {
   updateContent,
   deleteContent,
   reorderContents,
+  swapSequenceOrder,
   getMySubmission,
   submitContent,
   getAssignmentContents,

@@ -50,11 +50,19 @@ test("reorderAssignments — two-phase batch update avoids swap collisions", asy
   const originalAssignmentUpdate = prisma.assignment.update;
   const originalAssignmentFindMany = prisma.assignment.findMany;
   const originalTransaction = prisma.$transaction;
+  // The cross-type slot guard asks the Lesson's other item types whether they
+  // hold the requested orders. Nothing does here.
+  const otherKinds = ["content", "quiz", "topic"];
+  const originalOtherFindMany = otherKinds.map((kind) => prisma[kind].findMany);
+  for (const kind of otherKinds) prisma[kind].findMany = async () => [];
 
   t.after(() => {
     prisma.assignment.update = originalAssignmentUpdate;
     prisma.assignment.findMany = originalAssignmentFindMany;
     prisma.$transaction = originalTransaction;
+    otherKinds.forEach((kind, index) => {
+      prisma[kind].findMany = originalOtherFindMany[index];
+    });
   });
 
   await t.test("issues 4 updates (2 offset placeholders, 2 final) inside one transaction", async () => {

@@ -5,6 +5,7 @@ const {
   releaseSequenceOrder,
   mostSpecificParentField,
   assertCourseReorderAllowed,
+  assertSequenceOrdersFree,
 } = require("./contentOrder.util");
 const progressService = require("../progress/progress.service");
 const {
@@ -139,6 +140,8 @@ const reorderContents = async (
   // Course level only: course content stays in the Content group, ahead of
   // the modules, assignments and quizzes. Other levels are unconstrained.
   await assertCourseReorderAllowed("content", contents);
+  // No content may land on a slot a quiz, assignment or child entity holds.
+  await assertSequenceOrdersFree("content", contents);
 
   // Two-phase reorder: @@unique([lessonId, order]) rejects a naive
   // parallel swap (A->2 while B still holds 2), so first move every

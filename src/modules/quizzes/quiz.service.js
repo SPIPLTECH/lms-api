@@ -9,6 +9,7 @@ const {
   releaseSequenceOrder,
   mostSpecificParentField,
   assertCourseReorderAllowed,
+  assertSequenceOrdersFree,
 } = require("../contents/contentOrder.util");
 const { buildQualificationOutcome } = require("../../utils/qualificationResult");
 const { QUALIFYING_TAG } = require("../../utils/qualification");
@@ -1822,6 +1823,8 @@ const reorderQuizzes = async (quizzes) => {
   // be moved above a course content, module or assignment. Quizzes at every
   // other level are free.
   await assertCourseReorderAllowed("quiz", quizzes);
+  // No quiz may land on a slot a content, assignment or child entity holds.
+  await assertSequenceOrdersFree("quiz", quizzes);
 
   const offsetUpdates = quizzes.map((quiz, index) =>
     prisma.quiz.update({

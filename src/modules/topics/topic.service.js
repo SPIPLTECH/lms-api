@@ -1,5 +1,5 @@
 const prisma = require("../../config/database");
-const { claimSequenceOrder, releaseSequenceOrder } = require("../contents/contentOrder.util");
+const { claimSequenceOrder, releaseSequenceOrder, assertSequenceOrdersFree } = require("../contents/contentOrder.util");
 
 const getTopics = async (lessonId, role, userId) => {
   const where = {};
@@ -148,6 +148,9 @@ const deleteTopic = async (topicId) => {
 };
 
 const reorderTopics = async (lessonId, topics) => {
+  // No topic may land on a slot a lesson content, quiz or assignment holds.
+  await assertSequenceOrdersFree("topic", topics);
+
   // Two-phase reorder: @@unique([lessonId, order]) rejects a naive
   // parallel swap (A->2 while B still holds 2), so first move every
   // row to a disjoint negative placeholder, then to its final order.

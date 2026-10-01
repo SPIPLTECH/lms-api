@@ -29,7 +29,8 @@ const { upload, sanitizeSvgUpload } = require(
 const validate = require("../../middleware/joiValidation.middleware");
 const {
   createContentSchema,
-  updateContentSchema
+  updateContentSchema,
+  swapSequenceOrderSchema
 } = require("./content.validation");
 // Same PDF-only rules as an Assignment-model submission.
 const {
@@ -76,6 +77,20 @@ router.patch(
     "INSTRUCTOR"
   ]),
   controller.reorderContents
+);
+
+// Trades the positions of two items of one parent, of any type (a Content
+// with a Lesson, a Quiz with a Topic, …). Must stay above the /:contentId
+// routes, which would otherwise capture "swap-order".
+router.patch(
+  "/swap-order",
+  verifyToken,
+  checkRole([
+    "ADMIN",
+    "INSTRUCTOR"
+  ]),
+  validate(swapSequenceOrderSchema),
+  controller.swapSequenceOrder
 );
 
 router.get(

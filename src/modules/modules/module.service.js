@@ -4,6 +4,7 @@ const {
   claimSequenceOrder,
   releaseSequenceOrder,
   assertCourseReorderAllowed,
+  assertSequenceOrdersFree,
 } = require("../contents/contentOrder.util");
 
 const getModules = async (courseId, role, userId) => {
@@ -249,6 +250,8 @@ const reorderModules = async (
   // Course level only: modules stay in the Module group — after the course's
   // own content, ahead of its assignments and quizzes.
   await assertCourseReorderAllowed("module", modules);
+  // No module may land on a slot a course content, quiz or assignment holds.
+  await assertSequenceOrdersFree("module", modules);
 
   // Two-phase reorder: @@unique([courseId, order]) rejects a naive
   // parallel swap (A->2 while B still holds 2), so first move every

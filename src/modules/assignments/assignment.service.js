@@ -4,6 +4,7 @@ const {
   releaseSequenceOrder,
   mostSpecificParentField,
   assertCourseReorderAllowed,
+  assertSequenceOrdersFree,
 } = require("../contents/contentOrder.util");
 const {
     BREADCRUMB_INCLUDE,
@@ -561,6 +562,8 @@ const reorderAssignments = async (assignments) => {
   // Course level only: a course assignment stays between the modules and the
     // quizzes — it is the work that follows every module.
     await assertCourseReorderAllowed("assignment", assignments);
+    // No assignment may land on a slot a content, quiz or child entity holds.
+    await assertSequenceOrdersFree("assignment", assignments);
 
     const offsetUpdates = assignments.map((a, index) =>
         prisma.assignment.update({

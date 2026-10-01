@@ -67,7 +67,21 @@ const updateContentSchema = Joi.object({
   parentContentId: Joi.string().optional().allow(null, ""),
 });
 
+// One item of a parent's common sequence, of any type (see contentOrder.util.js).
+const sequenceItemSchema = Joi.object({
+  kind: Joi.string()
+    .valid("content", "quiz", "assignment", "module", "lesson", "topic", "subTopic", "concept")
+    .required(),
+  id: Joi.string().required(),
+});
+
+const swapSequenceOrderSchema = Joi.object({
+  first: sequenceItemSchema.required(),
+  second: sequenceItemSchema.required(),
+});
+
 module.exports = {
   createContentSchema,
   updateContentSchema,
+  swapSequenceOrderSchema,
 };

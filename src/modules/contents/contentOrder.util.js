@@ -387,6 +387,187 @@ async function assertCourseReorderAllowed(kind, rows, client = prisma) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Moving items that already exist.
+//
+// The reorder endpoints are per type (PATCH /contents/reorder, /lessons/reorder,
+// …) and each table's unique index only sees its own rows, so a per-type
+// reorder can put an item on an order another type already holds — two items
+// in one slot. Every later add/remove in that parent then shifts one of them
+// onto a neighbour of its own type and fails with P2002. The two functions
+// below close that: a per-type reorder may not take another type's slot, and
+// swapping two items of different types is one transaction that moves both.
+// ---------------------------------------------------------------------------
+
+const OWN_ITEM_KINDS = ["content", "quiz", "assignment"];
+
+// The parent field each child hierarchy entity is sequenced under.
+const PARENT_FIELD_BY_CHILD_KIND = Object.fromEntries(
+  Object.entries(CHILD_ENTITY_BY_PARENT_FIELD)
+    .filter(([, kind]) => kind)
+    .map(([parentField, kind]) => [kind, parentField])
+);
+
+// Each hierarchy entity's relation to the level above it.
+const PARENT_RELATION_BY_KIND = {
+  module: "course",
+  lesson: "module",
+  topic: "lesson",
+  subTopic: "topic",
+  concept: "subTopic",
+};
+
+const isSequenceKind = (kind) =>
+  OWN_ITEM_KINDS.includes(kind) || Object.prototype.hasOwnProperty.call(PARENT_FIELD_BY_CHILD_KIND, kind);
+
+const SEQUENCE_SLOT_TAKEN_MESSAGE =
+  "That position is already held by another item of this parent. Refresh and try again.";
+
+function sequenceError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function sequenceRowSelect(kind) {
+  const childParentField = PARENT_FIELD_BY_CHILD_KIND[kind];
+  const parentFields = childParentField ? [childParentField] : PARENT_FIELDS_MOST_SPECIFIC_FIRST;
+  return { id: true, order: true, ...Object.fromEntries(parentFields.map((field) => [field, true])) };
+}
+
+/** The sequence a stored row of `kind` belongs to, or null when it has no parent. */
+function sequenceParentOf(kind, row) {
+  const parentField = PARENT_FIELD_BY_CHILD_KIND[kind] || mostSpecificParentField(row);
+  if (!parentField || !row?.[parentField]) return null;
+  return { parentField, parentId: row[parentField] };
+}
+
+/**
+ * Guards a per-type reorder before it is written: none of the requested
+ * orders may be held by an item of ANOTHER type in the same parent. Orders
+ * held by the same type are left to that table's own unique index, which is
+ * what lets two items of one type trade places.
+ *
+ * `rows` is the caller's [{ id, order }] payload for one item type.
+ */
+async function assertSequenceOrdersFree(kind, rows, client = prisma) {
+  if (!isSequenceKind(kind) || !Array.isArray(rows) || rows.length === 0) return;
+
+  const requestedById = new Map(rows.filter((row) => row?.id).map((row) => [row.id, Number(row.order)]));
+  if (requestedById.size === 0) return;
+
+  const stored = await client[kind].findMany({
+    where: { id: { in: [...requestedById.keys()] } },
+    select: sequenceRowSelect(kind),
+  });
+
+  const byParent = new Map();
+  for (const row of stored) {
+    const parent = sequenceParentOf(kind, row);
+    if (!parent) continue;
+    const key = `${parent.parentField}:${parent.parentId}`;
+    if (!byParent.has(key)) byParent.set(key, { ...parent, orders: [] });
+    byParent.get(key).orders.push(requestedById.get(row.id));
+  }
+
+  for (const { parentField, parentId, orders } of byParent.values()) {
+    for (const member of sequenceMembers(parentField, parentId)) {
+      if (member.kind === kind) continue;
+      const holders = await client[member.delegate].findMany({
+        where: { ...member.where, order: { in: orders } },
+        select: { id: true },
+      });
+      if (holders.length > 0) throw sequenceError(409, SEQUENCE_SLOT_TAKEN_MESSAGE);
+    }
+  }
+}
+
+/**
+ * Trades the positions of two items of one parent's sequence, whatever their
+ * types (a Content with a Lesson, a Quiz with a Topic, …), in one transaction
+ * under the parent's sequence lock — so both rows move or neither does.
+ *
+ * At Course level the two items must be in the same group (see the Course
+ * group rule above).
+ *
+ * @param {{kind: string, id: string}} first
+ * @param {{kind: string, id: string}} second
+ * @returns {Promise<{kind: string, id: string, order: number}[]>} both items with their new order
+ */
+async function swapSequenceItems(first, second) {
+  for (const item of [first, second]) {
+    if (!item?.id || !isSequenceKind(item.kind)) {
+      throw sequenceError(400, "Each item needs an id and a valid kind.");
+    }
+  }
+  if (first.kind === second.kind && first.id === second.id) {
+    throw sequenceError(400, "An item cannot swap positions with itself.");
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const read = (item) =>
+      tx[item.kind].findUnique({ where: { id: item.id }, select: sequenceRowSelect(item.kind) });
+
+    const firstRow = await read(first);
+    const secondRow = await read(second);
+    if (!firstRow || !secondRow) throw sequenceError(404, "Item not found.");
+
+    const parent = sequenceParentOf(first.kind, firstRow);
+    const otherParent = sequenceParentOf(second.kind, secondRow);
+    if (
+      !parent ||
+      !otherParent ||
+      parent.parentField !== otherParent.parentField ||
+      parent.parentId !== otherParent.parentId
+    ) {
+      throw sequenceError(400, "Items must belong to the same parent to swap positions.");
+    }
+    if (isCourseLevel(parent.parentField) && courseGroupRank(first.kind) !== courseGroupRank(second.kind)) {
+      throw sequenceError(400, COURSE_GROUP_ORDER_MESSAGE);
+    }
+
+    // Read the orders again under the lock: a concurrent add or remove may
+    // have shifted either row since the lookup above.
+    await lockParentSequence(tx, parent.parentField, parent.parentId);
+    const firstOrder = (await read(first))?.order;
+    const secondOrder = (await read(second))?.order;
+    if (typeof firstOrder !== "number" || typeof secondOrder !== "number") {
+      throw sequenceError(400, "Both items need a position to be swapped.");
+    }
+
+    // Park the first row so two rows of one table never hold the same order.
+    await tx[first.kind].update({ where: { id: first.id }, data: { order: firstOrder - PARK_OFFSET } });
+    await tx[second.kind].update({ where: { id: second.id }, data: { order: firstOrder } });
+    await tx[first.kind].update({ where: { id: first.id }, data: { order: secondOrder } });
+
+    return [
+      { kind: first.kind, id: first.id, order: secondOrder },
+      { kind: second.kind, id: second.id, order: firstOrder },
+    ];
+  });
+}
+
+/**
+ * Whether `userId` created the course a sequence item belongs to — the
+ * ownership rule the per-item middlewares apply, for any item kind.
+ */
+async function isSequenceItemOwnedBy(kind, id, userId, client = prisma) {
+  if (!isSequenceKind(kind) || !id) return false;
+
+  // The filter from each level up to its course's creator.
+  const ownedAt = { course: { creatorId: userId } };
+  for (const [level, parentRelation] of Object.entries(PARENT_RELATION_BY_KIND)) {
+    ownedAt[level] = { [parentRelation]: ownedAt[parentRelation] };
+  }
+
+  const where = PARENT_RELATION_BY_KIND[kind]
+    ? { id, ...ownedAt[kind] }
+    : { id, OR: Object.entries(ownedAt).map(([level, filter]) => ({ [level]: filter })) };
+
+  const rows = await client[kind].findMany({ where, select: { id: true }, take: 1 });
+  return rows.length > 0;
+}
+
 module.exports = {
   EMPTY_SEQUENCE_ORDER,
   COURSE_PARENT_FIELD,
@@ -404,4 +585,8 @@ module.exports = {
   assertCourseGroupsOrdered,
   assertCourseReorderAllowed,
   releaseSequenceOrder,
+  isSequenceKind,
+  assertSequenceOrdersFree,
+  swapSequenceItems,
+  isSequenceItemOwnedBy,
 };
