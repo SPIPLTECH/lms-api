@@ -1,6 +1,6 @@
 const bcrypt = require("bcrypt");
 const prisma = require("../src/config/database");
-const { getNextOrder } = require("../src/modules/contents/contentOrder.util");
+const { getNextContentOrder } = require("../src/modules/contents/contentOrder.util");
 
 /**
  * Seeds one complete, working course plus the accounts to explore it with.
@@ -16,10 +16,10 @@ const { getNextOrder } = require("../src/modules/contents/contentOrder.util");
  *    matching those two, and refuses partial matches on purpose. Seed data
  *    that doesn't line up would leave the whole adaptive surface silently
  *    empty, which is exactly what happened on the previous database.
- *  - The quiz `order` values are the next slot in their lesson's common
- *    sequence (shared with its topics, content and assignments), matching
- *    what claimSequenceOrder would assign, so the seeded course orders the
- *    same way a hand-built one does.
+ *  - The Self-Test is placed in its lesson's learning sequence the way a
+ *    hand-built quiz is: by a Content(type=QUIZ) row appended after the
+ *    lesson's last item (Content.order is the only sequence order). The
+ *    QUALIFYING test is standalone — the skip test is never a sequence item.
  */
 
 // Each account carries its own password: the instructor is a real account the
@@ -369,10 +369,22 @@ async function seed() {
       quizTag: "SELF_TEST",
       passingScore: 60,
       attempts: 0,
-      isPublished: true,
-      order: await getNextOrder("lessonId", "seed_les_1", prisma)
+      isPublished: true
     }
   });
+  // Its place in lesson 1's learning sequence, created once.
+  const existingSlot = await prisma.content.findUnique({ where: { quizId: selfTest.id } });
+  if (!existingSlot) {
+    await prisma.content.create({
+      data: {
+        type: "QUIZ",
+        title: selfTest.title,
+        quizId: selfTest.id,
+        lessonId: "seed_les_1",
+        order: await getNextContentOrder("lessonId", "seed_les_1", prisma)
+      }
+    });
+  }
   await linkQuestions(selfTest.id, [
     ...questionIdsByConcept.Variables,
     ...questionIdsByConcept["Data Types"]
@@ -390,8 +402,7 @@ async function seed() {
       quizTag: "QUALIFYING",
       passingScore: 70,
       attempts: 3,
-      isPublished: true,
-      order: await getNextOrder("lessonId", "seed_les_3", prisma)
+      isPublished: true
     }
   });
   await linkQuestions(qualifying.id, [

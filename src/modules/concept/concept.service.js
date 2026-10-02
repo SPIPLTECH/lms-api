@@ -1,5 +1,6 @@
+const ApiError = require("../../utils/ApiError");
 const prisma = require("../../config/database");
-const { claimSequenceOrder, releaseSequenceOrder } = require("../contents/contentOrder.util");
+const { claimContainerOrder, releaseContainerOrder, moveContainers } = require("../contents/contentOrder.util");
 
 const getConcepts = async (subTopicId, role, userId) => {
   const where = {};
@@ -68,7 +69,7 @@ const createConcept = async (data) => {
   // subtopic's Content, Quizzes and Assignments): appended, or inserted at the
   // requested order with every later item moved down one.
   return prisma.$transaction(async (tx) => {
-    const order = await claimSequenceOrder("subTopicId", data.subTopicId, requestedOrder, tx, "concept");
+    const order = await claimContainerOrder("concept", data.subTopicId, requestedOrder, tx);
     return tx.concept.create({
       data: {
         ...data,
@@ -137,38 +138,30 @@ const deleteConcept = async (conceptId) => {
     });
 
     // 4. Close the concept's slot in its subtopic's common sequence
-    await releaseSequenceOrder("subTopicId", existing.subTopicId, existing.order, tx);
+    await releaseContainerOrder("concept", existing.subTopicId, existing.order, tx);
     return deleted;
   });
 };
 
+/**
+ * Moves concepts within their subtopic's learning sequence, which they share
+ * with the subtopic's Content rows: each listed concept goes to its requested
+ * position, everything else keeps its relative order, and the sequence stays
+ * 1..n. A concept of another subtopic is refused.
+ */
 const reorderConcepts = async (subTopicId, concepts) => {
-  // Two-phase reorder: @@unique([subTopicId, order]) rejects a naive
-  // parallel swap (A->2 while B still holds 2), so first move every
-  // row to a disjoint negative placeholder, then to its final order.
-  const offsetUpdates = concepts.map((concept, index) =>
-    prisma.concept.update({
-      where: {
-        id: concept.id,
-      },
-      data: {
-        order: -1000 - index,
-      },
-    })
-  );
+  const existing = await prisma.concept.findMany({
+    where: { subTopicId },
+    select: { id: true }
+  });
+  const validIds = new Set(existing.map((row) => row.id));
+  if (!concepts.every((row) => validIds.has(row.id))) {
+    throw new ApiError(403, "One or more concepts do not belong to this subtopic.");
+  }
 
-  const finalUpdates = concepts.map((concept) =>
-    prisma.concept.update({
-      where: {
-        id: concept.id,
-      },
-      data: {
-        order: concept.order,
-      },
-    })
+  return prisma.$transaction((tx) =>
+    moveContainers("concept", subTopicId, concepts.map(({ id, order }) => ({ id, order })), tx)
   );
-
-  return prisma.$transaction([...offsetUpdates, ...finalUpdates]);
 };
 
 module.exports = {

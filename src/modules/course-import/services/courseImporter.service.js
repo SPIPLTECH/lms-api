@@ -21,6 +21,8 @@ const contentService = require("../../contents/content.service");
 const quizService = require("../../quizzes/quiz.service");
 const questionService = require("../../questions/question.service");
 const assignmentService = require("../../assignments/assignment.service");
+const { buildSequenceWrapperRows } = require("./sequenceWrappers");
+const { singleParentPlacement, getLastOrder, claimSequenceOrder } = require("../../contents/contentOrder.util");
 
 const UPLOAD_ROOT = path.join(__dirname, "../../../../uploads/course-imports");
 
@@ -532,46 +534,25 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
 
   return await prisma.$transaction(async (tx) => {
     // Helper to calculate target order and shift existing siblings if needed
-    const getPositionalOrderAndShift = async (tableName, parentFilter, pos) => {
-      const existing = await tx[tableName].findMany({
-        where: parentFilter,
-        orderBy: { order: "asc" },
-        select: { id: true, order: true },
-      });
-
-      if (!pos || pos === "AUTO_END" || pos === "END") {
-        const maxOrd = existing.length > 0 ? Math.max(...existing.map((e) => e.order || 0)) : 0;
-        return maxOrd + 1;
-      }
-
-      if (pos === "BEGINNING") {
-        for (const item of existing) {
-          await tx[tableName].update({
-            where: { id: item.id },
-            data: { order: (item.order || 0) + 1 },
-          });
-        }
-        return 1;
-      }
-
-      if (pos.startsWith("AFTER_")) {
+    // A position in the parent's ONE learning sequence (its Content rows and
+    // child containers share it): END appends, BEGINNING is 1, AFTER_<id> is
+    // right after that item. `count` slots are opened for a run of rows.
+    const getPositionalOrderAndShift = async (tableName, parentFilter, pos, count = 1) => {
+      const [parentField, parentId] = Object.entries(parentFilter)[0];
+      let requested = null;
+      if (pos === "BEGINNING") requested = 1;
+      else if (typeof pos === "string" && pos.startsWith("AFTER_")) {
         const afterId = pos.replace("AFTER_", "");
-        const targetItem = existing.find((e) => String(e.id) === String(afterId));
-        const targetOrder = targetItem ? targetItem.order : (existing.length > 0 ? Math.max(...existing.map((e) => e.order || 0)) : 0);
-
-        for (const item of existing) {
-          if (item.order > targetOrder) {
-            await tx[tableName].update({
-              where: { id: item.id },
-              data: { order: item.order + 1 },
-            });
-          }
-        }
-        return targetOrder + 1;
+        const target =
+          (await tx[tableName].findUnique({ where: { id: afterId }, select: { order: true } })) ||
+          (await tx.content.findUnique({ where: { id: afterId }, select: { order: true } }));
+        requested = target ? target.order + 1 : null;
       }
-
-      const maxOrd = existing.length > 0 ? Math.max(...existing.map((e) => e.order || 0)) : 0;
-      return maxOrd + 1;
+      const first = await claimSequenceOrder(parentField, parentId, requested, tx);
+      if (requested !== null) {
+        for (let i = 1; i < count; i++) await claimSequenceOrder(parentField, parentId, first, tx);
+      }
+      return first;
     };
 
     // Normalizes an AI-provided content "type" string to a valid ContentType
@@ -720,11 +701,33 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
     // guarantee); Question only needs course/module; QuizQuestion needs both
     // Quiz and Question, so it runs last, after both of those createMany()
     // calls above it in this same function.
+    //
+    // Each generated quiz is then placed in its level's learning sequence by a
+    // Content(type=QUIZ) row, after that level's content — including content a
+    // parent already had when the generation is applied into it.
     const flushBatch = async (batch) => {
       if (batch.contentRows.length > 0) await tx.content.createMany({ data: batch.contentRows });
+
+      const existingLastOrder = new Map();
+      for (const quiz of batch.quizRows) {
+        const placement = singleParentPlacement(quiz);
+        if (!placement) continue;
+        const key = `${placement.parentField}:${placement.parentId}`;
+        if (existingLastOrder.has(key)) continue;
+        existingLastOrder.set(key, await getLastOrder(placement.parentField, placement.parentId, tx));
+      }
+      const wrapperRows = buildSequenceWrapperRows({
+        // Content rows of this batch are already in the database; the
+        // existing last order covers them.
+        contentRows: [],
+        quizRows: batch.quizRows,
+        existingLastOrder,
+      });
+
       if (batch.quizRows.length > 0) await tx.quiz.createMany({ data: batch.quizRows });
       if (batch.questionRows.length > 0) await tx.question.createMany({ data: batch.questionRows });
       if (batch.quizQuestionRows.length > 0) await tx.quizQuestion.createMany({ data: batch.quizQuestionRows });
+      if (wrapperRows.length > 0) await tx.content.createMany({ data: wrapperRows });
     };
 
     if (scopeUpper === "MODULE") {
@@ -915,7 +918,7 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
         ? generatedData
         : [generatedData];
 
-      const startOrder = await getPositionalOrderAndShift("content", { topicId: targetTopicId }, position);
+      const startOrder = await getPositionalOrderAndShift("content", { topicId: targetTopicId }, position, contents.length);
 
       const rows = contents.map((cDef, cIdx) => buildContentRow(cDef, targetTopicId, startOrder + cIdx, "Content Block"));
       if (rows.length === 0) return [];

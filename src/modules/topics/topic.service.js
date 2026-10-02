@@ -1,5 +1,6 @@
+const ApiError = require("../../utils/ApiError");
 const prisma = require("../../config/database");
-const { claimSequenceOrder, releaseSequenceOrder } = require("../contents/contentOrder.util");
+const { claimContainerOrder, releaseContainerOrder, moveContainers } = require("../contents/contentOrder.util");
 
 const getTopics = async (lessonId, role, userId) => {
   const where = {};
@@ -51,7 +52,7 @@ const createTopic = async (data) => {
   // lesson's Content, Quizzes and Assignments): appended, or inserted at the
   // requested order with every later item moved down one.
   return prisma.$transaction(async (tx) => {
-    const order = await claimSequenceOrder("lessonId", data.lessonId, requestedOrder, tx, "topic");
+    const order = await claimContainerOrder("topic", data.lessonId, requestedOrder, tx);
     return tx.topic.create({
       data: {
         ...data,
@@ -142,38 +143,30 @@ const deleteTopic = async (topicId) => {
     });
 
     // 4. Close the topic's slot in its lesson's common sequence
-    await releaseSequenceOrder("lessonId", existing.lessonId, existing.order, tx);
+    await releaseContainerOrder("topic", existing.lessonId, existing.order, tx);
     return deleted;
   });
 };
 
+/**
+ * Moves topics within their lesson's learning sequence, which they share
+ * with the lesson's Content rows: each listed topic goes to its requested
+ * position, everything else keeps its relative order, and the sequence stays
+ * 1..n. A topic of another lesson is refused.
+ */
 const reorderTopics = async (lessonId, topics) => {
-  // Two-phase reorder: @@unique([lessonId, order]) rejects a naive
-  // parallel swap (A->2 while B still holds 2), so first move every
-  // row to a disjoint negative placeholder, then to its final order.
-  const offsetUpdates = topics.map((topic, index) =>
-    prisma.topic.update({
-      where: {
-        id: topic.id,
-      },
-      data: {
-        order: -1000 - index,
-      },
-    })
-  );
+  const existing = await prisma.topic.findMany({
+    where: { lessonId },
+    select: { id: true }
+  });
+  const validIds = new Set(existing.map((row) => row.id));
+  if (!topics.every((row) => validIds.has(row.id))) {
+    throw new ApiError(403, "One or more topics do not belong to this lesson.");
+  }
 
-  const finalUpdates = topics.map((topic) =>
-    prisma.topic.update({
-      where: {
-        id: topic.id,
-      },
-      data: {
-        order: topic.order,
-      },
-    })
+  return prisma.$transaction((tx) =>
+    moveContainers("topic", lessonId, topics.map(({ id, order }) => ({ id, order })), tx)
   );
-
-  return prisma.$transaction([...offsetUpdates, ...finalUpdates]);
 };
 
 module.exports = {

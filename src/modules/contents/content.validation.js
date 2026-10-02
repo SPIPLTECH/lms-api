@@ -12,6 +12,7 @@ const VALID_CONTENT_TYPES = [
   "EXTERNAL_LINK",
   "HTML",
   "CODE",
+  "QUIZ",
   "ASSIGNMENT",
   "CODING_EXERCISE",
   "SCORM",
@@ -42,6 +43,8 @@ const createContentSchema = Joi.object({
   externalUrl: Joi.string().optional().allow(null, ""),
   duration: Joi.number().integer().min(0).optional().allow(null),
   data: Joi.object().optional().allow(null),
+  quizId: Joi.string().optional().allow(null, ""),
+  assignmentId: Joi.string().optional().allow(null, ""),
   parentContentId: Joi.string().optional().allow(null, ""),
 })
   // Exactly one parent, now across six levels. Existing three-level callers
@@ -64,10 +67,39 @@ const updateContentSchema = Joi.object({
   externalUrl: Joi.string().optional().allow(null, ""),
   duration: Joi.number().integer().min(0).optional().allow(null),
   data: Joi.object().optional().allow(null),
+  quizId: Joi.string().optional().allow(null, ""),
+  assignmentId: Joi.string().optional().allow(null, ""),
   parentContentId: Joi.string().optional().allow(null, ""),
 });
+
+// One parent's Content sequence. Either move some rows to positions
+// ({ contents: [{ id, order }] } — a swap, or a full list) or give the
+// parent's complete new order ({ parentType, parentId, orderedIds }).
+const reorderContentsSchema = Joi.alternatives().try(
+  Joi.object({
+    contents: Joi.array()
+      .items(
+        Joi.object({
+          id: Joi.string().required(),
+          order: Joi.number().integer().min(0).required(),
+        }).unknown(true)
+      )
+      .min(1)
+      .required(),
+    // The parent whose sequence the ids belong to — needed when a moved id
+    // is a child container (they share the sequence with Content rows).
+    parentType: Joi.string().valid("course", "module", "lesson", "topic", "subTopic", "concept").optional(),
+    parentId: Joi.string().optional(),
+  }),
+  Joi.object({
+    parentType: Joi.string().valid("course", "module", "lesson", "topic", "subTopic", "concept").required(),
+    parentId: Joi.string().required(),
+    orderedIds: Joi.array().items(Joi.string()).min(1).required(),
+  })
+);
 
 module.exports = {
   createContentSchema,
   updateContentSchema,
+  reorderContentsSchema,
 };

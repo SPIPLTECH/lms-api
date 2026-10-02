@@ -29,13 +29,9 @@ const { upload, sanitizeSvgUpload } = require(
 const validate = require("../../middleware/joiValidation.middleware");
 const {
   createContentSchema,
-  updateContentSchema
+  updateContentSchema,
+  reorderContentsSchema
 } = require("./content.validation");
-// Same PDF-only rules as an Assignment-model submission.
-const {
-  submitAssignmentSchema,
-  gradeSubmissionSchema
-} = require("../assignments/assignment.validation");
 
 // File upload endpoint for DOCUMENT / PRESENTATION content
 router.post(
@@ -68,6 +64,9 @@ router.post(
   }
 );
 
+// THE reorder for a learning sequence: ordinary content, quizzes and
+// assignments are all Content rows, so this one endpoint orders all of them.
+// Ownership is checked in the service, against the parent being reordered.
 router.patch(
   "/reorder",
   verifyToken,
@@ -75,6 +74,7 @@ router.patch(
     "ADMIN",
     "INSTRUCTOR"
   ]),
+  validate(reorderContentsSchema),
   controller.reorderContents
 );
 
@@ -85,56 +85,11 @@ router.get(
   controller.getContents
 );
 
-// Instructor: every ASSIGNMENT content block in their own courses. Must stay
-// above GET /:contentId, which would otherwise capture "assignments".
-router.get(
-  "/assignments",
-  verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  controller.getAssignmentContents
-);
-
-// Instructor: student submissions for one ASSIGNMENT content block they own.
-router.get(
-  "/:contentId/submissions",
-  verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  verifyContentOwnership,
-  controller.getContentSubmissions
-);
-
-// Instructor: grade one student submission for an ASSIGNMENT content block.
-router.patch(
-  "/:contentId/submissions/:submissionId/grade",
-  verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  verifyContentOwnership,
-  validate(gradeSubmissionSchema),
-  controller.gradeContentSubmission
-);
-
 router.get(
   "/:contentId",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
   controller.getContentById
-);
-
-// Student submission for an ASSIGNMENT content block (lesson-composer
-// assignment). Enrollment and content type are checked in the service.
-router.get(
-  "/:contentId/submission",
-  verifyToken,
-  checkRole(["STUDENT"]),
-  controller.getMySubmission
-);
-
-router.post(
-  "/:contentId/submit",
-  verifyToken,
-  checkRole(["STUDENT"]),
-  validate(submitAssignmentSchema),
-  controller.submitContent
 );
 
 router.post(

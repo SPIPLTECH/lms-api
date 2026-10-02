@@ -8,6 +8,7 @@ const { marked } = require("marked");
 const prisma = require("../../../config/database");
 const ApiError = require("../../../utils/ApiError");
 const { normalizeQuestion } = require("../../../utils/helpers/question.helper");
+const { sequenceImportedCourse } = require("./sequenceWrappers");
 
 /**
  * Importer for *physical* course packages — ZIPs where the Course -> Modules ->
@@ -913,9 +914,11 @@ const importPhysicalPackage = async (canonicalJson, instructorId) => {
       const addAssignments = (assignments, parent) => {
         for (const assignmentDef of assignments || []) {
           assignmentRows.push({
+            // Pre-generated: the assignment's Content row references it.
+            id: crypto.randomUUID(),
             title: assignmentDef.title,
             description: assignmentDef.description,
-            dueDate: new Date(assignmentDef.dueDate),
+            dueDate: assignmentDef.dueDate ? new Date(assignmentDef.dueDate) : null,
             marks: assignmentDef.marks,
             assessmentType: assignmentDef.assessmentType,
             estimatedTime: assignmentDef.estimatedTime ?? 0,
@@ -1004,6 +1007,19 @@ const importPhysicalPackage = async (canonicalJson, instructorId) => {
         }
       }
 
+      // One learning sequence per parent: the level's content, then its child
+      // containers, then its quizzes/assignments (placed by Content rows).
+      const wrapperRows = sequenceImportedCourse({
+        containers: [
+          { kind: "module", rows: moduleRows },
+          { kind: "lesson", rows: lessonRows },
+          { kind: "topic", rows: topicRows },
+        ],
+        contentRows,
+        quizRows,
+        assignmentRows,
+      });
+
       if (moduleRows.length) await tx.module.createMany({ data: moduleRows });
       if (lessonRows.length) await tx.lesson.createMany({ data: lessonRows });
       if (topicRows.length) await tx.topic.createMany({ data: topicRows });
@@ -1012,6 +1028,7 @@ const importPhysicalPackage = async (canonicalJson, instructorId) => {
       if (quizRows.length) await tx.quiz.createMany({ data: quizRows });
       if (questionRows.length) await tx.question.createMany({ data: questionRows });
       if (quizQuestionRows.length) await tx.quizQuestion.createMany({ data: quizQuestionRows });
+      if (wrapperRows.length) await tx.content.createMany({ data: wrapperRows });
 
       return courseRecord;
     },

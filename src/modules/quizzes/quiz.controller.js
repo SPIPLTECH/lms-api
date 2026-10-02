@@ -42,6 +42,14 @@ const getQuizById = async (req, res, next) => {
         where: { userId: req.user.id },
       });
       studentId = student?.id ?? null;
+      // A sequence quiz opens only once the student has reached it (and only
+      // for a student enrolled in its course). Standalone quizzes — qualifying
+      // tests, batch assessments, practice quizzes — are not gated here.
+      if (studentId) {
+        await require("../progress/progress.service").assertSequenceItemAccessible(studentId, {
+          quizId: req.params.quizId,
+        });
+      }
     }
 
     const quiz = await quizService.getQuizById(req.params.quizId, req.user?.role, studentId);
@@ -283,15 +291,6 @@ const generateSelfAssessmentQuiz = async (req, res, next) => {
   }
 };
 
-const reorderQuizzes = async (req, res, next) => {
-  try {
-    const result = await quizService.reorderQuizzes(req.body.quizzes);
-    res.json({ success: true, data: result });
-  } catch (error) {
-    next(error);
-  }
-};
-
 module.exports = {
   getQuizzes,
   getQuizById,
@@ -306,5 +305,4 @@ module.exports = {
   removeQuestionFromQuiz,
   reorderQuizQuestions,
   updateQuizQuestionMarks,
-  reorderQuizzes,
 };

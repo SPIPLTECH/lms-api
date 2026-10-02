@@ -144,15 +144,6 @@ const gradeSubmission = async (req, res, next) => {
     }
 };
 
-const reorderAssignments = async (req, res, next) => {
-    try {
-        const result = await assignmentService.reorderAssignments(req.body.assignments);
-        res.json({ success: true, data: result });
-    } catch (error) {
-        next(error);
-    }
-};
-
 module.exports = {
     getAssignments,
     getAssignmentById,
@@ -162,5 +153,4 @@ module.exports = {
     createAssignment,
     updateAssignment,
     deleteAssignment,
-    reorderAssignments,
 };

@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const prisma = require("../../../config/database");
 const ApiError = require("../../../utils/ApiError");
 const { parseCourseJson, buildValidationReport, toDbQuizTag, LEVELS } = require("./flexibleCourseJson.service");
+const { sequenceImportedCourse } = require("./sequenceWrappers");
 
 /**
  * Validates that a relative package path is safe and does not escape the extracted job directory.
@@ -245,9 +246,11 @@ async function importV2Manifest(canonicalJson, instructorId) {
     const addAssignment = (assignmentDef, parent) => {
       const toDate = (value) => (value ? new Date(value) : null);
       assignmentRows.push({
+        // Pre-generated: the assignment's Content row references it.
+        id: crypto.randomUUID(),
         title: assignmentDef.title,
         description: assignmentDef.description ?? null,
-        dueDate: new Date(assignmentDef.dueDate),
+        dueDate: toDate(assignmentDef.dueDate),
         startDate: toDate(assignmentDef.startDate),
         availableFrom: toDate(assignmentDef.availableFrom),
         availableUntil: toDate(assignmentDef.availableUntil),
@@ -272,7 +275,8 @@ async function importV2Manifest(canonicalJson, instructorId) {
         title: quizDef.title,
         description: quizDef.description ?? null,
         quizTag,
-        // Shared with the level's content: after its content and children.
+        // Where the package wants it in the level's sequence; becomes its
+        // Content row's order (see buildSequenceWrapperRows), never Quiz.order.
         order: quizDef.order,
         passingScore: quizDef.passingScore ?? 50,
         // A Self-Test is never timed, whatever the package claims.
@@ -362,6 +366,19 @@ async function importV2Manifest(canonicalJson, instructorId) {
       }
     }
 
+    // One learning sequence per parent: the level's content, then its child
+    // containers, then its quizzes/assignments (placed by Content rows).
+    const wrapperRows = sequenceImportedCourse({
+      containers: [
+        { kind: "module", rows: moduleRows },
+        { kind: "lesson", rows: lessonRows },
+        { kind: "topic", rows: topicRows },
+      ],
+      contentRows,
+      quizRows,
+      assignmentRows,
+    });
+
     // 3. One batched insert per table, parents before children
     if (moduleRows.length > 0) await tx.module.createMany({ data: moduleRows });
     if (lessonRows.length > 0) await tx.lesson.createMany({ data: lessonRows });
@@ -371,6 +388,7 @@ async function importV2Manifest(canonicalJson, instructorId) {
     if (questionRows.length > 0) await tx.question.createMany({ data: questionRows });
     if (quizQuestionRows.length > 0) await tx.quizQuestion.createMany({ data: quizQuestionRows });
     if (assignmentRows.length > 0) await tx.assignment.createMany({ data: assignmentRows });
+    if (wrapperRows.length > 0) await tx.content.createMany({ data: wrapperRows });
 
     return courseRecord;
   }, {

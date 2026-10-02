@@ -1,46 +1,46 @@
 const prisma = require("../../config/database");
 
 /**
- * ONE common sequence per parent.
+ * ONE learning sequence per parent, in the order things were added.
  *
- * Every item that belongs to the same parent — its Content, Quiz and
- * Assignment rows AND its child hierarchy entity (Module under a Course,
- * Lesson under a Module, Topic under a Lesson, SubTopic under a Topic,
- * Concept under a SubTopic) — shares a single `order` sequence, in the order
- * the items were added:
+ * Everything a parent holds takes one place in one sequence: its Content rows
+ * — ordinary content, Content(type=QUIZ) and Content(type=ASSIGNMENT), which
+ * is how a Quiz or an Assignment is placed — AND its child containers
+ * (Module under a Course, Lesson under a Module, Topic under a Lesson,
+ * SubTopic under a Topic, Concept under a SubTopic). Example, a Course:
  *
- *   Module: 1 Content-1, 2 Content-2, 3 Quiz-1, 4 Content-3, 5 Content-4,
- *           6 Quiz-2, 7 Assignment-1, 8 Lesson-1, 9 Lesson-2, 10 Content-5
+ *   1 VIDEO, 2 Module "Introduction to Java", 3 IMAGE, 4 QUIZ, 5 ASSIGNMENT,
+ *   6 Module "Variables"
  *
- * There are no per-type counters and no per-type number bands: a new item is
- * appended after the parent's last item of ANY type, an item inserted at a
- * position moves every later item of ANY type down one, and removing an item
- * moves every later item of ANY type up one, so `order` is always the item's
- * position in its parent's sequence. The same rule applies independently at
- * every level.
+ * The same rule holds independently at every level: Course, Module, Lesson,
+ * Topic, SubTopic and Concept (a Concept has no child containers, so its
+ * sequence is its Content rows alone).
  *
- * The rows still live in separate tables (each with its own per-parent unique
- * index), so uniqueness ACROSS types is maintained here: every sequence change
- * runs inside a transaction holding a per-parent advisory lock.
+ * A new item is appended after the parent's last item of any kind; an item
+ * inserted at position K moves every later item (content or container) down
+ * one; removing an item moves every later item up one. So Content.order and a
+ * container's order are always positions in the parent's one sequence.
+ *
+ * Quiz.order and Assignment.order are not used: a quiz/assignment's position
+ * is its Content row's order.
+ *
+ * The members live in two tables (Content and the child container's table),
+ * each with its own per-parent unique (parent, order) index, so uniqueness
+ * ACROSS them is kept here: every change runs inside a transaction holding a
+ * per-parent advisory lock, and rows are parked far below zero while a range
+ * moves so no unique index ever sees a transient duplicate.
  */
 
-// The sequence value before anything has been added to a parent. The first
-// item appended to an empty parent therefore gets EMPTY_SEQUENCE_ORDER + 1.
 const EMPTY_SEQUENCE_ORDER = 0;
 
-// Most specific parent first. Quiz rows may carry every ancestor id, so a row
-// belongs to the sequence of its most specific parent only.
-const PARENT_FIELDS_MOST_SPECIFIC_FIRST = [
-  "conceptId",
-  "subTopicId",
-  "topicId",
-  "lessonId",
-  "moduleId",
-  "courseId",
-];
+// Most specific parent first. A Content row has exactly one parent, but Quiz
+// and Assignment rows may still carry ancestor ids, so a placement is always
+// read as its most specific parent.
+const PARENT_FIELDS_MOST_SPECIFIC_FIRST = ["conceptId", "subTopicId", "topicId", "lessonId", "moduleId", "courseId"];
+const PARENT_FIELDS = [...PARENT_FIELDS_MOST_SPECIFIC_FIRST].reverse();
 
-// For each parent field, the parent fields below it — a Content/Quiz/
-// Assignment row is in this parent's sequence only when all of these are null.
+// For each parent field, the parent fields below it — a Content row is in this
+// parent's sequence only when all of these are null.
 const DEEPER_PARENT_FIELDS = {
   courseId: ["moduleId", "lessonId", "topicId", "subTopicId", "conceptId"],
   moduleId: ["lessonId", "topicId", "subTopicId", "conceptId"],
@@ -50,8 +50,8 @@ const DEEPER_PARENT_FIELDS = {
   conceptId: [],
 };
 
-// The child hierarchy entity that sits in each parent's sequence.
-const CHILD_ENTITY_BY_PARENT_FIELD = {
+// The child container that shares each parent's sequence.
+const CHILD_KIND_OF_PARENT = {
   courseId: "module",
   moduleId: "lesson",
   lessonId: "topic",
@@ -60,12 +60,30 @@ const CHILD_ENTITY_BY_PARENT_FIELD = {
   conceptId: null,
 };
 
-// Items are parked this far below zero while a range of the sequence moves,
-// so no row ever collides with a neighbour mid-update (each table has a
-// per-parent unique (parent, order) index). Real order values stay far above
-// PARKED_BELOW, which is how the parked rows are found again.
+// Container -> the field naming its parent.
+const CONTAINER_PARENT_FIELD = {
+  module: "courseId",
+  lesson: "moduleId",
+  topic: "lessonId",
+  subTopic: "topicId",
+  concept: "subTopicId",
+};
+
+const QUIZ_CONTENT_TYPE = "QUIZ";
+const ASSIGNMENT_CONTENT_TYPE = "ASSIGNMENT";
+const ASSESSMENT_CONTENT_TYPES = new Set([QUIZ_CONTENT_TYPE, ASSIGNMENT_CONTENT_TYPE]);
+
+/** True for a Content row that wraps a Quiz or an Assignment. */
+const isAssessmentContent = (row) => ASSESSMENT_CONTENT_TYPES.has(row?.type);
+
 const PARK_OFFSET = 1_000_000_000;
 const PARKED_BELOW = -500_000_000;
+
+function badRequest(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+}
 
 function assertParentField(parentField) {
   if (!Object.prototype.hasOwnProperty.call(DEEPER_PARENT_FIELDS, parentField)) {
@@ -79,33 +97,45 @@ function mostSpecificParentField(row) {
 }
 
 /**
- * Every table that holds items of one parent's sequence, with the filter that
- * selects exactly that parent's items from it.
+ * The single-parent placement for a Content row standing for `entity` (a Quiz
+ * or Assignment, which may carry ancestor ids): only its most specific parent
+ * is set, every other parent field is null.
  */
-function sequenceMembers(parentField, parentId) {
-  assertParentField(parentField);
-
-  const ownItemWhere = { [parentField]: parentId };
-  for (const deeper of DEEPER_PARENT_FIELDS[parentField]) ownItemWhere[deeper] = null;
-
-  const members = [
-    { kind: "content", delegate: "content", where: ownItemWhere },
-    { kind: "quiz", delegate: "quiz", where: ownItemWhere },
-    { kind: "assignment", delegate: "assignment", where: ownItemWhere },
-  ];
-
-  const childDelegate = CHILD_ENTITY_BY_PARENT_FIELD[parentField];
-  if (childDelegate) {
-    members.push({ kind: childDelegate, delegate: childDelegate, where: { [parentField]: parentId } });
-  }
-
-  return members;
+function singleParentPlacement(entity) {
+  const parentField = mostSpecificParentField(entity);
+  if (!parentField) return null;
+  const data = {};
+  for (const field of PARENT_FIELDS) data[field] = field === parentField ? entity[parentField] : null;
+  return { parentField, parentId: entity[parentField], data };
 }
 
 /**
- * Serializes sequence changes for one parent until the surrounding
- * transaction ends, so two concurrent adds can never both take the same
- * position. A no-op for a client without raw query support.
+ * The tables that hold one parent's sequence, each with the filter selecting
+ * that parent's rows: its own Content rows, and its child containers.
+ */
+function sequenceMembers(parentField, parentId) {
+  assertParentField(parentField);
+  if (!parentId) throw new Error(`A sequence needs a ${parentField}`);
+  const ownContent = { [parentField]: parentId };
+  for (const deeper of DEEPER_PARENT_FIELDS[parentField]) ownContent[deeper] = null;
+
+  const members = [{ kind: "content", delegate: "content", where: ownContent }];
+  const childKind = CHILD_KIND_OF_PARENT[parentField];
+  if (childKind) members.push({ kind: childKind, delegate: childKind, where: { [parentField]: parentId } });
+  return members;
+}
+
+/** The parent whose sequence a container belongs to. */
+function containerParent(kind, row) {
+  const parentField = CONTAINER_PARENT_FIELD[kind];
+  if (!parentField) throw new Error(`Unknown container kind: ${kind}`);
+  return { parentField, parentId: row?.[parentField] };
+}
+
+/**
+ * Serializes changes to one parent's sequence until the surrounding
+ * transaction ends. A no-op for a client without raw query support (the
+ * in-memory test fake).
  */
 async function lockParentSequence(client, parentField, parentId) {
   if (typeof client?.$queryRaw !== "function") return;
@@ -113,58 +143,35 @@ async function lockParentSequence(client, parentField, parentId) {
   await client.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))::text AS locked`;
 }
 
-/** The highest `order` in a parent's sequence across every item type, or EMPTY_SEQUENCE_ORDER. */
+/** The highest order in a parent's sequence across Content and child containers, or EMPTY_SEQUENCE_ORDER. */
 async function getLastOrder(parentField, parentId, client = prisma) {
   let last = EMPTY_SEQUENCE_ORDER;
   for (const member of sequenceMembers(parentField, parentId)) {
-    const result = await client[member.delegate].aggregate({
-      where: member.where,
-      _max: { order: true },
-    });
+    const result = await client[member.delegate].aggregate({ where: member.where, _max: { order: true } });
     const value = result?._max?.order;
     if (typeof value === "number" && value > last) last = value;
   }
   return last;
 }
 
-/** The lowest `order` in a parent's sequence across every item type, or null when the parent is empty. */
-async function getFirstOrder(parentField, parentId, client = prisma) {
-  let first = null;
-  for (const member of sequenceMembers(parentField, parentId)) {
-    const result = await client[member.delegate].aggregate({
-      where: member.where,
-      _min: { order: true },
-    });
-    const value = result?._min?.order;
-    if (typeof value === "number" && (first === null || value < first)) first = value;
-  }
-  return first;
-}
-
-/**
- * The order for an item appended to a parent: one past the parent's last
- * item of ANY type (Content, Quiz, Assignment or child entity).
- */
+/** The order an appended item takes: one past the parent's last item of any kind. */
 async function getNextOrder(parentField, parentId, client = prisma) {
   return (await getLastOrder(parentField, parentId, client)) + 1;
 }
 
 /**
- * Moves every item of a parent's sequence whose order is >= `fromOrder`
- * by `delta` (+1 to open a slot, -1 to close one), across all item types.
- * Two phases per table so the per-parent unique indexes never see a
- * transient duplicate.
+ * Moves every member of a parent's sequence whose order is >= `fromOrder` by
+ * `delta` (+1 opens a slot, -1 closes one), in both tables. Parked first, so
+ * the unique indexes never see two rows on one position.
  */
-async function moveSequenceRange(parentField, parentId, fromOrder, delta, client) {
+async function shiftRange(parentField, parentId, fromOrder, delta, client) {
   const members = sequenceMembers(parentField, parentId);
-
   for (const member of members) {
     await client[member.delegate].updateMany({
       where: { ...member.where, order: { gte: fromOrder } },
       data: { order: { decrement: PARK_OFFSET } },
     });
   }
-
   for (const member of members) {
     await client[member.delegate].updateMany({
       where: { ...member.where, order: { lt: PARKED_BELOW } },
@@ -173,235 +180,186 @@ async function moveSequenceRange(parentField, parentId, fromOrder, delta, client
   }
 }
 
-/**
- * COURSE LEVEL ONLY: the Course sequence is four strict groups —
- *
- *   Course Content -> Modules -> Course Assignments -> Course Quizzes
- *
- * A Course-level Assignment is the work a student is given once every Module
- * of the course is done, so it may never sit before or between Modules, and
- * the Quizzes close the course. Inside a group items keep their own relative
- * order. This applies at Course level only: a Module/Lesson/Topic/SubTopic/
- * Concept sequence stays plain insertion order across all four types.
- */
-const COURSE_PARENT_FIELD = "courseId";
-const COURSE_GROUP_RANK = { content: 1, module: 2, assignment: 3, quiz: 4 };
-const COURSE_GROUP_ORDER_MESSAGE =
-  "Course-level items must stay grouped in order: content, then modules, then assignments, then quizzes.";
-
-const isCourseLevel = (parentField) => parentField === COURSE_PARENT_FIELD;
-const courseGroupRank = (kind) => COURSE_GROUP_RANK[kind] ?? COURSE_GROUP_RANK.content;
-
-/**
- * Where an item of `kind` may land in a Course's sequence:
- *
- *  - `groupEnd`: the slot just past its group's last item — the order the
- *    first item of a LATER group holds — or null when no later group has an
- *    item, in which case the item is appended to the sequence.
- *  - `startsAfter` / `hasEarlier`: the last order held by an EARLIER group,
- *    so a requested position can be clamped into this item's own group.
- */
-async function getCourseGroupBounds(courseId, kind, client) {
-  const rank = courseGroupRank(kind);
-  let startsAfter = EMPTY_SEQUENCE_ORDER;
-  let hasEarlier = false;
-  let groupEnd = null;
-
-  for (const member of sequenceMembers(COURSE_PARENT_FIELD, courseId)) {
-    const memberRank = courseGroupRank(member.kind);
-    if (memberRank === rank) continue;
-    const isEarlier = memberRank < rank;
-    const result = await client[member.delegate].aggregate({
-      where: member.where,
-      ...(isEarlier ? { _max: { order: true } } : { _min: { order: true } }),
-    });
-    const value = isEarlier ? result?._max?.order : result?._min?.order;
-    if (typeof value !== "number") continue;
-    if (isEarlier) {
-      hasEarlier = true;
-      if (value > startsAfter) startsAfter = value;
-    } else if (groupEnd === null || value < groupEnd) {
-      groupEnd = value;
-    }
-  }
-
-  return { startsAfter, hasEarlier, groupEnd };
-}
-
-/** A requested position must be a whole number; callers send it straight from the API. */
+/** A requested position must be a whole number; callers pass it straight from the API. */
 function assertIntegerOrder(requestedOrder) {
   const requested = Number(requestedOrder);
-  if (!Number.isInteger(requested)) {
-    const error = new Error("order must be an integer.");
-    error.statusCode = 400;
-    throw error;
-  }
+  if (!Number.isInteger(requested)) throw badRequest("order must be an integer.");
   return requested;
 }
 
+const hasRequestedOrder = (requestedOrder) =>
+  requestedOrder !== undefined && requestedOrder !== null && requestedOrder !== "";
+
 /**
- * Resolves the position a new item takes in its parent's sequence and makes
- * room for it.
- *
- * With no requested order the item is appended. With a requested order the
- * item is inserted at that position: every item of any type at or after it
- * moves down one. Positions never open a gap: past the end is an append, and
- * before the first item is the slot directly in front of it (so 0 is a valid
- * position in front of a sequence that starts at 1, and needs no shifting).
- *
- * At Course level the group rule above overrides the requested position: the
- * item lands at the end of its OWN group (Content before Modules before
- * Assignments before Quizzes), and a requested position is clamped into that
- * group instead of being allowed to cross a group boundary.
- *
- * Must run inside a transaction; takes the parent's sequence lock itself.
- * @param {string} [kind] the item's type ("content" | "module" | "assignment" |
- *   "quiz" | a child entity) — only the Course-level group rule reads it
- * @returns {Promise<number>} the order the new item must be created with
+ * Resolves the position a new item (Content row or child container) takes in
+ * its parent's sequence and makes room for it:
+ *  - no requested order: appended after the last item of any kind;
+ *  - requested K: inserted at K (clamped to 1..last+1); every later item of
+ *    any kind moves down one.
+ * Must run inside a transaction; takes the sequence lock itself.
+ * @returns {Promise<number>} the order the new row must be created with
  */
-async function claimSequenceOrder(parentField, parentId, requestedOrder, client, kind = null) {
+async function claimSequenceOrder(parentField, parentId, requestedOrder, client) {
   await lockParentSequence(client, parentField, parentId);
-
   const next = await getNextOrder(parentField, parentId, client);
-  const hasRequest = requestedOrder !== undefined && requestedOrder !== null && requestedOrder !== "";
-
-  if (isCourseLevel(parentField)) {
-    const { startsAfter, hasEarlier, groupEnd } = await getCourseGroupBounds(parentId, kind, client);
-    // The end of this item's own group: the slot the next group's first item
-    // holds, or the end of the sequence when no later group has anything.
-    const endOfGroup = groupEnd === null ? next : groupEnd;
-
-    if (!hasRequest) {
-      if (endOfGroup < next) await moveSequenceRange(parentField, parentId, endOfGroup, +1, client);
-      return endOfGroup;
-    }
-
-    const requested = assertIntegerOrder(requestedOrder);
-    const first = await getFirstOrder(parentField, parentId, client);
-    const lowest = hasEarlier ? startsAfter + 1 : first === null ? 0 : Math.max(first - 1, 0);
-    const position = Math.min(Math.max(requested, lowest), endOfGroup);
-    if (first !== null && position >= first && position < next) {
-      await moveSequenceRange(parentField, parentId, position, +1, client);
-    }
-    return position;
-  }
-
-  if (!hasRequest) return next;
+  if (!hasRequestedOrder(requestedOrder)) return next;
 
   const requested = assertIntegerOrder(requestedOrder);
-  const first = await getFirstOrder(parentField, parentId, client);
-  const lowest = first === null ? 0 : Math.max(first - 1, 0);
-  const position = Math.min(Math.max(requested, lowest), next);
-  if (first !== null && position >= first && position < next) {
-    await moveSequenceRange(parentField, parentId, position, +1, client);
-  }
+  const position = Math.min(Math.max(requested, 1), next);
+  if (position < next) await shiftRange(parentField, parentId, position, +1, client);
   return position;
 }
 
 /**
- * COURSE LEVEL ONLY: rejects a reorder that would break the Course groups —
- * every group must sit entirely after the groups before it. Moving items
- * WITHIN a group is always allowed. `pendingOrders` maps "<kind>:<id>" to the
- * order the caller wants to write.
- */
-async function assertCourseGroupsOrdered(courseId, pendingOrders, client = prisma) {
-  // Each group's span of orders, once the pending changes are applied.
-  const spanByRank = new Map();
-  for (const member of sequenceMembers(COURSE_PARENT_FIELD, courseId)) {
-    const rows = await client[member.delegate].findMany({
-      where: member.where,
-      select: { id: true, order: true },
-    });
-    const rank = courseGroupRank(member.kind);
-    for (const row of rows) {
-      const pending = pendingOrders.get(`${member.kind}:${row.id}`);
-      const order = pending === undefined ? row.order : pending;
-      if (typeof order !== "number") continue;
-      const span = spanByRank.get(rank) || { min: order, max: order };
-      span.min = Math.min(span.min, order);
-      span.max = Math.max(span.max, order);
-      spanByRank.set(rank, span);
-    }
-  }
-
-  // Adjacent groups are enough: spans that each start after the previous one
-  // ends are ordered transitively.
-  const ranks = [...spanByRank.keys()].sort((a, b) => a - b);
-  for (let i = 1; i < ranks.length; i++) {
-    if (spanByRank.get(ranks[i]).min <= spanByRank.get(ranks[i - 1]).max) {
-      const error = new Error(COURSE_GROUP_ORDER_MESSAGE);
-      error.statusCode = 400;
-      throw error;
-    }
-  }
-}
-
-/**
- * Closes the slot a removed item held, so every later item of any type moves
- * up one and `order` keeps matching position. Call after the item is deleted,
- * in the same transaction. A row with no order (legacy) leaves nothing to close.
+ * Closes the slot a removed item held: every later item of any kind moves up
+ * one. Call after the row is deleted, in the same transaction.
  */
 async function releaseSequenceOrder(parentField, parentId, removedOrder, client) {
   if (!parentField || !parentId || typeof removedOrder !== "number") return;
   await lockParentSequence(client, parentField, parentId);
-  await moveSequenceRange(parentField, parentId, removedOrder + 1, -1, client);
+  await shiftRange(parentField, parentId, removedOrder + 1, -1, client);
+}
+
+/** A parent's sequence members in their current order, tagged with their table. */
+async function loadSequence(parentField, parentId, client) {
+  const rows = [];
+  for (const member of sequenceMembers(parentField, parentId)) {
+    const found = await client[member.delegate].findMany({
+      where: member.where,
+      select: { id: true, order: true, createdAt: true },
+    });
+    for (const row of found) rows.push({ ...row, delegate: member.delegate });
+  }
+  // A Content row and a container on the same position (legacy data) keep a
+  // stable order: Content first, then insertion time.
+  const rank = (row) => (row.delegate === "content" ? 0 : 1);
+  return rows.sort(
+    (a, b) =>
+      (a.order ?? 0) - (b.order ?? 0) ||
+      rank(a) - rank(b) ||
+      new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
 }
 
 /**
- * COURSE LEVEL ONLY: guards a reorder request before it is written.
- *
- * `rows` is the caller's [{ id, order }] payload for one item type. Any row
- * that turns out to be Course-direct is checked against the Course group rule,
- * with every other Course item left where it is; rows at other levels are
- * ignored, so Module/Lesson/Topic/SubTopic/Concept reordering is unaffected.
+ * Rewrites a parent's sequence to exactly `orderedIds` (Content and container
+ * ids alike), numbered 1..n. The ids must be the parent's current members,
+ * each exactly once — anything else is a 400.
  */
-async function assertCourseReorderAllowed(kind, rows, client = prisma) {
-  if (!Array.isArray(rows) || rows.length === 0) return;
+async function applySequenceOrdering(parentField, parentId, orderedIds, client) {
+  await lockParentSequence(client, parentField, parentId);
+  const rows = await loadSequence(parentField, parentId, client);
+  const byId = new Map(rows.map((row) => [row.id, row]));
 
-  const delegate = kind === "module" ? "module" : kind;
-  const ids = rows.map((row) => row.id).filter(Boolean);
-  if (ids.length === 0) return;
-
-  const stored = await client[delegate].findMany({
-    where: { id: { in: ids } },
-    select: {
-      id: true,
-      courseId: true,
-      ...(kind === "module"
-        ? {}
-        : { moduleId: true, lessonId: true, topicId: true, subTopicId: true, conceptId: true }),
-    },
-  });
-
-  const requestedById = new Map(rows.map((row) => [row.id, row.order]));
-  const byCourse = new Map();
-  for (const row of stored) {
-    const isCourseDirect = kind === "module" || mostSpecificParentField(row) === COURSE_PARENT_FIELD;
-    if (!isCourseDirect || !row.courseId) continue;
-    if (!byCourse.has(row.courseId)) byCourse.set(row.courseId, new Map());
-    byCourse.get(row.courseId).set(`${kind}:${row.id}`, requestedById.get(row.id));
+  if (new Set(orderedIds).size !== orderedIds.length) throw badRequest("A reorder may not list an item twice.");
+  if (orderedIds.length !== rows.length || orderedIds.some((id) => !byId.has(id))) {
+    throw badRequest("A reorder must list exactly the items of one parent.");
   }
 
-  for (const [courseId, pendingOrders] of byCourse) {
-    await assertCourseGroupsOrdered(courseId, pendingOrders, client);
+  const changes = orderedIds
+    .map((id, index) => ({ id, order: index + 1, delegate: byId.get(id).delegate }))
+    .filter((change) => byId.get(change.id).order !== change.order);
+  if (changes.length === 0) return orderedIds.map((id, index) => ({ id, order: index + 1 }));
+
+  // Park only the rows that move, then write their final positions.
+  for (const delegate of new Set(changes.map((change) => change.delegate))) {
+    await client[delegate].updateMany({
+      where: { id: { in: changes.filter((change) => change.delegate === delegate).map((change) => change.id) } },
+      data: { order: { decrement: PARK_OFFSET } },
+    });
   }
+  for (const change of changes) {
+    await client[change.delegate].update({ where: { id: change.id }, data: { order: change.order } });
+  }
+  return orderedIds.map((id, index) => ({ id, order: index + 1 }));
 }
+
+/**
+ * Moves some members of a parent's sequence to requested 1-based positions;
+ * every other member keeps its relative order. `moves` is [{ id, order }] —
+ * Content or container ids — the shape the Course Map sends for a swap. The
+ * result is always a gap-free 1..n sequence.
+ */
+async function moveSequenceItems(parentField, parentId, moves, client) {
+  if (!Array.isArray(moves) || moves.length === 0) return [];
+  await lockParentSequence(client, parentField, parentId);
+  const rows = await loadSequence(parentField, parentId, client);
+  const memberIds = new Set(rows.map((row) => row.id));
+
+  const movedIds = new Set();
+  for (const move of moves) {
+    if (!move?.id || !memberIds.has(move.id)) throw badRequest("A reorder may only move items of one parent.");
+    if (movedIds.has(move.id)) throw badRequest("A reorder may not list an item twice.");
+    movedIds.add(move.id);
+    assertIntegerOrder(move.order);
+  }
+
+  const currentIndex = new Map(rows.map((row, index) => [row.id, index]));
+  const result = rows.filter((row) => !movedIds.has(row.id)).map((row) => row.id);
+  const ordered = [...moves].sort(
+    (a, b) => Number(a.order) - Number(b.order) || currentIndex.get(a.id) - currentIndex.get(b.id)
+  );
+  for (const move of ordered) {
+    const index = Math.min(Math.max(Number(move.order) - 1, 0), result.length);
+    result.splice(index, 0, move.id);
+  }
+
+  return applySequenceOrdering(parentField, parentId, result, client);
+}
+
+// --- Content rows ------------------------------------------------------------
+
+const claimContentOrder = (parentField, parentId, requestedOrder, client) =>
+  claimSequenceOrder(parentField, parentId, requestedOrder, client);
+
+/** Closes a removed Content row's slot in its parent's sequence. */
+const releaseContentOrder = (row, client) => {
+  const parentField = mostSpecificParentField(row);
+  if (!parentField) return Promise.resolve();
+  return releaseSequenceOrder(parentField, row[parentField], row.order, client);
+};
+
+const getNextContentOrder = (parentField, parentId, client = prisma) => getNextOrder(parentField, parentId, client);
+
+// --- Child containers ----------------------------------------------------------
+
+/** Position for a new container in its parent's sequence (e.g. a Topic in its Lesson's). */
+const claimContainerOrder = (kind, parentId, requestedOrder, client) =>
+  claimSequenceOrder(CONTAINER_PARENT_FIELD[kind], parentId, requestedOrder, client);
+
+const releaseContainerOrder = (kind, parentId, removedOrder, client) =>
+  releaseSequenceOrder(CONTAINER_PARENT_FIELD[kind], parentId, removedOrder, client);
+
+/** Reorders containers within their parent's sequence; Content rows keep their relative order. */
+const moveContainers = (kind, parentId, moves, client) =>
+  moveSequenceItems(CONTAINER_PARENT_FIELD[kind], parentId, moves, client);
 
 module.exports = {
   EMPTY_SEQUENCE_ORDER,
-  COURSE_PARENT_FIELD,
+  PARENT_FIELDS,
   PARENT_FIELDS_MOST_SPECIFIC_FIRST,
+  DEEPER_PARENT_FIELDS,
+  CHILD_KIND_OF_PARENT,
+  CONTAINER_PARENT_FIELD,
+  QUIZ_CONTENT_TYPE,
+  ASSIGNMENT_CONTENT_TYPE,
+  ASSESSMENT_CONTENT_TYPES,
+  isAssessmentContent,
   mostSpecificParentField,
+  singleParentPlacement,
   sequenceMembers,
+  containerParent,
   lockParentSequence,
-  getFirstOrder,
-  COURSE_GROUP_RANK,
-  courseGroupRank,
-  getCourseGroupBounds,
   getLastOrder,
   getNextOrder,
   claimSequenceOrder,
-  assertCourseGroupsOrdered,
-  assertCourseReorderAllowed,
   releaseSequenceOrder,
+  applySequenceOrdering,
+  moveSequenceItems,
+  claimContentOrder,
+  releaseContentOrder,
+  getNextContentOrder,
+  claimContainerOrder,
+  releaseContainerOrder,
+  moveContainers,
 };

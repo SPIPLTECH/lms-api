@@ -24,8 +24,13 @@ const createQuizSchema = Joi.object({
   // every Self-Test as unlimited (0) and never saves a Final below 1.
   attempts: Joi.number().integer().min(0).max(100).optional(),
   isPublished: Joi.boolean().optional(),
-  // A position in the parent's common sequence; 0 is a valid position.
+  // The quiz's position in its parent's learning sequence (its Content row's
+  // order) — inserted there, every later item moving down one. Omitted: appended.
   order: Joi.number().integer().min(0).optional(),
+  // false = a standalone quiz the caller manages itself (no place in the
+  // learning sequence), e.g. the lesson composer's one-question blocks.
+  // QUALIFYING and batch-scoped quizzes are always standalone.
+  inSequence: Joi.boolean().optional(),
   questions: Joi.array().optional(),
 });
 
@@ -42,6 +47,7 @@ const updateQuizSchema = Joi.object({
   // every Self-Test as unlimited (0) and never saves a Final below 1.
   attempts: Joi.number().integer().min(0).max(100).optional(),
   isPublished: Joi.boolean().optional(),
+  // Moves the quiz within its parent's learning sequence.
   order: Joi.number().integer().min(0).optional(),
   questions: Joi.array().optional(),
 });

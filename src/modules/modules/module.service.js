@@ -1,10 +1,6 @@
 const prisma = require("../../config/database");
 const ApiError = require("../../utils/ApiError");
-const {
-  claimSequenceOrder,
-  releaseSequenceOrder,
-  assertCourseReorderAllowed,
-} = require("../contents/contentOrder.util");
+const { claimContainerOrder, releaseContainerOrder, moveContainers } = require("../contents/contentOrder.util");
 
 const getModules = async (courseId, role, userId) => {
   const where = {};
@@ -113,7 +109,7 @@ const createModule = async (data) => {
   // Appended to the course's ONE common sequence — after the course's last
   // Content, Quiz, Assignment or Module.
   return await prisma.$transaction(async (tx) => {
-    const order = await claimSequenceOrder("courseId", data.courseId, null, tx, "module");
+    const order = await claimContainerOrder("module", data.courseId, null, tx);
     return tx.module.create({
       data: {
         ...data,
@@ -225,60 +221,30 @@ const deleteModule = async (
     });
 
     // 5. Close the module's slot in its course's common sequence
-    await releaseSequenceOrder("courseId", existing.courseId, existing.order, tx);
+    await releaseContainerOrder("module", existing.courseId, existing.order, tx);
     return deleted;
   });
 };
 
-const reorderModules = async (
-  courseId,
-  modules
-) => {
-  // Verify every id actually belongs to this course before touching anything,
-  // so a caller who owns courseId can't smuggle in another course's module id.
+/**
+ * Moves modules within their course's learning sequence, which they share
+ * with the course's Content rows: each listed module goes to its requested
+ * position, everything else keeps its relative order, and the sequence stays
+ * 1..n. A module of another course is refused.
+ */
+const reorderModules = async (courseId, modules) => {
   const existing = await prisma.module.findMany({
     where: { courseId },
     select: { id: true }
   });
-  const validIds = new Set(existing.map((module) => module.id));
-  const allBelongToCourse = modules.every((module) => validIds.has(module.id));
-  if (!allBelongToCourse) {
+  const validIds = new Set(existing.map((row) => row.id));
+  if (!modules.every((row) => validIds.has(row.id))) {
     throw new ApiError(403, "One or more modules do not belong to this course.");
   }
 
-  // Course level only: modules stay in the Module group — after the course's
-  // own content, ahead of its assignments and quizzes.
-  await assertCourseReorderAllowed("module", modules);
-
-  // Two-phase reorder: @@unique([courseId, order]) rejects a naive
-  // parallel swap (A->2 while B still holds 2), so first move every
-  // row to a disjoint negative placeholder, then to its final order.
-  const offsetUpdates = modules.map(
-    (module, index) =>
-      prisma.module.update({
-        where: {
-          id: module.id
-        },
-        data: {
-          order: -1000 - index
-        }
-      })
+  return prisma.$transaction((tx) =>
+    moveContainers("module", courseId, modules.map(({ id, order }) => ({ id, order })), tx)
   );
-  await prisma.$transaction(offsetUpdates);
-
-  const finalUpdates = modules.map(
-    (module) =>
-      prisma.module.update({
-        where: {
-          id: module.id
-        },
-        data: {
-          order: module.order
-        }
-      })
-  );
-
-  return await prisma.$transaction(finalUpdates);
 };
 
 module.exports = {
