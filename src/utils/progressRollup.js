@@ -42,6 +42,30 @@ const { QUALIFYING_TAG, getCourseQualifications } = require('./qualification');
  */
 const ASSIGNMENT_COMPLETED_STATUSES = ['Submitted', 'Graded'];
 
+/**
+ * True when a container progress row needs writing: there is no row yet, or
+ * one of the fields the roll-up owns differs from what is stored.
+ *
+ * Every roll-up recomputes every Concept/SubTopic/Topic/Lesson/Module of the
+ * course, but a single completion or visit changes one or two of them. Writing
+ * all of them anyway was one upsert per container per call — 20+ round trips
+ * to the database on every "Mark as Complete", most of them rewriting the
+ * value already there.
+ */
+function containerRowChanged(existing, row) {
+  if (!existing) return true;
+  return Object.keys(row).some((key) => {
+    const next = row[key];
+    const stored = existing[key];
+    if (next instanceof Date || stored instanceof Date) {
+      const nextTime = next ? new Date(next).getTime() : null;
+      const storedTime = stored ? new Date(stored).getTime() : null;
+      return nextTime !== storedTime;
+    }
+    return (next ?? null) !== (stored ?? null);
+  });
+}
+
 function isAssignmentSubmissionComplete(submission) {
   return !!submission && ASSIGNMENT_COMPLETED_STATUSES.includes(submission.status);
 }
@@ -377,13 +401,13 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     topicIds.length > 0
       ? client.topicProgress.findMany({
           where: { studentId, topicId: { in: topicIds } },
-          select: { topicId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
+          select: { topicId: true, completed: true, completedAt: true, visited: true, visitedAt: true, qualified: true, qualifiedAt: true }
         })
       : [],
     lessonIds.length > 0
       ? client.lessonProgress.findMany({
           where: { studentId, lessonId: { in: lessonIds } },
-          select: { lessonId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
+          select: { lessonId: true, completed: true, completedAt: true, visited: true, visitedAt: true, qualified: true, qualifiedAt: true }
         })
       : [],
     moduleIds.length > 0
@@ -602,6 +626,8 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
           visitedAt: r.visitedAt,
           ...(qualifiable ? { qualified: isQualified, qualifiedAt } : {})
         };
+        // Unchanged rows are left alone — see containerRowChanged.
+        if (!containerRowChanged(progressMap.get(entity.id), row)) continue;
         upserts.push(
           delegate.upsert({
             where: { [`studentId_${idField}`]: { studentId, [idField]: entity.id } },
@@ -940,6 +966,7 @@ async function ensureProgressInitialized(studentId, courseId, tx = null) {
 
 module.exports = {
   recomputeCourseProgress,
-  ensureProgressInitialized
+  ensureProgressInitialized,
+  containerRowChanged
 };
 

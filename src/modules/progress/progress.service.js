@@ -611,9 +611,9 @@ async function getStudentCourseProgress(studentId, courseId) {
  * one. Returns an array — the ordering is the point, and callers index into
  * it — with the path's derived summary attached separately by the controller.
  */
-async function getStudentLearningPath(studentId, courseId) {
+async function getStudentLearningPath(studentId, courseId, { persist = true } = {}) {
   const [rollup, qualifyingQuizzes] = await Promise.all([
-    recomputeCourseProgress(studentId, courseId, null, { includeTree: true }),
+    recomputeCourseProgress(studentId, courseId, null, { includeTree: true, persist }),
     // Student-scoped, so each qualifying quiz carries this student's remaining
     // allowance and the path can stop offering a skip they cannot take.
     getCourseQualifyingQuizzes(courseId, null, studentId)
@@ -632,7 +632,10 @@ async function getStudentLearningPath(studentId, courseId) {
 async function assertLearningPathAccess(studentId, courseId, { lessonId = null, topicId = null } = {}) {
   if (!lessonId && !topicId) return;
 
-  const path = await getStudentLearningPath(studentId, courseId);
+  // A permission check only reads. It runs before every progress write (a
+  // completion, a visit), and the write that follows recomputes and stores
+  // the roll-up itself — persisting here as well doubled that work per click.
+  const path = await getStudentLearningPath(studentId, courseId, { persist: false });
   const { allowed, reason } = resolveAccess(path, { lessonId, topicId });
 
   if (!allowed) {
