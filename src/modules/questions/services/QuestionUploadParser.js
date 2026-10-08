@@ -105,6 +105,101 @@ class QuestionUploadParser {
   }
 
   /**
+   * The first non-empty cell among a row's accepted spellings of one column.
+   */
+  static firstCell(row, keys) {
+    for (const key of keys) {
+      const value = row[key];
+      if (value !== undefined && value !== null && String(value).trim() !== "") {
+        return String(value).trim();
+      }
+    }
+    return "";
+  }
+
+  /**
+   * The courses (with their modules) the uploader may bind questions to:
+   * their own, or every course for an ADMIN — the same rule the single
+   * question form applies (questionRepository.service.js's
+   * resolveCourseBinding). Only read when the file names a course at all.
+   */
+  static async loadBindableCourses(user) {
+    return prisma.course.findMany({
+      where: user?.role === "ADMIN" ? {} : { creatorId: user?.id ?? null },
+      select: { id: true, title: true, modules: { select: { id: true, title: true } } },
+    });
+  }
+
+  /**
+   * Resolves a row's `course` / `module` cells to ids. Either cell may hold
+   * the id or the title (case-insensitive) — a spreadsheet author knows the
+   * title, an export knows the id. Both blank is valid: a repository question
+   * need not belong to a course.
+   *
+   * @returns {{courseId: string|null, moduleId: string|null} | {error: {code: string, message: string}}}
+   */
+  static resolveCourseCells(courseCell, moduleCell, courses) {
+    if (!courseCell) {
+      if (moduleCell) {
+        return {
+          error: {
+            code: "MODULE_WITHOUT_COURSE",
+            message: `Module "${moduleCell}" was given without a course. Fill in the course column too.`,
+          },
+        };
+      }
+      return { courseId: null, moduleId: null };
+    }
+
+    const sameText = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+    const pick = (cell, list) => {
+      const byId = list.filter((item) => item.id === cell);
+      return byId.length > 0 ? byId : list.filter((item) => sameText(item.title, cell));
+    };
+
+    const courseMatches = pick(courseCell, courses);
+    if (courseMatches.length === 0) {
+      return {
+        error: {
+          code: "COURSE_NOT_FOUND",
+          message: `Course "${courseCell}" was not found among your courses. Use the exact course title or its ID.`,
+        },
+      };
+    }
+    if (courseMatches.length > 1) {
+      return {
+        error: {
+          code: "COURSE_AMBIGUOUS",
+          message: `More than one of your courses is titled "${courseCell}". Use the course ID instead.`,
+        },
+      };
+    }
+
+    const course = courseMatches[0];
+    if (!moduleCell) return { courseId: course.id, moduleId: null };
+
+    const moduleMatches = pick(moduleCell, course.modules || []);
+    if (moduleMatches.length === 0) {
+      return {
+        error: {
+          code: "MODULE_NOT_FOUND",
+          message: `Module "${moduleCell}" was not found in course "${course.title}". Use the exact module title or its ID.`,
+        },
+      };
+    }
+    if (moduleMatches.length > 1) {
+      return {
+        error: {
+          code: "MODULE_AMBIGUOUS",
+          message: `More than one module of "${course.title}" is titled "${moduleCell}". Use the module ID instead.`,
+        },
+      };
+    }
+
+    return { courseId: course.id, moduleId: moduleMatches[0].id };
+  }
+
+  /**
    * Parse raw file buffer into structured rows depending on MIME type / extension
    * @param {Buffer} buffer 
    * @param {string} filename 
@@ -140,10 +235,22 @@ class QuestionUploadParser {
    * @param {Buffer} buffer 
    * @param {string} filename 
    * @param {string} userId Instructor ID
+   * @param {Object|null} user The acting user ({ id, role }); decides which courses a row may name
    * @returns {Promise<Object>} Summary report + validQuestions list
    */
-  static async parseAndValidate(buffer, filename, userId) {
+  static async parseAndValidate(buffer, filename, userId, user = null) {
     const rawRows = this.extractRawRows(buffer, filename);
+
+    // Optional per-row course/module binding — the bulk counterpart of the
+    // Course and Module dropdowns on the single-question form.
+    const COURSE_KEYS = ["course", "Course", "courseId", "Course ID", "courseTitle", "Course Title"];
+    const MODULE_KEYS = ["module", "Module", "moduleId", "Module ID", "moduleTitle", "Module Title"];
+    const namesACourse = rawRows.some(
+      (row) => row && typeof row === "object" && this.firstCell(row, [...COURSE_KEYS, ...MODULE_KEYS])
+    );
+    const bindableCourses = namesACourse
+      ? await this.loadBindableCourses(user || (userId ? { id: userId, role: "INSTRUCTOR" } : null))
+      : [];
 
     const report = {
       total: rawRows.length,
@@ -229,6 +336,22 @@ class QuestionUploadParser {
           question: questionText.slice(0, 40),
           code: "DUPLICATE_QUESTION",
           message: "Duplicate question detected in repository or current upload file.",
+        });
+        continue;
+      }
+
+      // 4. Validation: the course/module the row names must be the uploader's
+      const binding = this.resolveCourseCells(
+        this.firstCell(row, COURSE_KEYS),
+        this.firstCell(row, MODULE_KEYS),
+        bindableCourses
+      );
+      if (binding.error) {
+        report.failedCount++;
+        report.errors.push({
+          row: rowNum,
+          question: questionText.slice(0, 40),
+          ...binding.error,
         });
         continue;
       }
@@ -387,6 +510,8 @@ class QuestionUploadParser {
       report.validQuestions.push({
         question: questionText,
         questionType: type,
+        courseId: binding.courseId,
+        moduleId: binding.moduleId,
         options: optionsList,
         correctAnswer: correctAnswerVal,
         explanation,

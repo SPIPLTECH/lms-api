@@ -117,6 +117,30 @@ function isVisibleItem(content) {
   return true;
 }
 
+/**
+ * True when a container progress row needs writing: there is no row yet, or
+ * one of the fields the roll-up owns differs from what is stored.
+ *
+ * Every roll-up recomputes every Concept/SubTopic/Topic/Lesson/Module of the
+ * course, but a single completion or visit changes one or two of them. Writing
+ * all of them anyway was one upsert per container per call — 20+ round trips
+ * to the database on every "Mark as Complete", most of them rewriting the
+ * value already there.
+ */
+function containerRowChanged(existing, row) {
+  if (!existing) return true;
+  return Object.keys(row).some((key) => {
+    const next = row[key];
+    const stored = existing[key];
+    if (next instanceof Date || stored instanceof Date) {
+      const nextTime = next ? new Date(next).getTime() : null;
+      const storedTime = stored ? new Date(stored).getTime() : null;
+      return nextTime !== storedTime;
+    }
+    return (next ?? null) !== (stored ?? null);
+  });
+}
+
 const earliest = (dates) => {
   const valid = dates.filter(Boolean).map((d) => new Date(d));
   if (valid.length === 0) return null;
@@ -293,13 +317,13 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     allTopicIds.size > 0
       ? client.topicProgress.findMany({
           where: { studentId, topicId: { in: Array.from(allTopicIds) } },
-          select: { topicId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
+          select: { topicId: true, completed: true, completedAt: true, visited: true, visitedAt: true, qualified: true, qualifiedAt: true }
         })
       : [],
     allLessonIds.size > 0
       ? client.lessonProgress.findMany({
           where: { studentId, lessonId: { in: Array.from(allLessonIds) } },
-          select: { lessonId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
+          select: { lessonId: true, completed: true, completedAt: true, visited: true, visitedAt: true, qualified: true, qualifiedAt: true }
         })
       : [],
     allModuleIds.size > 0
@@ -550,6 +574,8 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
           visitedAt: r.visitedAt,
           ...(qualifiable ? { qualified: isQualified, qualifiedAt } : {})
         };
+        // Unchanged rows are left alone — see containerRowChanged.
+        if (!containerRowChanged(progressMap.get(entity.id), row)) continue;
         upserts.push(
           delegate.upsert({
             where: { [`studentId_${idField}`]: { studentId, [idField]: entity.id } },
@@ -862,5 +888,6 @@ module.exports = {
   OWN_ITEMS_ONLY,
   isVisibleItem,
   recomputeCourseProgress,
-  ensureProgressInitialized
+  ensureProgressInitialized,
+  containerRowChanged
 };

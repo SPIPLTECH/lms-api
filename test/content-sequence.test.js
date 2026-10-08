@@ -260,6 +260,47 @@ test("reorder refuses duplicates, strangers and incomplete lists", async (t) => 
   await fails({ parentType: "lesson", parentId: lesson.id, orderedIds: [a.id, b.id, b.id] });
 });
 
+test("swap-order trades two items of any kind in one parent, never leaving a position held twice", async (t) => {
+  const db = useSequenceDb(t);
+  const mod = await moduleService.createModule({ courseId: COURSE, title: "M1" });
+  const lesson = await lessonService.createLesson({ moduleId: mod.id, title: "L1" });
+  const intro = await video({ lessonId: lesson.id }, "Intro");
+  const topic = await topicService.createTopic({ lessonId: lesson.id, title: "T1" });
+  const q = await quiz({ moduleId: mod.id, lessonId: lesson.id }, "Check");
+
+  // A Content row with a Topic: two tables, one sequence.
+  const swapped = await contentService.swapSequenceOrder({ kind: "content", id: intro.id }, { kind: "topic", id: topic.id });
+  assert.deepStrictEqual(swapped, [
+    { kind: "content", id: intro.id, order: 2 },
+    { kind: "topic", id: topic.id, order: 1 },
+  ]);
+  assert.deepStrictEqual(db.sequenceOf("lessonId", lesson.id), ["TOPIC:T1@1", "VIDEO:Intro@2", "QUIZ:Check@3"]);
+
+  // A quiz is named by its own id and moves through its Content row.
+  await contentService.swapSequenceOrder({ kind: "quiz", id: q.id }, { kind: "topic", id: topic.id });
+  assert.deepStrictEqual(db.sequenceOf("lessonId", lesson.id), ["QUIZ:Check@1", "VIDEO:Intro@2", "TOPIC:T1@3"]);
+});
+
+test("swap-order refuses other parents, itself, standalone quizzes and other instructors' courses", async (t) => {
+  useSequenceDb(t);
+  const mod = await moduleService.createModule({ courseId: COURSE, title: "M1" });
+  const lesson = await lessonService.createLesson({ moduleId: mod.id, title: "L1" });
+  const here = await video({ lessonId: lesson.id }, "Here");
+  const there = await video({ moduleId: mod.id }, "There");
+  const skip = await quiz({ moduleId: mod.id, lessonId: lesson.id }, "Skip test", { quizTag: "QUALIFYING" });
+
+  const fails = (first, second, status, user) =>
+    assert.rejects(() => contentService.swapSequenceOrder(first, second, user), (error) => error.statusCode === status);
+  await fails({ kind: "content", id: here.id }, { kind: "content", id: there.id }, 400);
+  await fails({ kind: "content", id: here.id }, { kind: "content", id: here.id }, 400);
+  await fails({ kind: "quiz", id: skip.id }, { kind: "content", id: here.id }, 404);
+  await fails({ kind: "content", id: here.id }, { kind: "lesson", id: lesson.id }, 400);
+  await fails({ kind: "content", id: here.id }, { kind: "module", id: mod.id }, 403, { id: "someone-else", role: "INSTRUCTOR" });
+
+  // The course's own instructor may.
+  await contentService.swapSequenceOrder({ kind: "content", id: there.id }, { kind: "lesson", id: lesson.id }, { id: "teacher", role: "INSTRUCTOR" });
+});
+
 test("Content type and Quiz/Assignment link must agree", async (t) => {
   const db = useSequenceDb(t);
   const mod = await moduleService.createModule({ courseId: COURSE, title: "M1" });

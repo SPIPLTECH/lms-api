@@ -114,7 +114,8 @@ const uploadQuestions = async (req, res, next) => {
     const result = await questionRepositoryService.bulkUploadQuestions(
       req.file.buffer,
       req.file.originalname,
-      userId
+      userId,
+      req.user || null
     );
 
     res.status(201).json({

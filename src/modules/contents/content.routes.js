@@ -30,7 +30,8 @@ const validate = require("../../middleware/joiValidation.middleware");
 const {
   createContentSchema,
   updateContentSchema,
-  reorderContentsSchema
+  reorderContentsSchema,
+  swapSequenceOrderSchema
 } = require("./content.validation");
 
 // File upload endpoint for DOCUMENT / PRESENTATION content
@@ -76,6 +77,21 @@ router.patch(
   ]),
   validate(reorderContentsSchema),
   controller.reorderContents
+);
+
+// Trades the positions of two items of one parent, of any kind (a Content
+// with a Lesson, a Quiz with a Topic, …). Must stay above the /:contentId
+// routes, which would otherwise capture "swap-order". Ownership is checked in
+// the service.
+router.patch(
+  "/swap-order",
+  verifyToken,
+  checkRole([
+    "ADMIN",
+    "INSTRUCTOR"
+  ]),
+  validate(swapSequenceOrderSchema),
+  controller.swapSequenceOrder
 );
 
 router.get(

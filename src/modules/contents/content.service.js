@@ -8,6 +8,8 @@ const {
   applySequenceOrdering,
   moveSequenceItems,
   mostSpecificParentField,
+  resolveSequenceItem,
+  swapSequenceItems,
 } = require("./contentOrder.util");
 const progressService = require("../progress/progress.service");
 const {
@@ -439,6 +441,27 @@ const reorderContents = async (payload, requestingUser = null) => {
   );
 };
 
+/**
+ * Trades the positions of two items of one parent's sequence, of any kind
+ * ({ kind, id } — content, quiz, assignment, module, lesson, topic, subTopic,
+ * concept). Both items must share a parent (the swap enforces it), so owning
+ * the first item's course is owning the second's.
+ */
+const swapSequenceOrder = async (first, second, requestingUser = null) => {
+  if (requestingUser && requestingUser.role !== "ADMIN") {
+    const item = await resolveSequenceItem(first);
+    const courseId = item ? await courseIdOfParent(item.parentField, item.parentId) : null;
+    const course = courseId
+      ? await prisma.course.findUnique({ where: { id: courseId }, select: { creatorId: true } })
+      : null;
+    if (!course) throw httpError(404, "Item not found in a learning sequence.");
+    if (course.creatorId !== requestingUser.id) {
+      throw httpError(403, "You do not have permission to reorder this item.");
+    }
+  }
+  return swapSequenceItems(first, second);
+};
+
 module.exports = {
   getContents,
   getContentById,
@@ -446,6 +469,7 @@ module.exports = {
   updateContent,
   deleteContent,
   reorderContents,
+  swapSequenceOrder,
   validateContentDataInvariants,
   courseIdOfParent,
 };
