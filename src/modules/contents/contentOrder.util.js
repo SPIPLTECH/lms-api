@@ -275,10 +275,17 @@ async function applySequenceOrdering(parentField, parentId, orderedIds, client) 
 }
 
 /**
- * Moves some members of a parent's sequence to requested 1-based positions;
- * every other member keeps its relative order. `moves` is [{ id, order }] —
- * Content or container ids — the shape the Course Map sends for a swap. The
+ * Moves some members of a parent's sequence to requested positions; every
+ * other member keeps its relative order. `moves` is [{ id, order }] — Content
+ * or container ids — e.g. a swap, each item taking the other's order. The
  * result is always a gap-free 1..n sequence.
+ *
+ * A requested order is read in the coordinates every client sees: the stored
+ * orders, which can have gaps (a duplicated course skips its QUIZ rows but
+ * keeps every other row's order). Order K is the position of the member
+ * stored at K — one past the members stored before it — so a swap across a
+ * gap still moves each item exactly one slot. On a gap-free sequence that is
+ * simply position K.
  */
 async function moveSequenceItems(parentField, parentId, moves, client) {
   if (!Array.isArray(moves) || moves.length === 0) return [];
@@ -294,13 +301,14 @@ async function moveSequenceItems(parentField, parentId, moves, client) {
     assertIntegerOrder(move.order);
   }
 
+  const positionOf = (order) => rows.filter((row) => (row.order ?? 0) < order).length + 1;
   const currentIndex = new Map(rows.map((row, index) => [row.id, index]));
   const result = rows.filter((row) => !movedIds.has(row.id)).map((row) => row.id);
-  const ordered = [...moves].sort(
-    (a, b) => Number(a.order) - Number(b.order) || currentIndex.get(a.id) - currentIndex.get(b.id)
-  );
+  const ordered = moves
+    .map((move) => ({ id: move.id, position: positionOf(Number(move.order)) }))
+    .sort((a, b) => a.position - b.position || currentIndex.get(a.id) - currentIndex.get(b.id));
   for (const move of ordered) {
-    const index = Math.min(Math.max(Number(move.order) - 1, 0), result.length);
+    const index = Math.min(Math.max(move.position - 1, 0), result.length);
     result.splice(index, 0, move.id);
   }
 
