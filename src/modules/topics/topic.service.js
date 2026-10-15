@@ -42,12 +42,6 @@ const createTopic = async (data) => {
   const requestedOrder =
     data.order === undefined || data.order === null || isNaN(Number(data.order)) ? null : Number(data.order);
 
-  // A topic added to an already-published course goes live with it.
-  const parentLesson = await prisma.lesson.findUnique({
-    where: { id: data.lessonId },
-    select: { module: { select: { course: { select: { status: true } } } } }
-  });
-
   // Takes its position in the lesson's ONE common sequence (shared with the
   // lesson's Content, Quizzes and Assignments): appended, or inserted at the
   // requested order with every later item moved down one.
@@ -57,7 +51,9 @@ const createTopic = async (data) => {
       data: {
         ...data,
         order,
-        isPublished: data.isPublished ?? parentLesson?.module?.course?.status === "PUBLISHED"
+        // Published on creation: a draft is invisible to students along with
+        // everything inside it. The course's own status still gates access.
+        isPublished: data.isPublished ?? true
       },
     });
   });

@@ -99,13 +99,6 @@ const getModuleById = async (moduleId, role) => {
 };
 
 const createModule = async (data) => {
-  // A module added to an already-published course goes live with it, so new
-  // material never sits invisible to students who are already enrolled.
-  const course = await prisma.course.findUnique({
-    where: { id: data.courseId },
-    select: { status: true }
-  });
-
   // Appended to the course's ONE common sequence — after the course's last
   // Content, Quiz, Assignment or Module.
   return await prisma.$transaction(async (tx) => {
@@ -114,7 +107,9 @@ const createModule = async (data) => {
       data: {
         ...data,
         order,
-        isPublished: data.isPublished ?? course?.status === "PUBLISHED"
+        // Published on creation: a draft is invisible to students along with
+        // everything inside it. The course's own status still gates access.
+        isPublished: data.isPublished ?? true
       }
     });
   });

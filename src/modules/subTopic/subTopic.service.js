@@ -62,15 +62,6 @@ const createSubTopic = async (data) => {
   const requestedOrder =
     data.order === undefined || data.order === null || isNaN(Number(data.order)) ? null : Number(data.order);
 
-  // A subtopic added to an already-published course goes live with it --
-  // same rule topic.service.createTopic applies one level up.
-  const parentTopic = await prisma.topic.findUnique({
-    where: { id: data.topicId },
-    select: {
-      lesson: { select: { module: { select: { course: { select: { status: true } } } } } },
-    },
-  });
-
   // Takes its position in the topic's ONE common sequence (shared with the
   // topic's Content, Quizzes and Assignments): appended, or inserted at the
   // requested order with every later item moved down one.
@@ -80,9 +71,9 @@ const createSubTopic = async (data) => {
       data: {
         ...data,
         order,
-        isPublished:
-          data.isPublished ??
-          parentTopic?.lesson?.module?.course?.status === "PUBLISHED",
+        // Published on creation: a draft is invisible to students along with
+        // everything inside it. The course's own status still gates access.
+        isPublished: data.isPublished ?? true,
       },
     });
   });

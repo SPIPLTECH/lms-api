@@ -78,12 +78,6 @@ const createLesson = async (
   data,
   actorUserId = null
 ) => {
-  // A lesson added to an already-published course goes live with it.
-  const parentModule = await prisma.module.findUnique({
-    where: { id: data.moduleId },
-    select: { course: { select: { status: true } } }
-  });
-
   // Appended to the module's ONE common sequence — after the module's last
   // Content, Quiz, Assignment or Lesson.
   const lesson = await prisma.$transaction(async (tx) => {
@@ -92,7 +86,9 @@ const createLesson = async (
       data: {
         ...data,
         order,
-        isPublished: data.isPublished ?? parentModule?.course?.status === "PUBLISHED"
+        // Published on creation: a draft is invisible to students along with
+        // everything inside it. The course's own status still gates access.
+        isPublished: data.isPublished ?? true
       }
     });
   });

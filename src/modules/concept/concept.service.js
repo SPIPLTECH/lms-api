@@ -52,19 +52,6 @@ const createConcept = async (data) => {
   const requestedOrder =
     data.order === undefined || data.order === null || isNaN(Number(data.order)) ? null : Number(data.order);
 
-  // A concept added to an already-published course goes live with it --
-  // same rule topic.service/subTopic.service apply at their levels.
-  const parentSubTopic = await prisma.subTopic.findUnique({
-    where: { id: data.subTopicId },
-    select: {
-      topic: {
-        select: {
-          lesson: { select: { module: { select: { course: { select: { status: true } } } } } },
-        },
-      },
-    },
-  });
-
   // Takes its position in the subtopic's ONE common sequence (shared with the
   // subtopic's Content, Quizzes and Assignments): appended, or inserted at the
   // requested order with every later item moved down one.
@@ -74,9 +61,9 @@ const createConcept = async (data) => {
       data: {
         ...data,
         order,
-        isPublished:
-          data.isPublished ??
-          parentSubTopic?.topic?.lesson?.module?.course?.status === "PUBLISHED",
+        // Published on creation: a draft is invisible to students along with
+        // everything inside it. The course's own status still gates access.
+        isPublished: data.isPublished ?? true,
       },
     });
   });
