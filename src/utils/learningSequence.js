@@ -246,7 +246,7 @@ function buildLearningSequence(hierarchy, { bodies = null } = {}) {
  *   - anchor completed      -> the next incomplete step after it, else the
  *     first incomplete step anywhere (work stranded behind the anchor, e.g.
  *     content added to a lesson after the student passed through it);
- *   - whole course complete -> the last step.
+ *   - whole course complete -> the anchor itself (review mode).
  * A target that is locked falls back to the first incomplete step, the one
  * the student can actually do.
  */
@@ -278,7 +278,7 @@ function resolveResumeIndex(steps) {
   else {
     const next =
       steps.slice(anchor + 1).find((step) => !step.completed) || steps.find((step) => !step.completed);
-    target = next ? next.index : steps.length - 1;
+    target = next ? next.index : anchor;
   }
 
   if (steps[target].locked) {
