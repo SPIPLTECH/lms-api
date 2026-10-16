@@ -37,6 +37,12 @@ router.post(
   progressController.markVisited
 );
 
+// The student's ordered path through a course. A query parameter, not a
+// nested path — the path is a view over one course, not a sub-resource of it,
+// and keeping it flat leaves /progress/:something free of ambiguity. Declared
+// before /courses/:courseId only for readability; the two don't collide.
+router.get('/learning-path', progressController.getLearningPath);
+
 router.get('/courses/:courseId', progressController.getCourseProgress);
 
 router.get('/', progressController.getOverallProgress);

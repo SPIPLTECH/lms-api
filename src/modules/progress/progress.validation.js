@@ -23,16 +23,33 @@ const completeLessonSchema = Joi.object({
 });
 
 const markVisitedSchema = Joi.object({
-  entityType: Joi.string().valid("CONTENT", "QUIZ", "ASSIGNMENT", "TOPIC", "LESSON", "MODULE").optional(),
+  // SUBTOPIC/CONCEPT added: without them the two new container levels would be
+  // rejected at the validation layer with a 400 before ever reaching the
+  // service. Every previously-valid payload stays valid.
+  entityType: Joi.string()
+    .valid("CONTENT", "QUIZ", "ASSIGNMENT", "CONCEPT", "SUBTOPIC", "TOPIC", "LESSON", "MODULE")
+    .optional(),
   entityId: Joi.string().optional(),
   contentId: Joi.string().optional(),
   quizId: Joi.string().optional(),
   assignmentId: Joi.string().optional(),
+  conceptId: Joi.string().optional(),
+  subTopicId: Joi.string().optional(),
   topicId: Joi.string().optional(),
   lessonId: Joi.string().optional(),
   moduleId: Joi.string().optional(),
   visited: Joi.boolean().optional().default(true)
-}).or("entityId", "contentId", "quizId", "assignmentId", "topicId", "lessonId", "moduleId");
+}).or(
+  "entityId",
+  "contentId",
+  "quizId",
+  "assignmentId",
+  "conceptId",
+  "subTopicId",
+  "topicId",
+  "lessonId",
+  "moduleId"
+);
 
 module.exports = {
   completeContentSchema,

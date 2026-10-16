@@ -1,7 +1,15 @@
 const prisma = require("../../config/database");
-const { getNextAssignmentOrder } = require("../contents/contentOrder.util");
+const {
+  claimSequenceOrder,
+  releaseSequenceOrder,
+  mostSpecificParentField,
+  assertCourseReorderAllowed,
+} = require("../contents/contentOrder.util");
 const {
     BREADCRUMB_INCLUDE,
+    PARENT_FIELDS,
+    COURSE_ID_INCLUDE,
+    resolveCourseId,
     resolveBreadcrumb,
 } = require("../../utils/helpers/courseBreadcrumb.helper");
 
@@ -174,20 +182,17 @@ const getAssignmentById = async (assignmentId, studentId) => {
 };
 
 const submitAssignment = async (assignmentId, studentId, data) => {
+    // `where` and `include` were each specified twice here; duplicate keys in
+    // an object literal are legal JS (the last one silently wins), so the
+    // behaviour was already that of the second pair. Collapsed to one of each,
+    // and extended via COURSE_ID_INCLUDE so a SubTopic- or Concept-level
+    // assignment resolves its course too. `course: true` is kept because
+    // callers of this function read the full course relation.
     const assignment = await prisma.assignment.findUnique({
         where: { id: assignmentId },
         include: {
             course: true,
-            module: { select: { courseId: true } },
-            lesson: { include: { module: { select: { courseId: true } } } },
-            topic: { include: { lesson: { include: { module: { select: { courseId: true } } } } } },
-        },
-        where: { id: assignmentId },
-        include: {
-            course: true,
-            module: { select: { courseId: true } },
-            lesson: { include: { module: { select: { courseId: true } } } },
-            topic: { include: { lesson: { include: { module: { select: { courseId: true } } } } } },
+            ...COURSE_ID_INCLUDE,
         }
     });
     if (!assignment) {
@@ -256,11 +261,7 @@ const submitAssignment = async (assignmentId, studentId, data) => {
         console.error("AssignmentProgress sync failed after assignment submission:", apErr);
     }
 
-    const courseId =
-        assignment.courseId ||
-        assignment.module?.courseId ||
-        assignment.lesson?.module?.courseId ||
-        assignment.topic?.lesson?.module?.courseId;
+    const courseId = resolveCourseId(assignment);
 
     if (courseId) {
         try {
@@ -279,6 +280,8 @@ const getInstructorAssignments = async (instructorId, filter = {}) => {
     let moduleId = filter.moduleId;
     let lessonId = filter.lessonId;
     let topicId = filter.topicId;
+    let subTopicId = filter.subTopicId;
+    let conceptId = filter.conceptId;
 
     const where = {};
     if (courseId) {
@@ -289,12 +292,22 @@ const getInstructorAssignments = async (instructorId, filter = {}) => {
         where.lessonId = lessonId;
     } else if (topicId) {
         where.topicId = topicId;
+    } else if (subTopicId) {
+        where.subTopicId = subTopicId;
+    } else if (conceptId) {
+        where.conceptId = conceptId;
     } else {
         where.OR = [
             { course: { creatorId: instructorId } },
             { module: { course: { creatorId: instructorId } } },
             { lesson: { module: { course: { creatorId: instructorId } } } },
             { topic: { lesson: { module: { course: { creatorId: instructorId } } } } },
+            { subTopic: { topic: { lesson: { module: { course: { creatorId: instructorId } } } } } },
+            {
+                concept: {
+                    subTopic: { topic: { lesson: { module: { course: { creatorId: instructorId } } } } },
+                },
+            },
         ];
     }
 
@@ -456,34 +469,43 @@ const gradeAssignmentSubmission = async (assignmentId, submissionId, { grade, fe
 };
 
 const createAssignment = async (data) => {
-    const parents = [data.courseId, data.moduleId, data.lessonId, data.topicId].filter(Boolean);
-    if (parents.length !== 1) {
-        const error = new Error("Assignment must be attached to exactly one of course, module, lesson, or topic.");
+    // PARENT_FIELDS is the shared six-level list, so this check and the
+    // order-scope field below can never disagree about what a parent is.
+    const presentParents = PARENT_FIELDS.filter((field) => data[field]);
+    if (presentParents.length !== 1) {
+        const error = new Error("Assignment must be attached to exactly one of course, module, lesson, topic, subtopic, or concept.");
         error.statusCode = 400;
         throw error;
     }
 
-    const orderField = data.courseId ? "courseId" : data.moduleId ? "moduleId" : data.lessonId ? "lessonId" : "topicId";
-    const order = await getNextAssignmentOrder(orderField, data[orderField]);
+    const orderField = presentParents[0];
 
-    return await prisma.assignment.create({
-        data: {
-            title: data.title,
-            description: data.description || null,
-            dueDate: new Date(data.dueDate),
-            order,
-            totalQuestions: data.totalQuestions ? parseInt(data.totalQuestions) : 0,
-            estimatedTime: data.estimatedTime ? parseInt(data.estimatedTime) : 0,
-            resources: data.resources ? parseInt(data.resources) : 0,
-            marks: data.marks !== undefined && data.marks !== null ? parseInt(data.marks) : null,
-            assessmentType: data.assessmentType || null,
-            attachments: data.attachments ?? undefined,
-            courseId: data.courseId || null,
-            moduleId: data.moduleId || null,
-            lessonId: data.lessonId || null,
-            topicId: data.topicId || null,
-            isPublished: data.isPublished !== undefined ? data.isPublished : true,
-        }
+    // Appended to the parent's ONE common sequence, after its last Content,
+    // Quiz, Assignment or child entity.
+    return await prisma.$transaction(async (tx) => {
+        const order = await claimSequenceOrder(orderField, data[orderField], null, tx, "assignment");
+
+        return await tx.assignment.create({
+            data: {
+                title: data.title,
+                description: data.description || null,
+                dueDate: new Date(data.dueDate),
+                order,
+                totalQuestions: data.totalQuestions ? parseInt(data.totalQuestions) : 0,
+                estimatedTime: data.estimatedTime ? parseInt(data.estimatedTime) : 0,
+                resources: data.resources ? parseInt(data.resources) : 0,
+                marks: data.marks !== undefined && data.marks !== null ? parseInt(data.marks) : null,
+                assessmentType: data.assessmentType || null,
+                attachments: data.attachments ?? undefined,
+                courseId: data.courseId || null,
+                moduleId: data.moduleId || null,
+                lessonId: data.lessonId || null,
+                topicId: data.topicId || null,
+                subTopicId: data.subTopicId || null,
+                conceptId: data.conceptId || null,
+                isPublished: data.isPublished !== undefined ? data.isPublished : true,
+            }
+        });
     });
 };
 
@@ -520,8 +542,14 @@ const deleteAssignment = async (assignmentId) => {
         throw error;
     }
 
-    return await prisma.assignment.delete({
-        where: { id: assignmentId }
+    // Removing an item closes its slot in the parent's common sequence.
+    return await prisma.$transaction(async (tx) => {
+        const deleted = await tx.assignment.delete({
+            where: { id: assignmentId }
+        });
+        const parentField = mostSpecificParentField(existing);
+        await releaseSequenceOrder(parentField, parentField && existing[parentField], existing.order, tx);
+        return deleted;
     });
 };
 
@@ -530,6 +558,10 @@ const deleteAssignment = async (assignmentId) => {
 // disjoint negative placeholder first, then to its final order, inside one
 // transaction, so a direct swap never collides mid-flight.
 const reorderAssignments = async (assignments) => {
+  // Course level only: a course assignment stays between the modules and the
+    // quizzes — it is the work that follows every module.
+    await assertCourseReorderAllowed("assignment", assignments);
+
     const offsetUpdates = assignments.map((a, index) =>
         prisma.assignment.update({
             where: { id: a.id },

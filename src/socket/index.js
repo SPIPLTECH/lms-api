@@ -5,26 +5,22 @@ const registerConversationEvents = require("./conversation.socket");
 const registerMessageEvents = require("./message.socket");
 const registerReadReceiptEvents = require("./readReceipt.socket");
 const registerPresenceEvents = require("./presence.socket");
+const { corsOriginDelegate } = require("../config/allowedOrigins");
 let io;
 
-const DEFAULT_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "https://lms-web-demo.vercel.app",
-];
-
 const initializeSocket = (server) => {
-    // FRONTEND_URL may hold a single origin or a comma-separated list, so
-    // preview/staging deployments can be allowed without a code change.
-    const configuredOrigins = (process.env.FRONTEND_URL || "")
-        .split(",")
-        .map((url) => url.trim())
-        .filter(Boolean);
-
-    const allowedOrigins = [...new Set([...configuredOrigins, ...DEFAULT_ALLOWED_ORIGINS])];
-
+    // Origin policy lives in src/config/allowedOrigins.js, shared with the
+    // Express CORS layer in src/app.js. It still honours FRONTEND_URL (a single
+    // origin or a comma-separated list, so preview/staging deployments need no
+    // code change) and the same localhost/vercel defaults this file used to
+    // hold inline. What it adds is LAN origins: when the app is served to
+    // another device on the same Wi-Fi the handshake Origin is
+    // http://<private-LAN-IP>:3000, which no static list can predict, and
+    // rejecting it here is what used to leave chat, presence and notifications
+    // dead on every device except the host PC.
     io = new Server(server, {
         cors: {
-            origin: allowedOrigins,
+            origin: corsOriginDelegate,
             credentials: true,
         },
     });

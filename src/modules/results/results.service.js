@@ -1,15 +1,29 @@
 const prisma = require("../../config/database");
-const { evaluateAnswer } = require("../quizzes/quiz.service");
 const {
   BREADCRUMB_INCLUDE,
   resolveBreadcrumb,
 } = require("../../utils/helpers/courseBreadcrumb.helper");
 
-/** Course ids the instructor owns, optionally narrowed to a single course. */
-const resolveCourseIds = async (instructorId, courseId) => {
+
+/**
+ * The courses whose results this caller may see.
+ *
+ * An instructor is scoped to courses they created. An admin is not scoped:
+ * these routes already admit ADMIN, but filtering on `creatorId` meant an
+ * admin who happened not to have authored any course saw an empty results
+ * page rather than everything. Every other access check in the LMS
+ * (assertCourseProgressAccess, for one) returns early for ADMIN, so this
+ * brings results in line rather than inventing a rule.
+ */
+const resolveCourseIds = async (callingUser, courseId) => {
+  const isAdmin = typeof callingUser === "object" && callingUser?.role === "ADMIN";
+  // Historically this took a bare instructor id; both shapes still work so
+  // callers can be migrated one at a time.
+  const instructorId = typeof callingUser === "object" ? callingUser?.id : callingUser;
+
   const courses = await prisma.course.findMany({
     where: {
-      creatorId: instructorId,
+      ...(isAdmin ? {} : { creatorId: instructorId }),
       ...(courseId ? { id: courseId } : {})
     },
     select: { id: true }
@@ -36,14 +50,18 @@ const dateRangeWhere = (startDate, endDate) => {
 };
 
 // Quiz tags a caller may filter by; anything else is ignored rather than
-// passed to Prisma (where an unknown enum value would throw).
-const QUIZ_TAGS = ["FINAL", "SELF_TEST"];
+// passed to Prisma (where an unknown enum value would throw). QUALIFYING is
+// filterable like the rest: these submissions already appeared in the
+// unfiltered list (nothing ever excluded them), they just arrived looking
+// like ordinary quiz results, so an instructor could not tell that a row was
+// a student testing out of a lesson rather than sitting its assessment.
+const QUIZ_TAGS = ["FINAL", "SELF_TEST", "QUALIFYING"];
 
-const getResults = async (instructorId, filters = {}) => {
+const getResults = async (callingUser, filters = {}) => {
   const { courseId, batchId, quizId, assignmentId, studentId, startDate, endDate } = filters;
   const quizTag = QUIZ_TAGS.includes(filters.quizTag) ? filters.quizTag : undefined;
 
-  const courseIds = await resolveCourseIds(instructorId, courseId);
+  const courseIds = await resolveCourseIds(callingUser, courseId);
   const batchStudentIds = await resolveBatchStudentIds(batchId);
 
   if (courseIds.length === 0 || batchStudentIds?.length === 0) {
@@ -74,6 +92,11 @@ const getResults = async (instructorId, filters = {}) => {
           id: true,
           title: true,
           passingScore: true,
+          // What kind of quiz this row actually is, and — for a qualifying
+          // test — which lesson/topic the student was testing out of.
+          quizTag: true,
+          lesson: { select: { id: true, title: true } },
+          topic: { select: { id: true, title: true } },
           course: { select: { id: true, title: true } },
           quizQuestions: {
             select: {
@@ -120,24 +143,89 @@ const getResults = async (instructorId, filters = {}) => {
     }
   });
 
-  const studentResults = submissions.map((s) => ({
-    type: "Quiz",
-    submissionId: s.id,
-    studentId: s.studentId,
-    studentName: s.student?.user?.name || "—",
-    studentEmail: s.student?.user?.email || "",
-    quizId: s.quiz?.id,
-    title: s.quiz?.title,
-    courseId: s.quiz?.course?.id || null,
-    courseTitle: s.quiz?.course?.title || "",
-    score: s.score,
-    totalMarks: s.totalMarks,
-    percentage: s.percentage,
-    passed: s.passed,
-    submittedAt: s.submittedAt
-  }));
+  // A qualifying test is a student testing OUT of a lesson, so an instructor
+  // needs more than score: which attempt this was, and whether they leaned on
+  // hints (available from attempt 2). Both already live on the Phase 1 attempt
+  // log, so they are read from there rather than stored again. Scoped to
+  // qualifying rows only — ordinary quiz reporting is unchanged, and the two
+  // extra queries don't run at all when there are none.
+  const qualifyingSubmissions = submissions.filter((s) => s.quiz?.quizTag === "QUALIFYING");
+  const attemptDetailByKey = new Map();
 
-  const { questionWise, topicWise } = buildQuestionAndTopicAnalysis(submissions);
+  if (qualifyingSubmissions.length > 0) {
+    const attempts = await prisma.quizAttempt.findMany({
+      where: {
+        quizId: { in: [...new Set(qualifyingSubmissions.map((s) => s.quiz.id))] },
+        studentId: { in: [...new Set(qualifyingSubmissions.map((s) => s.studentId))] }
+      },
+      select: { id: true, quizId: true, studentId: true, attemptNumber: true, passed: true },
+      orderBy: { attemptNumber: "asc" }
+    });
+
+    const hintCounts = attempts.length
+      ? await prisma.questionAttempt.groupBy({
+          by: ["quizAttemptId"],
+          where: { quizAttemptId: { in: attempts.map((a) => a.id) }, hintViewed: true },
+          _count: { _all: true }
+        })
+      : [];
+    const hintsByAttemptId = new Map(hintCounts.map((h) => [h.quizAttemptId, h._count._all]));
+
+    for (const attempt of attempts) {
+      const key = `${attempt.studentId}:${attempt.quizId}`;
+      const prior = attemptDetailByKey.get(key);
+      attemptDetailByKey.set(key, {
+        // The submission row mirrors the LATEST attempt, so that is the one
+        // whose number and hint count belong on this row.
+        attemptNumber: attempt.attemptNumber,
+        hintsUsed: hintsByAttemptId.get(attempt.id) ?? 0,
+        totalAttempts: (prior?.totalAttempts ?? 0) + 1,
+        everPassed: (prior?.everPassed ?? false) || attempt.passed === true
+      });
+    }
+  }
+
+  const studentResults = submissions.map((s) => {
+    const isQualifying = s.quiz?.quizTag === "QUALIFYING";
+    const detail = isQualifying ? attemptDetailByKey.get(`${s.studentId}:${s.quiz.id}`) : null;
+    // A qualifying quiz's scope column names its TARGET — the lesson or topic
+    // the student is testing out of — not a container it sits inside.
+    const target = isQualifying ? s.quiz.topic || s.quiz.lesson || null : null;
+
+    return {
+      type: "Quiz",
+      submissionId: s.id,
+      studentId: s.studentId,
+      studentName: s.student?.user?.name || "—",
+      studentEmail: s.student?.user?.email || "",
+      quizId: s.quiz?.id,
+      title: s.quiz?.title,
+      quizTag: s.quiz?.quizTag || "FINAL",
+      courseId: s.quiz?.course?.id || null,
+      courseTitle: s.quiz?.course?.title || "",
+      score: s.score,
+      totalMarks: s.totalMarks,
+      percentage: s.percentage,
+      passed: s.passed,
+      submittedAt: s.submittedAt,
+      // Null on every ordinary quiz, so existing rendering is untouched.
+      qualifyingTarget: target
+        ? { kind: s.quiz.topic ? "TOPIC" : "LESSON", id: target.id, title: target.title }
+        : null,
+      attemptNumber: detail?.attemptNumber ?? null,
+      totalAttempts: detail?.totalAttempts ?? null,
+      hintsUsed: detail?.hintsUsed ?? null,
+      qualified: isQualifying ? detail?.everPassed ?? s.passed : null
+    };
+  });
+
+  // Scoped to exactly the quizzes and students the submission list above
+  // covers, so the analysis can never describe a wider set than the caller is
+  // authorized to see.
+  const { questionWise, topicWise } = await buildQuestionAndTopicAnalysis(
+    [...new Set(submissions.map((s) => s.quiz?.id).filter(Boolean))],
+    studentId ? [studentId] : batchStudentIds || null
+  );
 
   return {
     summary: {
@@ -155,47 +243,99 @@ const getResults = async (instructorId, filters = {}) => {
   };
 };
 
-const buildQuestionAndTopicAnalysis = (submissions) => {
-  const questionStats = new Map();
+/**
+ * Question- and topic-level analysis for the submissions in scope.
+ *
+ * Counted from the QuestionAttempt records rather than re-graded from
+ * `QuizSubmission.answers`, which is what this used to do. That mattered for
+ * three reasons, all of them wrong answers rather than style:
+ *
+ *  - QuizSubmission holds only the LATEST attempt, so every earlier attempt
+ *    was missing from the numbers. "Attempts: 84" meant 84 students, not 84
+ *    responses.
+ *  - A question the student left blank was skipped outright (`if (!answer)
+ *    return`), so skipped and unanswered questions could not be reported at
+ *    all — and those are exactly the signals an instructor needs.
+ *  - Correctness was recomputed with evaluateAnswer, duplicating a decision
+ *    the server already made and stored at submit time. Two graders can
+ *    disagree; one cannot.
+ *
+ * Aggregated in the database, grouped by question, so this scales with the
+ * number of questions rather than the number of attempts.
+ */
+const buildQuestionAndTopicAnalysis = async (quizIds, studentIds = null) => {
+  if (!quizIds || quizIds.length === 0) return { questionWise: [], topicWise: [] };
+
+  const where = {
+    quizAttempt: {
+      quizId: { in: quizIds },
+      ...(studentIds ? { studentId: { in: studentIds } } : {})
+    }
+  };
+
+  const [responses, correct, skipped, hinted, questions] = await Promise.all([
+    prisma.questionAttempt.groupBy({ by: ["questionId"], where, _count: { _all: true } }),
+    prisma.questionAttempt.groupBy({
+      by: ["questionId"],
+      where: { ...where, isCorrect: true },
+      _count: { _all: true }
+    }),
+    prisma.questionAttempt.groupBy({
+      by: ["questionId"],
+      where: { ...where, skipped: true },
+      _count: { _all: true }
+    }),
+    prisma.questionAttempt.groupBy({
+      by: ["questionId"],
+      where: { ...where, hintViewed: true },
+      _count: { _all: true }
+    }),
+    prisma.question.findMany({
+      where: { quizQuestions: { some: { quizId: { in: quizIds } } } },
+      select: { id: true, question: true, topic: true }
+    })
+  ]);
+
+  const countOf = (rows) => new Map(rows.map((r) => [r.questionId, r._count._all]));
+  const responseCount = countOf(responses);
+  const correctCount = countOf(correct);
+  const skippedCount = countOf(skipped);
+  const hintedCount = countOf(hinted);
+
   const topicStats = new Map();
 
-  submissions.forEach((submission) => {
-    const answerMap = new Map((submission.answers || []).map((a) => [a.questionId, a.answer]));
-    const questions = (submission.quiz?.quizQuestions || []).map((qq) => qq.question).filter(Boolean);
+  const questionWise = questions
+    .filter((q) => (responseCount.get(q.id) ?? 0) > 0)
+    .map((q) => {
+      const attempts = responseCount.get(q.id) ?? 0;
+      const correctN = correctCount.get(q.id) ?? 0;
+      const skippedN = skippedCount.get(q.id) ?? 0;
+      const hintsN = hintedCount.get(q.id) ?? 0;
+      const topicKey = q.topic || "Uncategorized";
 
-    questions.forEach((question) => {
-      const answer = answerMap.get(question.id);
-      if (answer === undefined || answer === null || answer === "") return;
-
-      const isCorrect = evaluateAnswer(answer, question.correctAnswer, question.questionType) > 0;
-
-      if (!questionStats.has(question.id)) {
-        questionStats.set(question.id, {
-          questionId: question.id,
-          question: question.question,
-          topic: question.topic || "Uncategorized",
-          attempts: 0,
-          correct: 0
-        });
-      }
-      const qStat = questionStats.get(question.id);
-      qStat.attempts += 1;
-      if (isCorrect) qStat.correct += 1;
-
-      const topicKey = question.topic || "Uncategorized";
       if (!topicStats.has(topicKey)) {
-        topicStats.set(topicKey, { topic: topicKey, attempts: 0, correct: 0 });
+        topicStats.set(topicKey, { topic: topicKey, attempts: 0, correct: 0, skipped: 0, hintsUsed: 0 });
       }
       const tStat = topicStats.get(topicKey);
-      tStat.attempts += 1;
-      if (isCorrect) tStat.correct += 1;
-    });
-  });
+      tStat.attempts += attempts;
+      tStat.correct += correctN;
+      tStat.skipped += skippedN;
+      tStat.hintsUsed += hintsN;
 
-  const questionWise = Array.from(questionStats.values()).map((q) => ({
-    ...q,
-    accuracy: q.attempts > 0 ? Math.round((q.correct / q.attempts) * 100) : 0
-  }));
+      return {
+        questionId: q.id,
+        question: q.question,
+        topic: topicKey,
+        attempts,
+        correct: correctN,
+        // Kept distinct from `correct`/incorrect on purpose: choosing to move
+        // past a question is not the same as getting it wrong.
+        skipped: skippedN,
+        hintsUsed: hintsN,
+        accuracy: attempts > 0 ? Math.round((correctN / attempts) * 100) : 0
+      };
+    })
+    .sort((a, b) => a.accuracy - b.accuracy || b.attempts - a.attempts);
 
   const topicWise = Array.from(topicStats.values()).map((t) => ({
     ...t,
@@ -218,8 +358,8 @@ const buildQuestionAndTopicAnalysis = (submissions) => {
  * Quizzes may allow several attempts, so the row shown per student is their
  * LATEST attempt, with attemptsCount alongside it.
  */
-const getFinalTestOverview = async (instructorId, { courseId, quizId } = {}) => {
-  const courseIds = await resolveCourseIds(instructorId, courseId);
+const getFinalTestOverview = async (callingUser, { courseId, quizId } = {}) => {
+  const courseIds = await resolveCourseIds(callingUser, courseId);
   if (courseIds.length === 0) return [];
 
   const quizzes = await prisma.quiz.findMany({

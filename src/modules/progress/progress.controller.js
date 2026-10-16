@@ -128,11 +128,54 @@ async function getInstructorProgress(req, res, next) {
   }
 }
 
+/**
+ * GET /progress/learning-path?courseId=<id>[&studentId=<id>]
+ *
+ * The ordered path through one course: what is done, what is skipped after
+ * qualifying, what is open now, and what is still locked — plus the
+ * qualifying test on offer where one exists. The course is a query parameter
+ * rather than a path segment so the resource stays flat and the same handler
+ * serves an instructor inspecting a student (studentId, ownership-checked by
+ * the same guard the progress tree uses).
+ *
+ * Responds with the array itself under `data`, with the derived pointers
+ * alongside it — a list endpoint returns a list.
+ */
+async function getLearningPath(req, res, next) {
+  try {
+    const studentId = await resolveStudentId(req);
+    const courseId = req.query?.courseId;
+
+    if (!courseId) {
+      return res.status(400).json({
+        success: false,
+        message: 'courseId is required'
+      });
+    }
+
+    await progressService.assertCourseProgressAccess(req.user, studentId, courseId);
+    const path = await progressService.getStudentLearningPath(studentId, courseId);
+
+    res.json({
+      success: true,
+      data: path,
+      // Derived from the same array, so a caller that only needs "where am I"
+      // doesn't have to scan it and can't disagree with it.
+      nextItem: progressService.resolveNextItem(path),
+      lockedCount: path.filter((entry) => entry.locked).length,
+      skippableCount: path.filter((entry) => entry.skippable).length
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   markContentComplete,
   markLessonComplete,
   markVisited,
   getCourseProgress,
+  getLearningPath,
   getOverallProgress,
   getInstructorProgress
 };

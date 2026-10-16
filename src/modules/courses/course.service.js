@@ -445,6 +445,29 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
   const { includeModules = true } = options;
   const isStudentOrGuest = role === "STUDENT" || role === "GUEST";
 
+  // Same quiz-question shape the four existing levels already select, hoisted
+  // so the two new levels cannot drift from them -- in particular so a
+  // SubTopic/Concept quiz never leaks correctAnswer/explanation to a student.
+  const QUIZ_QUESTIONS_INCLUDE = {
+    orderBy: { order: "asc" },
+    select: {
+      id: true,
+      quizId: true,
+      order: true,
+      marks: true,
+      question: {
+        select: {
+          id: true,
+          question: true,
+          questionType: true,
+          options: true,
+          difficulty: true,
+          ...(isStudentOrGuest ? {} : { correctAnswer: true, explanation: true }),
+        }
+      }
+    }
+  };
+
   // If role is STUDENT, check if student holds an active enrollment
   let isEnrolledStudent = false;
   let studentProfileId = null;
@@ -502,6 +525,16 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
       // without them those rows did nothing when clicked and Next stopped
       // short of them.
       contents: { orderBy: { order: "asc" } },
+      // Assignments attached directly to the Course, the way every level below
+      // already returns its own (see modules/lessons/topics/subTopics/concepts
+      // below). Without these the Course Map had no course-level assignment to
+      // place between the Modules and the Quizzes. Scoped to the course's OWN
+      // rows, the same rule the progress roll-up uses, so a legacy row that
+      // also carries a deeper parent stays at its deepest level only.
+      assignments: {
+        where: { moduleId: null, lessonId: null, topicId: null, subTopicId: null, conceptId: null },
+        orderBy: { order: "asc" },
+      },
       modules: {
         where: isStudentOrGuest ? { isPublished: true } : undefined,
         orderBy: {
@@ -510,6 +543,12 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
         include: {
           contents: { orderBy: { order: "asc" } },
           quizzes: {
+            // A qualifying test is not learning content — it is the test that lets
+            // a student SKIP this lesson/topic, and it is reached through the skip
+            // flow (GET /progress/learning-path), not by working through the course.
+            // Listing it here would put it in the course map as an item to do,
+            // which is the opposite of what it is for. Instructors still see it.
+            ...(isStudentOrGuest ? { where: { quizTag: { not: "QUALIFYING" } } } : {}),
             orderBy: { order: "asc" },
             include: {
               quizQuestions: {
@@ -542,6 +581,12 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
             include: {
               contents: { orderBy: { order: "asc" } },
               quizzes: {
+                // A qualifying test is not learning content — it is the test that lets
+                // a student SKIP this lesson/topic, and it is reached through the skip
+                // flow (GET /progress/learning-path), not by working through the course.
+                // Listing it here would put it in the course map as an item to do,
+                // which is the opposite of what it is for. Instructors still see it.
+                ...(isStudentOrGuest ? { where: { quizTag: { not: "QUALIFYING" } } } : {}),
                 orderBy: { order: "asc" },
                 include: {
                   quizQuestions: {
@@ -572,6 +617,12 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
                 },
                 include: {
                   quizzes: {
+                    // A qualifying test is not learning content — it is the test that lets
+                    // a student SKIP this lesson/topic, and it is reached through the skip
+                    // flow (GET /progress/learning-path), not by working through the course.
+                    // Listing it here would put it in the course map as an item to do,
+                    // which is the opposite of what it is for. Instructors still see it.
+                    ...(isStudentOrGuest ? { where: { quizTag: { not: "QUALIFYING" } } } : {}),
                     orderBy: { order: "asc" },
                     include: {
                       quizQuestions: {
@@ -603,6 +654,34 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
                   },
                   _count: {
                     select: { contents: true }
+                  },
+                  // The two new levels, nested under Topic. Topic-direct
+                  // contents/quizzes/assignments above are untouched, so a
+                  // course with no SubTopics returns exactly what it did
+                  // before with `subTopics: []` added.
+                  subTopics: {
+                    orderBy: { order: "asc" },
+                    include: {
+                      quizzes: {
+                        orderBy: { order: "asc" },
+                        include: { quizQuestions: QUIZ_QUESTIONS_INCLUDE }
+                      },
+                      assignments: { orderBy: { order: "asc" } },
+                      contents: { orderBy: { order: "asc" } },
+                      _count: { select: { contents: true } },
+                      concepts: {
+                        orderBy: { order: "asc" },
+                        include: {
+                          quizzes: {
+                            orderBy: { order: "asc" },
+                            include: { quizQuestions: QUIZ_QUESTIONS_INCLUDE }
+                          },
+                          assignments: { orderBy: { order: "asc" } },
+                          contents: { orderBy: { order: "asc" } },
+                          _count: { select: { contents: true } }
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -613,6 +692,12 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
       } : {}),
 
       quizzes: {
+        // A qualifying test is not learning content — it is the test that lets
+        // a student SKIP this lesson/topic, and it is reached through the skip
+        // flow (GET /progress/learning-path), not by working through the course.
+        // Listing it here would put it in the course map as an item to do,
+        // which is the opposite of what it is for. Instructors still see it.
+        ...(isStudentOrGuest ? { where: { quizTag: { not: "QUALIFYING" } } } : {}),
         orderBy: { order: "asc" },
         include: {
           quizQuestions: {
@@ -651,12 +736,17 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
   }
 
   if (role === "STUDENT") {
-    const { lockMap, completedSet } = await buildLessonLockMap(courseId, studentProfileId);
+    const { lockMap, completedSet, qualifiedSet } = await buildLessonLockMap(courseId, studentProfileId);
     course.modules.forEach((moduleItem) => {
       moduleItem.lessons.forEach((lesson) => {
         const locked = lockMap.get(lesson.id) ?? false;
         lesson.locked = locked;
         lesson.completed = completedSet.has(lesson.id);
+        // Skipped after passing this lesson's qualifying test. Kept apart
+        // from `completed` so the UI can say which it was; the lesson's own
+        // contents are deliberately still sent, because a skipped lesson
+        // stays in the course and stays open to the student.
+        lesson.qualified = qualifiedSet.has(lesson.id);
         if (locked) {
           lesson.topics = [];
           lesson.contents = [];
@@ -703,7 +793,21 @@ const validateCourseForPublish = async (courseId) => {
               topics: {
                 orderBy: { order: "asc" },
                 include: {
-                  contents: { orderBy: { order: "asc" } }
+                  contents: { orderBy: { order: "asc" } },
+                  // A lesson whose only real material lives in a SubTopic or
+                  // Concept must still count as having content, or publishing
+                  // a perfectly valid new-hierarchy course would be blocked
+                  // with a false EMPTY_LESSON error.
+                  subTopics: {
+                    orderBy: { order: "asc" },
+                    include: {
+                      contents: { orderBy: { order: "asc" } },
+                      concepts: {
+                        orderBy: { order: "asc" },
+                        include: { contents: { orderBy: { order: "asc" } } }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -753,9 +857,17 @@ const validateCourseForPublish = async (courseId) => {
       } else {
         for (let lIdx = 0; lIdx < mod.lessons.length; lIdx++) {
           const lesson = mod.lessons[lIdx];
+          // Content anywhere at or below the lesson counts toward "this
+          // lesson has usable content" -- lesson-direct, topic-direct,
+          // subtopic-direct or concept-direct.
+          const lessonSubTopics = (lesson.topics || []).flatMap((t) => t.subTopics || []);
           const candidateContents = [
             ...(lesson.contents || []),
-            ...(lesson.topics || []).flatMap((t) => t.contents || [])
+            ...(lesson.topics || []).flatMap((t) => t.contents || []),
+            ...lessonSubTopics.flatMap((st) => st.contents || []),
+            ...lessonSubTopics.flatMap((st) =>
+              (st.concepts || []).flatMap((c) => c.contents || [])
+            )
           ];
           const hasContent = candidateContents.some((c) => {
             if (!c) return false;
@@ -833,6 +945,21 @@ const publishCourse = async (courseId, userId, userRole) => {
 
     await tx.topic.updateMany({
       where: { lesson: { module: { courseId } } },
+      data: { isPublished: true }
+    });
+
+    // Without these two, SubTopics and Concepts would stay isPublished:false
+    // after the course goes live. The roll-up filters every container on
+    // isPublished, so their content would be invisible to students AND
+    // excluded from progress -- the course would read 100% while whole
+    // branches were unreachable.
+    await tx.subTopic.updateMany({
+      where: { topic: { lesson: { module: { courseId } } } },
+      data: { isPublished: true }
+    });
+
+    await tx.concept.updateMany({
+      where: { subTopic: { topic: { lesson: { module: { courseId } } } } },
       data: { isPublished: true }
     });
 
@@ -1090,6 +1217,23 @@ const updateStatus = async (courseId, status, userId, userRole) => {
  * intentionally NOT copied — a duplicate is a fresh course, not a snapshot
  * of another course's student data.
  */
+/**
+ * The Content columns a duplicate copies, minus the parent id (the caller
+ * supplies whichever of the six parents applies). Matches the field list the
+ * four existing levels already inline above.
+ */
+const copyContentFields = (content) => ({
+  order: content.order,
+  type: content.type,
+  title: content.title,
+  videoUrl: content.videoUrl,
+  fileUrl: content.fileUrl,
+  htmlContent: content.htmlContent,
+  externalUrl: content.externalUrl,
+  duration: content.duration,
+  data: content.data
+});
+
 const duplicateCourse = async (courseId, instructorId) => {
   const source = await prisma.course.findUnique({
     where: { id: courseId },
@@ -1105,7 +1249,19 @@ const duplicateCourse = async (courseId, instructorId) => {
               contents: { orderBy: { order: "asc" } },
               topics: {
                 orderBy: { order: "asc" },
-                include: { contents: { orderBy: { order: "asc" } } }
+                include: {
+                  contents: { orderBy: { order: "asc" } },
+                  subTopics: {
+                    orderBy: { order: "asc" },
+                    include: {
+                      contents: { orderBy: { order: "asc" } },
+                      concepts: {
+                        orderBy: { order: "asc" },
+                        include: { contents: { orderBy: { order: "asc" } } }
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -1204,6 +1360,51 @@ const duplicateCourse = async (courseId, instructorId) => {
           });
           for (const content of topic.contents) {
             contentRows.push({ ...contentFields(content), topicId });
+          }
+
+          // SubTopics and their Concepts. Without this a duplicate would
+          // silently drop everything below Topic -- no error, just a course
+          // missing whole branches.
+          for (const subTopic of topic.subTopics || []) {
+            const newSubTopic = await tx.subTopic.create({
+              data: {
+                title: subTopic.title,
+                description: subTopic.description,
+                order: subTopic.order,
+                isPublished: false,
+                topicId: newTopic.id
+              }
+            });
+
+            if (subTopic.contents.length > 0) {
+              await tx.content.createMany({
+                data: subTopic.contents.map((content) => ({
+                  ...copyContentFields(content),
+                  subTopicId: newSubTopic.id
+                }))
+              });
+            }
+
+            for (const concept of subTopic.concepts || []) {
+              const newConcept = await tx.concept.create({
+                data: {
+                  title: concept.title,
+                  description: concept.description,
+                  order: concept.order,
+                  isPublished: false,
+                  subTopicId: newSubTopic.id
+                }
+              });
+
+              if (concept.contents.length > 0) {
+                await tx.content.createMany({
+                  data: concept.contents.map((content) => ({
+                    ...copyContentFields(content),
+                    conceptId: newConcept.id
+                  }))
+                });
+              }
+            }
           }
         }
       }

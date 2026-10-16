@@ -13,6 +13,8 @@ const createAssignmentSchema = Joi.object({
   moduleId: Joi.string().optional(),
   lessonId: Joi.string().optional(),
   topicId: Joi.string().optional(),
+  subTopicId: Joi.string().optional(),
+  conceptId: Joi.string().optional(),
   dueDate: Joi.date().iso().required(),
   startDate: Joi.date().iso().optional().allow(null),
   availableFrom: Joi.date().iso().optional().allow(null),
@@ -26,10 +28,14 @@ const createAssignmentSchema = Joi.object({
   isPublished: Joi.boolean().optional(),
   status: Joi.string().optional().allow(null, "")
 })
-  .xor("courseId", "moduleId", "lessonId", "topicId")
+  // Exactly one parent, now across six levels. Existing four-level callers
+  // are unaffected: .xor still rejects zero parents and still rejects two.
+  .xor("courseId", "moduleId", "lessonId", "topicId", "subTopicId", "conceptId")
   .messages({
-    "object.missing": "Assignment must be attached to exactly one of course, module, lesson, or topic.",
-    "object.xor": "Assignment must be attached to exactly one of course, module, lesson, or topic.",
+    "object.missing":
+      "Assignment must be attached to exactly one of course, module, lesson, topic, subtopic, or concept.",
+    "object.xor":
+      "Assignment must be attached to exactly one of course, module, lesson, topic, subtopic, or concept.",
   });
 
 const updateAssignmentSchema = Joi.object({

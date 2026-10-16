@@ -507,6 +507,10 @@ const getPedagogicalDecision = async ({ callingUser, data }) => {
 };
 
 module.exports = {
+  // Exported so the recommendation controller authorizes through the SAME
+  // check as every other learner-model route, rather than growing a second
+  // one that could drift from it.
+  resolveStudentProfile,
   getLearnerState,
   initializeLearnerState,
   recordEvidence,

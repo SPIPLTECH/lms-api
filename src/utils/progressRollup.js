@@ -1,12 +1,18 @@
 const prisma = require('../config/database');
+const { QUALIFYING_TAG, getCourseQualifications } = require('./qualification');
 
 /**
  * Authoritative bottom-up multi-entity progress roll-up engine.
  *
- * Participated Entity Types:
- * - Content (direct at Course, Module, Lesson, Topic levels)
- * - Quiz (direct at Course, Module, Lesson, Topic levels)
- * - Assignment (direct at Course, Module, Lesson, Topic levels)
+ * Participated Entity Types (CQA), each attachable at ANY container level:
+ * - Content (direct at Course, Module, Lesson, Topic, SubTopic, Concept)
+ * - Quiz (direct at Course, Module, Lesson, Topic, SubTopic, Concept)
+ * - Assignment (direct at Course, Module, Lesson, Topic, SubTopic, Concept)
+ *
+ * Container chain: Course -> Module -> Lesson -> Topic -> SubTopic -> Concept.
+ * SubTopic and Concept are OPTIONAL. A Topic with no SubTopics rolls up from
+ * its own CQA exactly as it did before those levels existed, so pre-existing
+ * courses produce identical numbers.
  *
  * Rules:
  * 1. Only published, student-accessible items are counted.
@@ -21,21 +27,21 @@ const prisma = require('../config/database');
  *    - Content: ContentProgress row with visited = true
  *    - Quiz: QuizProgress row with visited = true
  *    - Assignment: AssignmentProgress row with visited = true
- *    - Container (Topic/Lesson/Module/Course): ALL applicable children/items visited.
+ *    - Container (Concept/SubTopic/Topic/Lesson/Module/Course): ALL applicable children/items visited.
  *      Purely derived, exactly like completion (rule 3) -- never sticky. A container
  *      that was visited stops being visited the moment unseen content is added to it,
  *      otherwise a Lesson keeps reporting visitedPercent 100 over items the student
- *      has never opened. Note this means POST /progress/visited on a TOPIC/LESSON/MODULE
+ *      has never opened. Note this means POST /progress/visited on a container
  *      no longer survives the roll-up that immediately follows it; only item-level
  *      (Content/Quiz/Assignment) visits are ground truth.
  * 6. Idempotent and transaction-aware. Preserves completedAt and visitedAt when remaining complete/visited.
  *
  * Pass `options.includeTree` to also receive the authoritative hierarchical progress
- * tree (Course -> Module -> Lesson -> Topic -> Content/Quiz/Assignment).
+ * tree (Course -> Module -> Lesson -> Topic -> SubTopic -> Concept -> Content/Quiz/Assignment).
  *
  * Pass `options.persist: false` for a read-only computation (e.g. an
  * instructor viewing a student list): the same numbers and tree, but no
- * Topic/Lesson/Module progress rows are written and the enrollment is not
+ * container progress rows are written and the enrollment is not
  * touched — so viewing never bumps a student's lastAccessedAt. Every level's
  * completion is computed from in-memory maps, so skipping the writes cannot
  * change the result.
@@ -45,6 +51,41 @@ const ASSIGNMENT_COMPLETED_STATUSES = ['Submitted', 'Graded'];
 function isAssignmentSubmissionComplete(submission) {
   return !!submission && ASSIGNMENT_COMPLETED_STATUSES.includes(submission.status);
 }
+
+/**
+ * The container levels, shallowest -> deepest. Adding a level means adding it
+ * here; OWN_ITEMS_ONLY below is derived from it rather than hand-written.
+ */
+const LEVELS = ['course', 'module', 'lesson', 'topic', 'subTopic', 'concept'];
+
+/**
+ * Per level, the Prisma `where` that restricts a relation to the items that
+ * level OWNS -- i.e. rows naming it as parent and naming NO deeper parent.
+ *
+ * Content/Quiz/Assignment are polymorphic across all six levels, so without
+ * these exclusions a Concept-attached row would be returned again by its
+ * Topic's `contents` relation and counted twice -- inflating both the
+ * denominator and the numerator at every level above it. Six levels means
+ * fifteen exclusion terms, which is exactly the kind of hand-maintained list
+ * that rots, so it is generated from LEVELS once:
+ *
+ *   course   -> { moduleId: null, lessonId: null, topicId: null, subTopicId: null, conceptId: null }
+ *   module   -> { lessonId: null, topicId: null, subTopicId: null, conceptId: null }
+ *   lesson   -> { topicId: null, subTopicId: null, conceptId: null }
+ *   topic    -> { subTopicId: null, conceptId: null }
+ *   subTopic -> { conceptId: null }
+ *   concept  -> {}   (deepest level owns everything pointing at it)
+ *
+ * The first four entries are byte-for-byte what the four-level version spelled
+ * out by hand, plus the two new NULL checks -- so existing courses, whose rows
+ * all have subTopicId and conceptId NULL, match exactly as they did before.
+ */
+const OWN_ITEMS_ONLY = Object.fromEntries(
+  LEVELS.map((level, i) => [
+    level,
+    Object.fromEntries(LEVELS.slice(i + 1).map((deeper) => [`${deeper}Id`, null]))
+  ])
+);
 
 async function computeCourseProgress(studentId, courseId, tx = null, options = {}) {
   const client = tx || prisma;
@@ -64,7 +105,17 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       }
     }
   };
-  const assignmentSelect = { id: true, title: true, dueDate: true };
+  // `order` is the assignment's position in its parent's common sequence
+  // (shared with Content, Quizzes and child entities), like contentSelect/quizSelect.
+  const assignmentSelect = { id: true, title: true, order: true, dueDate: true };
+
+  // A QUALIFYING quiz is the test that lets a student SKIP its lesson/topic,
+  // not an item inside it. Counting it as required learning would mean a
+  // topic could only be completed by passing the very test that exempts the
+  // student from it — and a student who never intends to skip would be left
+  // with a permanently incomplete topic. Every quiz lookup below therefore
+  // filters it out; qualification is read separately, from the attempts.
+  const GRADED_QUIZ_TAGS = { quizTag: { not: QUALIFYING_TAG } };
 
   // 1. Fetch live published hierarchy including direct Contents, Quizzes, Assignments at all levels
   const course = await client.course.findUnique({
@@ -74,80 +125,126 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       title: true,
       status: true,
       contents: {
-        where: { moduleId: null, lessonId: null, topicId: null },
-        orderBy: { order: 'asc' },
+        where: { ...OWN_ITEMS_ONLY.course },
+        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
         select: contentSelect
       },
       quizzes: {
-        where: { isPublished: true, moduleId: null, lessonId: null, topicId: null },
-        orderBy: { order: 'asc' },
+        where: { isPublished: true, ...OWN_ITEMS_ONLY.course, ...GRADED_QUIZ_TAGS },
+        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
         select: quizSelect
       },
       assignments: {
-        where: { isPublished: true, moduleId: null, lessonId: null, topicId: null },
+        where: { isPublished: true, ...OWN_ITEMS_ONLY.course },
         select: assignmentSelect
       },
       modules: {
         where: { isPublished: true },
-        orderBy: { order: 'asc' },
+        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
         select: {
           id: true,
           title: true,
           order: true,
           contents: {
-            where: { lessonId: null, topicId: null },
-            orderBy: { order: 'asc' },
+            where: { ...OWN_ITEMS_ONLY.module },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
             select: contentSelect
           },
           quizzes: {
-            where: { isPublished: true, lessonId: null, topicId: null },
-            orderBy: { order: 'asc' },
+            where: { isPublished: true, ...OWN_ITEMS_ONLY.module, ...GRADED_QUIZ_TAGS },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
             select: quizSelect
           },
           assignments: {
-            where: { isPublished: true, lessonId: null, topicId: null },
+            where: { isPublished: true, ...OWN_ITEMS_ONLY.module },
             select: assignmentSelect
           },
           lessons: {
             where: { isPublished: true },
-            orderBy: { order: 'asc' },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
             select: {
               id: true,
               title: true,
               order: true,
               contents: {
-                where: { topicId: null },
-                orderBy: { order: 'asc' },
+                where: { ...OWN_ITEMS_ONLY.lesson },
+                orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                 select: contentSelect
               },
               quizzes: {
-                where: { isPublished: true, topicId: null },
-                orderBy: { order: 'asc' },
+                where: { isPublished: true, ...OWN_ITEMS_ONLY.lesson, ...GRADED_QUIZ_TAGS },
+                orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                 select: quizSelect
               },
               assignments: {
-                where: { isPublished: true, topicId: null },
+                where: { isPublished: true, ...OWN_ITEMS_ONLY.lesson },
                 select: assignmentSelect
               },
               topics: {
                 where: { isPublished: true },
-                orderBy: { order: 'asc' },
+                orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                 select: {
                   id: true,
                   title: true,
                   order: true,
                   contents: {
-                    orderBy: { order: 'asc' },
+                    where: { ...OWN_ITEMS_ONLY.topic },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                     select: contentSelect
                   },
                   quizzes: {
-                    where: { isPublished: true },
-                    orderBy: { order: 'asc' },
+                    where: { isPublished: true, ...OWN_ITEMS_ONLY.topic, ...GRADED_QUIZ_TAGS },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                     select: quizSelect
                   },
                   assignments: {
-                    where: { isPublished: true },
+                    where: { isPublished: true, ...OWN_ITEMS_ONLY.topic },
                     select: assignmentSelect
+                  },
+                  subTopics: {
+                    where: { isPublished: true },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
+                    select: {
+                      id: true,
+                      title: true,
+                      order: true,
+                      contents: {
+                        where: { ...OWN_ITEMS_ONLY.subTopic },
+                        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
+                        select: contentSelect
+                      },
+                      quizzes: {
+                        where: { isPublished: true, ...OWN_ITEMS_ONLY.subTopic, ...GRADED_QUIZ_TAGS },
+                        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
+                        select: quizSelect
+                      },
+                      assignments: {
+                        where: { isPublished: true, ...OWN_ITEMS_ONLY.subTopic },
+                        select: assignmentSelect
+                      },
+                      concepts: {
+                        where: { isPublished: true },
+                        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
+                        select: {
+                          id: true,
+                          title: true,
+                          order: true,
+                          contents: {
+                            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
+                            select: contentSelect
+                          },
+                          quizzes: {
+                            where: { isPublished: true, ...GRADED_QUIZ_TAGS },
+                            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
+                            select: quizSelect
+                          },
+                          assignments: {
+                            where: { isPublished: true },
+                            select: assignmentSelect
+                          }
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -162,39 +259,52 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     throw new Error(`Course with ID ${courseId} not found`);
   }
 
-  // 2. Collect all item IDs across all 4 levels
+  // 2. Collect all item IDs across all 6 levels
   const allContentIds = new Set();
   const allQuizMap = new Map(); // quizId -> passingScore
   const allAssignmentIds = new Set();
   // Container ids scope the existing-progress lookups below to this course
   // only, instead of every course the student has ever touched.
+  const allConceptIds = new Set();
+  const allSubTopicIds = new Set();
   const allTopicIds = new Set();
   const allLessonIds = new Set();
   const allModuleIds = new Set();
 
-  // Course direct
-  course.contents.forEach((c) => allContentIds.add(c.id));
-  course.quizzes.forEach((q) => allQuizMap.set(q.id, q.passingScore));
-  course.assignments.forEach((a) => allAssignmentIds.add(a.id));
+  // Every container's own CQA is collected the same way, so the walk below
+  // only has to say WHICH containers exist, not repeat the three .forEach
+  // lines at each of six levels.
+  const collectItems = (entity) => {
+    entity.contents.forEach((c) => allContentIds.add(c.id));
+    entity.quizzes.forEach((q) => allQuizMap.set(q.id, q.passingScore));
+    entity.assignments.forEach((a) => allAssignmentIds.add(a.id));
+  };
 
-  // Modules, Lessons, Topics
+  // Course direct
+  collectItems(course);
+
+  // Modules, Lessons, Topics, SubTopics, Concepts
   for (const mod of course.modules) {
     allModuleIds.add(mod.id);
-    mod.contents.forEach((c) => allContentIds.add(c.id));
-    mod.quizzes.forEach((q) => allQuizMap.set(q.id, q.passingScore));
-    mod.assignments.forEach((a) => allAssignmentIds.add(a.id));
+    collectItems(mod);
 
     for (const lesson of mod.lessons) {
       allLessonIds.add(lesson.id);
-      lesson.contents.forEach((c) => allContentIds.add(c.id));
-      lesson.quizzes.forEach((q) => allQuizMap.set(q.id, q.passingScore));
-      lesson.assignments.forEach((a) => allAssignmentIds.add(a.id));
+      collectItems(lesson);
 
       for (const topic of lesson.topics) {
         allTopicIds.add(topic.id);
-        topic.contents.forEach((c) => allContentIds.add(c.id));
-        topic.quizzes.forEach((q) => allQuizMap.set(q.id, q.passingScore));
-        topic.assignments.forEach((a) => allAssignmentIds.add(a.id));
+        collectItems(topic);
+
+        for (const subTopic of topic.subTopics || []) {
+          allSubTopicIds.add(subTopic.id);
+          collectItems(subTopic);
+
+          for (const concept of subTopic.concepts || []) {
+            allConceptIds.add(concept.id);
+            collectItems(concept);
+          }
+        }
       }
     }
   }
@@ -209,6 +319,8 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
   // biggest lever on wall-clock time here.
   const quizIds = Array.from(allQuizMap.keys());
   const assignmentIds = Array.from(allAssignmentIds);
+  const conceptIds = Array.from(allConceptIds);
+  const subTopicIds = Array.from(allSubTopicIds);
   const topicIds = Array.from(allTopicIds);
   const lessonIds = Array.from(allLessonIds);
   const moduleIds = Array.from(allModuleIds);
@@ -219,9 +331,12 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     qpRecords,
     asRecords,
     apRecords,
+    existingConceptProgresses,
+    existingSubTopicProgresses,
     existingTopicProgresses,
     existingLessonProgresses,
-    existingModuleProgresses
+    existingModuleProgresses,
+    qualifications
   ] = await Promise.all([
     allContentIds.size > 0
       ? client.contentProgress.findMany({
@@ -253,6 +368,18 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
           select: { assignmentId: true, visited: true, visitedAt: true, completed: true, completedAt: true }
         })
       : [],
+    conceptIds.length > 0
+      ? client.conceptProgress.findMany({
+          where: { studentId, conceptId: { in: conceptIds } },
+          select: { conceptId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
+        })
+      : [],
+    subTopicIds.length > 0
+      ? client.subTopicProgress.findMany({
+          where: { studentId, subTopicId: { in: subTopicIds } },
+          select: { subTopicId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
+        })
+      : [],
     topicIds.length > 0
       ? client.topicProgress.findMany({
           where: { studentId, topicId: { in: topicIds } },
@@ -270,8 +397,13 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
           where: { studentId, moduleId: { in: moduleIds } },
           select: { moduleId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
         })
-      : []
+      : [],
+    // The lessons/topics this student has qualified out of, read from the
+    // Phase 1 attempt log rather than stored anywhere of its own.
+    getCourseQualifications(studentId, courseId, client)
   ]);
+
+  const { qualifiedTopicIds, qualifiedLessonIds } = qualifications;
 
   // A. Content Progress
   const completedContentSet = new Set();
@@ -316,175 +448,240 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     if (ap.completed) completedAssignmentSet.add(ap.assignmentId);
   });
 
+  // D. Qualification completes the whole skipped subtree. A student who passed
+  // a topic's/lesson's qualifying test has it -- and everything inside it --
+  // counted as completed, so the skipped node, its items and every percentage
+  // above it read "done" rather than "0 of N". Derived here on every roll-up
+  // rather than written as ContentProgress/QuizProgress rows, so no item-level
+  // activity is fabricated; `qualified` still records that it was a skip.
+  const completeSubtree = (entity) => {
+    entity.contents.forEach((c) => completedContentSet.add(c.id));
+    entity.quizzes.forEach((q) => completedQuizSet.add(q.id));
+    entity.assignments.forEach((a) => completedAssignmentSet.add(a.id));
+    for (const child of entity.topics || entity.subTopics || entity.concepts || []) {
+      completeSubtree(child);
+    }
+  };
+  for (const mod of course.modules) {
+    for (const lesson of mod.lessons) {
+      if (qualifiedLessonIds.has(lesson.id)) {
+        completeSubtree(lesson);
+        continue;
+      }
+      for (const topic of lesson.topics) {
+        if (qualifiedTopicIds.has(topic.id)) completeSubtree(topic);
+      }
+    }
+  }
+
+  const conceptProgressMap = new Map(existingConceptProgresses.map((cp) => [cp.conceptId, cp]));
+  const subTopicProgressMap = new Map(existingSubTopicProgresses.map((sp) => [sp.subTopicId, sp]));
   const topicProgressMap = new Map(existingTopicProgresses.map((tp) => [tp.topicId, tp]));
   const lessonProgressMap = new Map(existingLessonProgresses.map((lp) => [lp.lessonId, lp]));
   const moduleProgressMap = new Map(existingModuleProgresses.map((mp) => [mp.moduleId, mp]));
 
   const now = new Date();
 
-  // In-memory status maps for bottom-up computation
-  const topicCompletionStatus = new Map();
-  const topicVisitedStatus = new Map();
-  const topicHasApplicableItemsMap = new Map();
-  const topicCompletedAtMap = new Map();
-  const topicVisitedAtMap = new Map();
+  // In-memory status per container level, produced bottom-up.
+  const newStatus = () => ({
+    applicable: new Map(),
+    completed: new Map(),
+    visited: new Map(),
+    completedAt: new Map(),
+    visitedAt: new Map(),
+    qualified: new Map(),
+    qualifiedAt: new Map(),
+    // completed OR qualified -- the single flag a PARENT reads when deciding
+    // whether this child still holds it back.
+    satisfied: new Map()
+  });
 
-  const lessonCompletionStatus = new Map();
-  const lessonVisitedStatus = new Map();
-  const lessonHasApplicableItemsMap = new Map();
-  const lessonCompletedAtMap = new Map();
-  const lessonVisitedAtMap = new Map();
+  // Only Topic and Lesson offer a qualifying test; every other level passes
+  // this, so `satisfied` there is simply `completed`.
+  const NOT_QUALIFIABLE = new Map();
 
-  const moduleCompletionStatus = new Map();
-  const moduleVisitedStatus = new Map();
-  const moduleHasApplicableItemsMap = new Map();
-  const moduleCompletedAtMap = new Map();
-  const moduleVisitedAtMap = new Map();
+  // The deepest level has no child containers.
+  const NO_CHILDREN = newStatus();
 
-  // 4. Roll up TOPIC Progress
-  // Every topic's completion depends only on its OWN contents/quizzes/
-  // assignments (never on a sibling topic), so all topic upserts are
-  // independent writes -- collected here and flushed with one Promise.all
-  // instead of one awaited round trip per topic.
-  const topicUpsertPromises = [];
-  for (const mod of course.modules) {
-    for (const lesson of mod.lessons) {
-      for (const topic of lesson.topics) {
-        const topicContents = topic.contents;
-        const topicQuizzes = topic.quizzes;
-        const topicAssignments = topic.assignments;
-        const hasItems = (topicContents.length + topicQuizzes.length + topicAssignments.length) > 0;
-        topicHasApplicableItemsMap.set(topic.id, hasItems);
+  /**
+   * One container's status from its OWN Content/Quiz/Assignment plus its
+   * applicable child containers.
+   *
+   * This is character-for-character the rule the four-level version applied
+   * separately at Topic, Lesson and Module -- lifted into one function because
+   * it now has to run at FIVE levels, and five hand-written copies would be
+   * five chances to read the wrong level's Map (a mistake that produces a
+   * silently wrong percentage rather than a crash). The calculation itself is
+   * unchanged:
+   *
+   *   applicable = it has at least one own item or one applicable child
+   *   completed  = applicable AND every own item complete
+   *                          AND every applicable child complete
+   *   visited    = everything below visited -- purely derived, never sticky
+   *
+   * `children` is empty at Concept, which reduces this to "own items only" --
+   * and for a Topic with no SubTopics it likewise reduces to exactly the
+   * pre-existing Topic behaviour, which is what keeps old courses identical.
+   */
+  const computeContainer = (entity, children, existing, childStatus) => {
+    const applicableChildren = children.filter((c) => childStatus.applicable.get(c.id) === true);
 
-        const contentsCompleted = topicContents.every((c) => completedContentSet.has(c.id));
-        const quizzesCompleted = topicQuizzes.every((q) => completedQuizSet.has(q.id));
-        const assignmentsCompleted = topicAssignments.every((a) => completedAssignmentSet.has(a.id));
+    const hasItems =
+      entity.contents.length +
+        entity.quizzes.length +
+        entity.assignments.length +
+        applicableChildren.length >
+      0;
 
-        const contentsVisited = topicContents.every((c) => visitedContentSet.has(c.id));
-        const quizzesVisited = topicQuizzes.every((q) => visitedQuizSet.has(q.id));
-        const assignmentsVisited = topicAssignments.every((a) => visitedAssignmentSet.has(a.id));
+    const isCompleted =
+      hasItems &&
+      entity.contents.every((c) => completedContentSet.has(c.id)) &&
+      entity.quizzes.every((q) => completedQuizSet.has(q.id)) &&
+      entity.assignments.every((a) => completedAssignmentSet.has(a.id)) &&
+      // A child the student qualified out of no longer holds its parent
+      // back: the student demonstrated they already knew it.
+      applicableChildren.every((c) => childStatus.satisfied.get(c.id) === true);
 
-        const existing = topicProgressMap.get(topic.id);
+    const isVisited =
+      hasItems &&
+      entity.contents.every((c) => visitedContentSet.has(c.id)) &&
+      entity.quizzes.every((q) => visitedQuizSet.has(q.id)) &&
+      entity.assignments.every((a) => visitedAssignmentSet.has(a.id)) &&
+      applicableChildren.every((c) => childStatus.visited.get(c.id) === true);
 
-        const isCompleted = hasItems && contentsCompleted && quizzesCompleted && assignmentsCompleted;
-        topicCompletionStatus.set(topic.id, isCompleted);
-        const completedAt = isCompleted ? (existing?.completed ? existing.completedAt : now) : null;
-        topicCompletedAtMap.set(topic.id, completedAt);
+    return {
+      applicable: hasItems,
+      completed: isCompleted,
+      // Preserve the ORIGINAL timestamp while the container stays complete/
+      // visited, exactly as before -- never restamp it on a later recompute.
+      completedAt: isCompleted ? (existing?.completed ? existing.completedAt : now) : null,
+      visited: isVisited,
+      visitedAt: isVisited ? (existing?.visited ? existing.visitedAt : now) : null
+    };
+  };
 
-        const isVisited = (hasItems && contentsVisited && quizzesVisited && assignmentsVisited);
-        topicVisitedStatus.set(topic.id, isVisited);
-        const visitedAt = isVisited ? (existing?.visited ? existing.visitedAt : now) : null;
-        topicVisitedAtMap.set(topic.id, visitedAt);
+  /**
+   * Runs one whole level. Every container at a level depends only on its own
+   * items and its own children (never on a sibling), so all upserts for a
+   * level are independent writes -- collected and flushed with a single
+   * Promise.all, exactly as the previous per-level loops did, instead of one
+   * awaited round trip per container.
+   */
+  const runLevel = ({
+    entities,
+    childrenOf,
+    childStatus,
+    progressMap,
+    delegate,
+    idField,
+    qualifiedIds = NOT_QUALIFIABLE
+  }) => {
+    const status = newStatus();
+    const upserts = [];
+    const qualifiable = qualifiedIds !== NOT_QUALIFIABLE;
 
-        if (persist) {
-          topicUpsertPromises.push(
-            client.topicProgress.upsert({
-              where: { studentId_topicId: { studentId, topicId: topic.id } },
-              create: { studentId, topicId: topic.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
-              update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
-            })
-          );
-        }
-      }
-    }
-  }
-  if (persist) await Promise.all(topicUpsertPromises);
+    for (const entity of entities) {
+      const r = computeContainer(entity, childrenOf(entity), progressMap.get(entity.id), childStatus);
 
-  // 5. Roll up LESSON Progress -- same independence argument as topics: a
-  // lesson's completion never depends on a sibling lesson, so these upserts
-  // batch too. Must still run AFTER all topic upserts settle (already
-  // guaranteed above) since lesson completion reads topicCompletionStatus.
-  const lessonUpsertPromises = [];
-  for (const mod of course.modules) {
-    for (const lesson of mod.lessons) {
-      const lessonContents = lesson.contents;
-      const lessonQuizzes = lesson.quizzes;
-      const lessonAssignments = lesson.assignments;
-      const applicableTopics = lesson.topics.filter((t) => topicHasApplicableItemsMap.get(t.id) === true);
+      // Materialized from the qualifying attempts, exactly as `completed` is
+      // materialized from the container's items. qualifiedAt is the first
+      // passing attempt's timestamp, so it does not move when the student
+      // retakes the test.
+      const isQualified = qualifiedIds.has(entity.id);
+      const qualifiedAt = isQualified ? qualifiedIds.get(entity.id) : null;
 
-      const hasDirectItemsOrTopics = (lessonContents.length + lessonQuizzes.length + lessonAssignments.length + applicableTopics.length) > 0;
-      lessonHasApplicableItemsMap.set(lesson.id, hasDirectItemsOrTopics);
-
-      const directContentsCompleted = lessonContents.every((c) => completedContentSet.has(c.id));
-      const directQuizzesCompleted = lessonQuizzes.every((q) => completedQuizSet.has(q.id));
-      const directAssignmentsCompleted = lessonAssignments.every((a) => completedAssignmentSet.has(a.id));
-      const topicsCompleted = applicableTopics.every((t) => topicCompletionStatus.get(t.id) === true);
-
-      const directContentsVisited = lessonContents.every((c) => visitedContentSet.has(c.id));
-      const directQuizzesVisited = lessonQuizzes.every((q) => visitedQuizSet.has(q.id));
-      const directAssignmentsVisited = lessonAssignments.every((a) => visitedAssignmentSet.has(a.id));
-      const topicsVisited = applicableTopics.every((t) => topicVisitedStatus.get(t.id) === true);
-
-      const existing = lessonProgressMap.get(lesson.id);
-
-      const isCompleted = hasDirectItemsOrTopics && directContentsCompleted && directQuizzesCompleted && directAssignmentsCompleted && topicsCompleted;
-      lessonCompletionStatus.set(lesson.id, isCompleted);
-      const completedAt = isCompleted ? (existing?.completed ? existing.completedAt : now) : null;
-      lessonCompletedAtMap.set(lesson.id, completedAt);
-
-      const isVisited = (hasDirectItemsOrTopics && directContentsVisited && directQuizzesVisited && directAssignmentsVisited && topicsVisited);
-      lessonVisitedStatus.set(lesson.id, isVisited);
-      const visitedAt = isVisited ? (existing?.visited ? existing.visitedAt : now) : null;
-      lessonVisitedAtMap.set(lesson.id, visitedAt);
+      status.applicable.set(entity.id, r.applicable);
+      status.completed.set(entity.id, r.completed);
+      status.visited.set(entity.id, r.visited);
+      status.completedAt.set(entity.id, r.completedAt);
+      status.visitedAt.set(entity.id, r.visitedAt);
+      status.qualified.set(entity.id, isQualified);
+      status.qualifiedAt.set(entity.id, qualifiedAt);
+      status.satisfied.set(entity.id, r.completed || isQualified);
 
       if (persist) {
-        lessonUpsertPromises.push(
-          client.lessonProgress.upsert({
-            where: { studentId_lessonId: { studentId, lessonId: lesson.id } },
-            create: { studentId, lessonId: lesson.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
-            update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
+        const row = {
+          completed: r.completed,
+          completedAt: r.completedAt,
+          visited: r.visited,
+          visitedAt: r.visitedAt,
+          ...(qualifiable ? { qualified: isQualified, qualifiedAt } : {})
+        };
+        upserts.push(
+          delegate.upsert({
+            where: { [`studentId_${idField}`]: { studentId, [idField]: entity.id } },
+            create: { studentId, [idField]: entity.id, ...row },
+            update: row
           })
         );
       }
     }
-  }
-  if (persist) await Promise.all(lessonUpsertPromises);
 
-  // 6. Roll up MODULE Progress -- same batching, run after lessons settle
-  // since module completion reads lessonCompletionStatus.
-  const moduleUpsertPromises = [];
-  for (const mod of course.modules) {
-    const moduleContents = mod.contents;
-    const moduleQuizzes = mod.quizzes;
-    const moduleAssignments = mod.assignments;
-    const applicableLessons = mod.lessons.filter((l) => lessonHasApplicableItemsMap.get(l.id) === true);
+    return { status, upserts };
+  };
 
-    const hasDirectItemsOrLessons = (moduleContents.length + moduleQuizzes.length + moduleAssignments.length + applicableLessons.length) > 0;
-    moduleHasApplicableItemsMap.set(mod.id, hasDirectItemsOrLessons);
+  // Flattened container lists, deepest first. Built once and reused by both
+  // the roll-up below and nothing else -- the tree builder walks the nested
+  // structure directly, as before.
+  const allLessonsFlat = course.modules.flatMap((m) => m.lessons);
+  const allTopicsFlat = allLessonsFlat.flatMap((l) => l.topics);
+  const allSubTopicsFlat = allTopicsFlat.flatMap((t) => t.subTopics || []);
+  const allConceptsFlat = allSubTopicsFlat.flatMap((st) => st.concepts || []);
 
-    const directContentsCompleted = moduleContents.every((c) => completedContentSet.has(c.id));
-    const directQuizzesCompleted = moduleQuizzes.every((q) => completedQuizSet.has(q.id));
-    const directAssignmentsCompleted = moduleAssignments.every((a) => completedAssignmentSet.has(a.id));
-    const lessonsCompleted = applicableLessons.every((l) => lessonCompletionStatus.get(l.id) === true);
+  // 4. Roll up bottom-up: Concept -> SubTopic -> Topic -> Lesson -> Module.
+  // Each level must wait for the one below it to settle, because its
+  // completion reads that level's status maps.
+  const conceptRun = runLevel({
+    entities: allConceptsFlat,
+    childrenOf: () => [],
+    childStatus: NO_CHILDREN,
+    progressMap: conceptProgressMap,
+    delegate: client.conceptProgress,
+    idField: 'conceptId'
+  });
+  if (persist) await Promise.all(conceptRun.upserts);
 
-    const directContentsVisited = moduleContents.every((c) => visitedContentSet.has(c.id));
-    const directQuizzesVisited = moduleQuizzes.every((q) => visitedQuizSet.has(q.id));
-    const directAssignmentsVisited = moduleAssignments.every((a) => visitedAssignmentSet.has(a.id));
-    const lessonsVisited = applicableLessons.every((l) => lessonVisitedStatus.get(l.id) === true);
+  const subTopicRun = runLevel({
+    entities: allSubTopicsFlat,
+    childrenOf: (st) => st.concepts || [],
+    childStatus: conceptRun.status,
+    progressMap: subTopicProgressMap,
+    delegate: client.subTopicProgress,
+    idField: 'subTopicId'
+  });
+  if (persist) await Promise.all(subTopicRun.upserts);
 
-    const existing = moduleProgressMap.get(mod.id);
+  const topicRun = runLevel({
+    entities: allTopicsFlat,
+    childrenOf: (t) => t.subTopics || [],
+    childStatus: subTopicRun.status,
+    progressMap: topicProgressMap,
+    delegate: client.topicProgress,
+    idField: 'topicId',
+    qualifiedIds: qualifiedTopicIds
+  });
+  if (persist) await Promise.all(topicRun.upserts);
 
-    const isCompleted = hasDirectItemsOrLessons && directContentsCompleted && directQuizzesCompleted && directAssignmentsCompleted && lessonsCompleted;
-    moduleCompletionStatus.set(mod.id, isCompleted);
-    const completedAt = isCompleted ? (existing?.completed ? existing.completedAt : now) : null;
-    moduleCompletedAtMap.set(mod.id, completedAt);
+  const lessonRun = runLevel({
+    entities: allLessonsFlat,
+    childrenOf: (l) => l.topics,
+    childStatus: topicRun.status,
+    progressMap: lessonProgressMap,
+    delegate: client.lessonProgress,
+    idField: 'lessonId',
+    qualifiedIds: qualifiedLessonIds
+  });
+  if (persist) await Promise.all(lessonRun.upserts);
 
-    const isVisited = (hasDirectItemsOrLessons && directContentsVisited && directQuizzesVisited && directAssignmentsVisited && lessonsVisited);
-    moduleVisitedStatus.set(mod.id, isVisited);
-    const visitedAt = isVisited ? (existing?.visited ? existing.visitedAt : now) : null;
-    moduleVisitedAtMap.set(mod.id, visitedAt);
-
-    if (persist) {
-      moduleUpsertPromises.push(
-        client.moduleProgress.upsert({
-          where: { studentId_moduleId: { studentId, moduleId: mod.id } },
-          create: { studentId, moduleId: mod.id, completed: isCompleted, completedAt, visited: isVisited, visitedAt },
-          update: { completed: isCompleted, completedAt, visited: isVisited, visitedAt }
-        })
-      );
-    }
-  }
-  if (persist) await Promise.all(moduleUpsertPromises);
+  const moduleRun = runLevel({
+    entities: course.modules,
+    childrenOf: (m) => m.lessons,
+    childStatus: lessonRun.status,
+    progressMap: moduleProgressMap,
+    delegate: client.moduleProgress,
+    idField: 'moduleId'
+  });
+  if (persist) await Promise.all(moduleRun.upserts);
 
   // 7. Helper functions for mapping items and building direct item counts
   const mapContent = (c) => {
@@ -533,6 +730,7 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       id: a.id,
       kind: 'ASSIGNMENT',
       title: a.title,
+      order: a.order,
       dueDate: a.dueDate,
       visited: visitedAssignmentSet.has(a.id),
       visitedAt: ap?.visitedAt ?? null,
@@ -564,76 +762,65 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
   // 8. Build tree and roll up immediate-child denominators at every level:
   //    Parent Total Items = Direct Items + Immediate Applicable Child Containers
   //    Parent Completed Items = Direct Completed Items + Immediate Completed Child Containers
-  const modulesTree = course.modules.map((mod) => {
-    const lessonsTree = mod.lessons.map((lesson) => {
-      const topicsTree = lesson.topics.map((topic) => {
-        const direct = buildDirect(topic);
-        return {
-          id: topic.id,
-          title: topic.title,
-          order: topic.order,
-          ...direct,
-          totalItems: direct.directTotalItems,
-          completedItems: direct.directCompletedItems,
-          visitedItems: direct.directVisitedItems,
-          progressPercent: pct(direct.directCompletedItems, direct.directTotalItems),
-          visitedPercent: pct(direct.directVisitedItems, direct.directTotalItems),
-          applicable: topicHasApplicableItemsMap.get(topic.id) === true,
-          completed: topicCompletionStatus.get(topic.id) === true,
-          completedAt: topicCompletedAtMap.get(topic.id) ?? null,
-          visited: topicVisitedStatus.get(topic.id) === true,
-          visitedAt: topicVisitedAtMap.get(topic.id) ?? null
-        };
-      });
-
-      const direct = buildDirect(lesson);
-      const applicableTopics = topicsTree.filter((t) => t.applicable);
-      const totalItems = direct.directTotalItems + applicableTopics.length;
-      const completedItems = direct.directCompletedItems + applicableTopics.filter((t) => t.completed).length;
-      const visitedItems = direct.directVisitedItems + applicableTopics.filter((t) => t.visited).length;
-
-      return {
-        id: lesson.id,
-        title: lesson.title,
-        order: lesson.order,
-        ...direct,
-        topics: topicsTree,
-        totalItems,
-        completedItems,
-        visitedItems,
-        progressPercent: pct(completedItems, totalItems),
-        visitedPercent: pct(visitedItems, totalItems),
-        applicable: lessonHasApplicableItemsMap.get(lesson.id) === true,
-        completed: lessonCompletionStatus.get(lesson.id) === true,
-        completedAt: lessonCompletedAtMap.get(lesson.id) ?? null,
-        visited: lessonVisitedStatus.get(lesson.id) === true,
-        visitedAt: lessonVisitedAtMap.get(lesson.id) ?? null
-      };
-    });
-
-    const direct = buildDirect(mod);
-    const applicableLessons = lessonsTree.filter((l) => l.applicable);
-    const totalItems = direct.directTotalItems + applicableLessons.length;
-    const completedItems = direct.directCompletedItems + applicableLessons.filter((l) => l.completed).length;
-    const visitedItems = direct.directVisitedItems + applicableLessons.filter((l) => l.visited).length;
+  /**
+   * One node of the response tree. `childrenTree` is the already-built array
+   * of immediate child containers ([] at Concept).
+   *
+   * The denominator rule is unchanged and still immediate-child only:
+   *   totalItems = own items + applicable immediate child containers
+   * with each applicable child worth exactly ONE unit, and only when complete.
+   * A Topic whose `subTopics` array is empty therefore produces byte-identical
+   * numbers to the four-level version.
+   */
+  const buildNode = (entity, childrenKey, childrenTree, status) => {
+    const direct = buildDirect(entity);
+    const applicableChildren = childrenTree.filter((c) => c.applicable);
+    const totalItems = direct.directTotalItems + applicableChildren.length;
+    const completedItems =
+      direct.directCompletedItems + applicableChildren.filter((c) => c.satisfied).length;
+    const visitedItems =
+      direct.directVisitedItems + applicableChildren.filter((c) => c.visited).length;
 
     return {
-      id: mod.id,
-      title: mod.title,
-      order: mod.order,
+      id: entity.id,
+      title: entity.title,
+      order: entity.order,
       ...direct,
-      lessons: lessonsTree,
+      ...(childrenKey ? { [childrenKey]: childrenTree } : {}),
       totalItems,
       completedItems,
       visitedItems,
       progressPercent: pct(completedItems, totalItems),
       visitedPercent: pct(visitedItems, totalItems),
-      applicable: moduleHasApplicableItemsMap.get(mod.id) === true,
-      completed: moduleCompletionStatus.get(mod.id) === true,
-      completedAt: moduleCompletedAtMap.get(mod.id) ?? null,
-      visited: moduleVisitedStatus.get(mod.id) === true,
-      visitedAt: moduleVisitedAtMap.get(mod.id) ?? null
+      applicable: status.applicable.get(entity.id) === true,
+      completed: status.completed.get(entity.id) === true,
+      completedAt: status.completedAt.get(entity.id) ?? null,
+      // Skipped after passing this node's qualifying test (Topic/Lesson only;
+      // always false elsewhere). Reported separately from `completed` so the
+      // player can say "skipped" and not "done", while `satisfied` is the
+      // single flag progression reads — no caller has to check both.
+      qualified: status.qualified.get(entity.id) === true,
+      qualifiedAt: status.qualifiedAt.get(entity.id) ?? null,
+      satisfied: status.satisfied.get(entity.id) === true,
+      visited: status.visited.get(entity.id) === true,
+      visitedAt: status.visitedAt.get(entity.id) ?? null
     };
+  };
+
+  const modulesTree = course.modules.map((mod) => {
+    const lessonsTree = mod.lessons.map((lesson) => {
+      const topicsTree = lesson.topics.map((topic) => {
+        const subTopicsTree = (topic.subTopics || []).map((subTopic) => {
+          const conceptsTree = (subTopic.concepts || []).map((concept) =>
+            buildNode(concept, null, [], conceptRun.status)
+          );
+          return buildNode(subTopic, 'concepts', conceptsTree, subTopicRun.status);
+        });
+        return buildNode(topic, 'subTopics', subTopicsTree, topicRun.status);
+      });
+      return buildNode(lesson, 'topics', topicsTree, lessonRun.status);
+    });
+    return buildNode(mod, 'lessons', lessonsTree, moduleRun.status);
   });
 
   const courseDirect = buildDirect(course);
@@ -696,6 +883,11 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     progressPercent,
     visitedPercent,
     completed: isCourseCompleted,
+    // A course is not skippable as a whole; carried for shape parity with
+    // every other node in the tree.
+    qualified: false,
+    qualifiedAt: null,
+    satisfied: isCourseCompleted,
     visited: isCourseVisited
   };
 

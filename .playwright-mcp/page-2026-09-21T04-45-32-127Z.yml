@@ -1,0 +1,103 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - navigation [ref=e3]:
+      - generic [ref=e4]:
+        - link "Orange Tree LMS Home" [ref=e5] [cursor=pointer]:
+          - /url: /
+          - generic [ref=e10]: LMS
+        - generic [ref=e11]:
+          - link "Courses" [ref=e12] [cursor=pointer]:
+            - /url: "#courses"
+          - link "Domains" [ref=e13] [cursor=pointer]:
+            - /url: "#discovery"
+          - link "How It Works" [ref=e14] [cursor=pointer]:
+            - /url: "#experience"
+        - generic [ref=e15]:
+          - button "Switch to dark mode" [ref=e16] [cursor=pointer]
+          - link "Login" [ref=e17] [cursor=pointer]:
+            - /url: /login
+          - link "Get Started" [ref=e18] [cursor=pointer]:
+            - /url: /register
+    - generic [ref=e23]:
+      - generic [ref=e24]:
+        - generic [ref=e25]: Modern Learning Platform
+        - heading "Learn. Practice. Prove Your Progress." [level=1] [ref=e28]: Learn.Practice.Prove Your Progress.
+        - paragraph [ref=e29]: Structured courses, interactive quizzes, real assessments, and clear progress tracking — everything you need to learn and achieve your goals.
+        - generic [ref=e30]:
+          - link "Explore Courses" [ref=e31] [cursor=pointer]:
+            - /url: "#courses"
+          - link "Start Learning" [ref=e35] [cursor=pointer]:
+            - /url: /register
+      - paragraph [ref=e39]: Learn today. A brighter tomorrow awaits.
+    - generic [ref=e43]:
+      - generic [ref=e44]: Explore by Domain
+      - heading "What can you learn here?" [level=2] [ref=e46]
+    - generic [ref=e53]:
+      - generic [ref=e54]: Course Discovery
+      - heading "Find something worth learning." [level=2] [ref=e56]
+      - paragraph [ref=e57]: Real courses, built with structured modules and interactive assessments.
+    - generic [ref=e81]:
+      - generic [ref=e82]:
+        - generic [ref=e83]: Why Orange Tree
+        - heading "One connected learning story." [level=2] [ref=e85]
+        - paragraph [ref=e86]: Every course moves the same way — from your first lesson to a certificate you've earned.
+      - generic [ref=e88]:
+        - generic [ref=e89]:
+          - heading "Learn" [level=3] [ref=e93]
+          - paragraph [ref=e94]: Structured lessons
+          - generic [ref=e96]:
+            - generic [ref=e97]: Module 1 · Basics
+            - generic [ref=e101]: Module 2 · Core
+        - generic [ref=e106]:
+          - heading "Practice" [level=3] [ref=e112]
+          - paragraph [ref=e113]: Topic quizzes
+          - generic [ref=e115]:
+            - paragraph [ref=e116]: Which keyword defines a class?
+            - generic [ref=e117]: class
+        - generic [ref=e118]:
+          - heading "Assess" [level=3] [ref=e122]
+          - paragraph [ref=e123]: Instant results
+          - paragraph [ref=e129]: Passed
+        - generic [ref=e130]:
+          - heading "Track" [level=3] [ref=e135]
+          - paragraph [ref=e136]: Real progress
+          - paragraph [ref=e139]: Course progress
+        - generic [ref=e142]:
+          - heading "Achieve" [level=3] [ref=e147]
+          - paragraph [ref=e148]: Finish the course and your certificate is issued automatically.
+    - generic [ref=e154]:
+      - generic [ref=e155]: Outcome
+      - heading "Finish what you start." [level=2] [ref=e157]
+      - paragraph [ref=e158]: Complete every lesson in a course and Orange Tree issues your certificate automatically — a real record of what you finished, on completion.
+    - generic [ref=e169]:
+      - heading "Start learning today." [level=2] [ref=e170]
+      - paragraph [ref=e171]: Choose a course, build your knowledge, and track your progress from your first lesson to completion.
+      - generic [ref=e172]:
+        - link "Explore Courses" [ref=e173] [cursor=pointer]:
+          - /url: "#courses"
+        - link "Sign In" [ref=e177] [cursor=pointer]:
+          - /url: /login
+    - generic [ref=e178]:
+      - generic [ref=e179]:
+        - generic [ref=e180]:
+          - generic [ref=e181]:
+            - heading "Orange Tree LMS" [level=2] [ref=e182]
+            - paragraph [ref=e183]: A connected learning platform for students, instructors, and administrators — courses, quizzes, progress, and certificates in one place.
+          - generic [ref=e184]:
+            - heading "Explore" [level=3] [ref=e185]
+            - generic [ref=e186]:
+              - link "Home" [ref=e187] [cursor=pointer]:
+                - /url: /
+              - link "Courses" [ref=e188] [cursor=pointer]:
+                - /url: /#courses
+              - link "How It Works" [ref=e189] [cursor=pointer]:
+                - /url: /#how-it-works
+          - generic [ref=e190]:
+            - heading "Account" [level=3] [ref=e191]
+            - generic [ref=e192]:
+              - paragraph [ref=e193]: Courses
+              - paragraph [ref=e194]: Quizzes
+              - paragraph [ref=e195]: Certificates
+        - generic [ref=e196]: © 2026 Orange Tree LMS. All rights reserved.
+      - generic [aria-hidden] [ref=e197]: ORANGE TREE LMS
+  - button "Open Next.js Dev Tools" [ref=e203] [cursor=pointer]

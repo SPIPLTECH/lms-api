@@ -6,6 +6,7 @@ const morgan = require("morgan");
 const path = require("path");
 
 const errorHandler = require("./middleware/error.middleware");
+const { corsOriginDelegate } = require("./config/allowedOrigins");
 
 const teacherRoutes = require("./modules/teacher/teacher.route");
 const authRoutes = require("./modules/auth/auth.routes");
@@ -16,6 +17,8 @@ const batchRoutes = require("./modules/batches/batch.routes");
 const moduleRoutes = require("./modules/modules/module.routes");
 const lessonRoutes = require("./modules/lessons/lesson.routes");
 const topicRoutes = require("./modules/topics/topic.routes");
+const subTopicRoutes = require("./modules/subTopic/subTopic.routes");
+const conceptRoutes = require("./modules/concept/concept.routes");
 const contentRoutes = require("./modules/contents/content.routes");
 const enrollmentRoutes = require("./modules/enrollments/enrollment.routes");
 const quizRoutes = require("./modules/quizzes/quiz.routes");
@@ -56,7 +59,30 @@ app.disable('etag');
 // header, so the browser preflights it. Without Access-Control-Max-Age that
 // preflight result is only cached for ~5s, adding an extra OPTIONS round trip
 // ahead of most requests. 7200s is the longest Chromium honours.
-app.use(cors({ maxAge: 7200 }));
+// CORS_ALLOWED_ORIGINS, when set, is a comma-separated allowlist. Left unset
+// the behaviour is exactly what it was — every origin accepted — because
+// tightening this blindly would break whatever is already deployed against it.
+//
+// Reflecting every origin is survivable here specifically because this API
+// authenticates from an Authorization header and never from a cookie, so a
+// third-party page gets no ambient credentials to ride on. It is still worth
+// closing in production, which is what the variable is for.
+//
+// When it IS set, the decision is delegated to src/config/allowedOrigins.js so
+// that this layer and the Socket.io layer agree — including about LAN origins,
+// whose IP changes with the network and so cannot be listed up front. The gate
+// stays on CORS_ALLOWED_ORIGINS alone (not FRONTEND_URL, which the shared
+// module also reads) so that merely having FRONTEND_URL set cannot silently
+// turn this layer restrictive.
+const corsAllowlistConfigured =
+  (process.env.CORS_ALLOWED_ORIGINS || "").trim().length > 0;
+
+app.use(
+  cors({
+    maxAge: 7200,
+    ...(corsAllowlistConfigured ? { origin: corsOriginDelegate } : {})
+  })
+);
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
@@ -105,6 +131,8 @@ app.use("/batches", batchRoutes);
 app.use("/modules", moduleRoutes);
 app.use("/lessons", lessonRoutes);
 app.use("/topics", topicRoutes);
+app.use("/subtopics", subTopicRoutes);
+app.use("/concepts", conceptRoutes);
 app.use("/contents", contentRoutes);
 app.use("/enrollments", enrollmentRoutes);
 app.use("/quizzes", quizRoutes);

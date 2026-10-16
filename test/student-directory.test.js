@@ -125,6 +125,9 @@ test("recomputeCourseProgress with persist:false computes without writing", asyn
         { contentId: "ct1", completed: true, completedAt: new Date(), visited: true, visitedAt: new Date() },
       ],
     },
+    // Skip qualifications are read off the attempt log — a read, so it is
+    // allowed here; this student has passed no qualifying test.
+    quizAttempt: { findMany: async () => [] },
     topicProgress: { findMany: async () => [], upsert: noWrite("topicProgress.upsert") },
     lessonProgress: { findMany: async () => [], upsert: noWrite("lessonProgress.upsert") },
     moduleProgress: { findMany: async () => [], upsert: noWrite("moduleProgress.upsert") },

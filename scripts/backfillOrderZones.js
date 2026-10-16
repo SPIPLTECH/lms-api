@@ -78,8 +78,13 @@ async function backfillAssignments() {
 }
 
 async function main() {
-  await backfillQuizzes();
-  await backfillAssignments();
+  // Superseded: Quiz/Assignment no longer live in number bands. Every parent
+  // keeps ONE common sequence across Content, Quiz, Assignment and its child
+  // entity (see src/modules/contents/contentOrder.util.js). Running this
+  // would move every quiz and assignment back into a band after all other
+  // items. Use scripts/backfillCommonOrder.js instead.
+  console.error("backfillOrderZones.js is superseded by backfillCommonOrder.js and will not run.");
+  process.exitCode = 1;
   await prisma.$disconnect();
 }
 

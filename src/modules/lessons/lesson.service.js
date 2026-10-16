@@ -1,6 +1,7 @@
 const prisma =
   require("../../config/database");
 const ApiError = require("../../utils/ApiError");
+const { claimSequenceOrder, releaseSequenceOrder } = require("../contents/contentOrder.util");
 const notificationService = require("../notifications/notification.service");
 const youtubeTranscript = require("../../utils/youtubeTranscript");
 
@@ -46,6 +47,18 @@ const getLessonById = async (
             orderBy: {
               order: "asc"
             }
+          },
+          // Nested under Topic, so a lesson with no SubTopics returns exactly
+          // what it did before plus an empty `subTopics` array.
+          subTopics: {
+            orderBy: { order: "asc" },
+            include: {
+              contents: { orderBy: { order: "asc" } },
+              concepts: {
+                orderBy: { order: "asc" },
+                include: { contents: { orderBy: { order: "asc" } } }
+              }
+            }
           }
         }
       }
@@ -65,24 +78,23 @@ const createLesson = async (
   data,
   actorUserId = null
 ) => {
-  const lastLesson = await prisma.lesson.findFirst({
-    where: { moduleId: data.moduleId },
-    orderBy: { order: "desc" },
-    select: { order: true }
-  });
-
   // A lesson added to an already-published course goes live with it.
   const parentModule = await prisma.module.findUnique({
     where: { id: data.moduleId },
     select: { course: { select: { status: true } } }
   });
 
-  const lesson = await prisma.lesson.create({
-    data: {
-      ...data,
-      order: (lastLesson?.order ?? 0) + 1,
-      isPublished: data.isPublished ?? parentModule?.course?.status === "PUBLISHED"
-    }
+  // Appended to the module's ONE common sequence — after the module's last
+  // Content, Quiz, Assignment or Lesson.
+  const lesson = await prisma.$transaction(async (tx) => {
+    const order = await claimSequenceOrder("moduleId", data.moduleId, null, tx, "lesson");
+    return tx.lesson.create({
+      data: {
+        ...data,
+        order,
+        isPublished: data.isPublished ?? parentModule?.course?.status === "PUBLISHED"
+      }
+    });
   });
 
   if (lesson.isPublished) {
@@ -177,7 +189,12 @@ const deleteLesson = async (
   const existing = await prisma.lesson.findUnique({
     where: { id: lessonId },
     include: {
-      topics: { select: { id: true } }
+      topics: {
+        select: {
+          id: true,
+          subTopics: { select: { id: true, concepts: { select: { id: true } } } }
+        }
+      }
     }
   });
 
@@ -188,14 +205,21 @@ const deleteLesson = async (
   }
 
   const topicIds = (existing.topics || []).map((t) => t.id);
+  const subTopics = (existing.topics || []).flatMap((t) => t.subTopics || []);
+  const subTopicIds = subTopics.map((s) => s.id);
+  const conceptIds = subTopics.flatMap((s) => (s.concepts || []).map((c) => c.id));
 
   return await prisma.$transaction(async (tx) => {
-    // 1. Delete all lesson-level and topic-level quizzes under this lesson
+    // 1. Delete every quiz at or below this lesson. Descendant rows cascade
+    //    in the database, but Quiz does not cascade to QuizQuestion or
+    //    QuizSubmission, so SubTopic/Concept quizzes must be cleared here too.
     const quizzesToDelete = await tx.quiz.findMany({
       where: {
         OR: [
           { lessonId },
-          ...(topicIds.length > 0 ? [{ topicId: { in: topicIds } }] : [])
+          ...(topicIds.length > 0 ? [{ topicId: { in: topicIds } }] : []),
+          ...(subTopicIds.length > 0 ? [{ subTopicId: { in: subTopicIds } }] : []),
+          ...(conceptIds.length > 0 ? [{ conceptId: { in: conceptIds } }] : [])
         ]
       },
       select: { id: true }
@@ -209,18 +233,30 @@ const deleteLesson = async (
       await tx.quiz.deleteMany({ where: { id: { in: quizIds } } });
     }
 
-    // 2. Delete topic contents & topics
+    // 2. Delete contents and containers, deepest first
+    if (conceptIds.length > 0) {
+      await tx.content.deleteMany({ where: { conceptId: { in: conceptIds } } });
+      await tx.concept.deleteMany({ where: { id: { in: conceptIds } } });
+    }
+    if (subTopicIds.length > 0) {
+      await tx.content.deleteMany({ where: { subTopicId: { in: subTopicIds } } });
+      await tx.subTopic.deleteMany({ where: { id: { in: subTopicIds } } });
+    }
     if (topicIds.length > 0) {
       await tx.content.deleteMany({ where: { topicId: { in: topicIds } } });
       await tx.topic.deleteMany({ where: { id: { in: topicIds } } });
     }
 
     // 3. Delete lesson
-    return await tx.lesson.delete({
+    const deleted = await tx.lesson.delete({
       where: {
         id: lessonId
       }
     });
+
+    // 4. Close the lesson's slot in its module's common sequence
+    await releaseSequenceOrder("moduleId", existing.moduleId, existing.order, tx);
+    return deleted;
   });
 };
 

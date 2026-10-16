@@ -1,6 +1,9 @@
 const Joi = require("joi");
 
-const QUIZ_TAGS = ["SELF_TEST", "FINAL"];
+// QUALIFYING is a quiz that lets a student SKIP the lesson/topic it is
+// attached to, rather than one they work through inside it. Its scope column
+// (lessonId/topicId) is therefore its target — see utils/qualification.js.
+const QUIZ_TAGS = ["SELF_TEST", "FINAL", "QUALIFYING"];
 
 const createQuizSchema = Joi.object({
   title: Joi.string().required(),
@@ -10,6 +13,8 @@ const createQuizSchema = Joi.object({
   moduleId: Joi.string().optional().allow(null, ""),
   lessonId: Joi.string().optional().allow(null, ""),
   topicId: Joi.string().optional().allow(null, ""),
+  subTopicId: Joi.string().optional().allow(null, ""),
+  conceptId: Joi.string().optional().allow(null, ""),
   // Required, not defaulted: the instructor must actively say whether this is
   // practice or the real assessment. A default would silently pick for them.
   quizTag: Joi.string().valid(...QUIZ_TAGS).required(),
@@ -19,7 +24,8 @@ const createQuizSchema = Joi.object({
   // every Self-Test as unlimited (0) and never saves a Final below 1.
   attempts: Joi.number().integer().min(0).max(100).optional(),
   isPublished: Joi.boolean().optional(),
-  order: Joi.number().integer().min(1).optional(),
+  // A position in the parent's common sequence; 0 is a valid position.
+  order: Joi.number().integer().min(0).optional(),
   questions: Joi.array().optional(),
 });
 
@@ -36,7 +42,7 @@ const updateQuizSchema = Joi.object({
   // every Self-Test as unlimited (0) and never saves a Final below 1.
   attempts: Joi.number().integer().min(0).max(100).optional(),
   isPublished: Joi.boolean().optional(),
-  order: Joi.number().integer().min(1).optional(),
+  order: Joi.number().integer().min(0).optional(),
   questions: Joi.array().optional(),
 });
 
@@ -51,6 +57,29 @@ const answerValueSchema = Joi.alternatives().try(
   Joi.object().pattern(Joi.string(), Joi.string())
 );
 
+const QUESTION_ATTEMPT_STATUSES = ["NOT_VISITED", "VISITED", "ANSWERED", "SKIPPED"];
+
+// Per-question activity the server cannot reconstruct from `answers` alone:
+// whether the question was ever opened, whether it was explicitly skipped,
+// whether a hint was viewed, and when each of those happened. All optional —
+// an older client that posts only `answers` still submits successfully, it
+// just yields question records with no visit/skip history.
+//
+// Correctness, marks and the ANSWERED/not-answered fact are NOT taken from
+// here: the service derives those from the answers it grades, so a crafted
+// payload can't award itself marks or claim it answered what it didn't.
+const questionStateSchema = Joi.object({
+  questionId: Joi.string().required(),
+  status: Joi.string().valid(...QUESTION_ATTEMPT_STATUSES).optional(),
+  visited: Joi.boolean().optional(),
+  skipped: Joi.boolean().optional(),
+  hintViewed: Joi.boolean().optional(),
+  firstVisitedAt: Joi.date().iso().optional().allow(null),
+  lastVisitedAt: Joi.date().iso().optional().allow(null),
+  answeredAt: Joi.date().iso().optional().allow(null),
+  skippedAt: Joi.date().iso().optional().allow(null)
+});
+
 const submitQuizSchema = Joi.object({
   answers: Joi.array().items(
     Joi.object({
@@ -58,6 +87,9 @@ const submitQuizSchema = Joi.object({
       answer: answerValueSchema.required()
     })
   ).required(),
+  // Question-level activity for this attempt, one entry per question the
+  // student touched. Optional, see questionStateSchema above.
+  questionStates: Joi.array().items(questionStateSchema).optional(),
   // How long the attempt took, as measured by the attempt UI. Informational
   // only (shown on the result page); capped at a day to reject garbage.
   timeTakenSeconds: Joi.number().integer().min(0).max(86400).optional().allow(null)
@@ -82,6 +114,7 @@ const generateSelfAssessmentQuizSchema = Joi.object({
 
 module.exports = {
   QUIZ_TAGS,
+  QUESTION_ATTEMPT_STATUSES,
   createQuizSchema,
   updateQuizSchema,
   submitQuizSchema,

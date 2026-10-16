@@ -1,13 +1,36 @@
 const prisma = require("../../config/database");
 const { sanitizeContent } = require("../../utils/sanitizer");
-const { getNextOrder } = require("./contentOrder.util");
+const {
+  claimSequenceOrder,
+  releaseSequenceOrder,
+  mostSpecificParentField,
+  assertCourseReorderAllowed,
+} = require("./contentOrder.util");
 const progressService = require("../progress/progress.service");
 const {
   BREADCRUMB_INCLUDE,
+  PARENT_FIELDS,
+  COURSE_ID_INCLUDE,
+  resolveCourseId,
   resolveBreadcrumb,
 } = require("../../utils/helpers/courseBreadcrumb.helper");
 
-const PARENT_FIELDS = ["courseId", "moduleId", "lessonId", "topicId"];
+// Every relation path from a Content row up to its owning course's creator.
+// Used by the instructor-scoping filters below, which must cover all six
+// attachment levels or an instructor's own SubTopic/Concept content would be
+// missing from their own listings.
+const OWNED_BY_INSTRUCTOR = (userId) => [
+  { course: { creatorId: userId } },
+  { module: { course: { creatorId: userId } } },
+  { lesson: { module: { course: { creatorId: userId } } } },
+  { topic: { lesson: { module: { course: { creatorId: userId } } } } },
+  { subTopic: { topic: { lesson: { module: { course: { creatorId: userId } } } } } },
+  {
+    concept: {
+      subTopic: { topic: { lesson: { module: { course: { creatorId: userId } } } } },
+    },
+  },
+];
 
 const getContents = async (query = {}, role, userId) => {
   const where = {};
@@ -16,12 +39,7 @@ const getContents = async (query = {}, role, userId) => {
   if (parentField) {
     where[parentField] = query[parentField];
   } else if (role === "INSTRUCTOR") {
-    where.OR = [
-      { course: { creatorId: userId } },
-      { module: { course: { creatorId: userId } } },
-      { lesson: { module: { course: { creatorId: userId } } } },
-      { topic: { lesson: { module: { course: { creatorId: userId } } } } },
-    ];
+    where.OR = OWNED_BY_INSTRUCTOR(userId);
   }
 
   return prisma.content.findMany({
@@ -49,17 +67,24 @@ const createContent = async (data) => {
 
   const parentField = PARENT_FIELDS.find((field) => contentData[field]);
 
-  // Auto-calculate order if missing or not an integer
-  if (contentData.order === undefined || contentData.order === null || isNaN(Number(contentData.order))) {
-    contentData.order = parentField
-      ? await getNextOrder(parentField, contentData[parentField])
-      : 1;
-  } else {
-    contentData.order = Number(contentData.order);
+  const requestedOrder =
+    contentData.order === undefined || contentData.order === null || isNaN(Number(contentData.order))
+      ? null
+      : Number(contentData.order);
+
+  // Parentless rows are rejected by createContentSchema; kept as before for direct callers.
+  if (!parentField) {
+    contentData.order = requestedOrder ?? 1;
+    return prisma.content.create({ data: contentData });
   }
 
-  return prisma.content.create({
-    data: contentData
+  // Content takes its position in the parent's ONE common sequence (shared
+  // with that parent's Quizzes, Assignments and child entity): appended after
+  // the last item of any type, or — when an order is given — inserted at that
+  // position with every later item moved down one.
+  return prisma.$transaction(async (tx) => {
+    contentData.order = await claimSequenceOrder(parentField, contentData[parentField], requestedOrder, tx, "content");
+    return tx.content.create({ data: contentData });
   });
 };
 
@@ -95,16 +120,26 @@ const deleteContent = async (contentId) => {
     throw error;
   }
 
-  return prisma.content.delete({
-    where: {
-      id: contentId
-    }
+  // Removing an item closes its slot in the parent's common sequence.
+  return prisma.$transaction(async (tx) => {
+    const deleted = await tx.content.delete({
+      where: {
+        id: contentId
+      }
+    });
+    const parentField = mostSpecificParentField(existing);
+    await releaseSequenceOrder(parentField, parentField && existing[parentField], existing.order, tx);
+    return deleted;
   });
 };
 
 const reorderContents = async (
   contents
 ) => {
+  // Course level only: course content stays in the Content group, ahead of
+  // the modules, assignments and quizzes. Other levels are unconstrained.
+  await assertCourseReorderAllowed("content", contents);
+
   // Two-phase reorder: @@unique([lessonId, order]) rejects a naive
   // parallel swap (A->2 while B still holds 2), so first move every
   // row to a disjoint negative placeholder, then to its final order.
@@ -157,11 +192,7 @@ const toSubmissionDto = (submission) =>
 const loadAssignmentContentForStudent = async (contentId, studentId, requestingUser) => {
   const content = await prisma.content.findUnique({
     where: { id: contentId },
-    include: {
-      topic: { include: { lesson: { include: { module: true } } } },
-      lesson: { include: { module: true } },
-      module: true,
-    },
+    include: COURSE_ID_INCLUDE,
   });
 
   if (!content) {
@@ -176,11 +207,7 @@ const loadAssignmentContentForStudent = async (contentId, studentId, requestingU
     throw error;
   }
 
-  const courseId =
-    content.topic?.lesson?.module?.courseId ||
-    content.lesson?.module?.courseId ||
-    content.module?.courseId ||
-    content.courseId;
+  const courseId = resolveCourseId(content);
 
   if (courseId) {
     await progressService.assertCourseProgressAccess(requestingUser, studentId, courseId);
@@ -244,12 +271,7 @@ const submitContentAssignment = async (contentId, studentId, data, requestingUse
 const getInstructorAssignmentContents = async (userId, role) => {
   const where = { type: "ASSIGNMENT" };
   if (role !== "ADMIN") {
-    where.OR = [
-      { course: { creatorId: userId } },
-      { module: { course: { creatorId: userId } } },
-      { lesson: { module: { course: { creatorId: userId } } } },
-      { topic: { lesson: { module: { course: { creatorId: userId } } } } },
-    ];
+    where.OR = OWNED_BY_INSTRUCTOR(userId);
   }
 
   const contents = await prisma.content.findMany({

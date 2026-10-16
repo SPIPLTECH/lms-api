@@ -26,6 +26,8 @@ const createContentSchema = Joi.object({
   moduleId: Joi.string().optional(),
   lessonId: Joi.string().optional(),
   topicId: Joi.string().optional(),
+  subTopicId: Joi.string().optional(),
+  conceptId: Joi.string().optional(),
   type: Joi.string()
     .valid(...VALID_CONTENT_TYPES)
     .required()
@@ -42,10 +44,14 @@ const createContentSchema = Joi.object({
   data: Joi.object().optional().allow(null),
   parentContentId: Joi.string().optional().allow(null, ""),
 })
-  .xor("courseId", "moduleId", "lessonId", "topicId")
+  // Exactly one parent, now across six levels. Existing three-level callers
+  // are unaffected: .xor still rejects zero parents and still rejects two.
+  .xor("courseId", "moduleId", "lessonId", "topicId", "subTopicId", "conceptId")
   .messages({
-    "object.missing": "Content must be attached to exactly one of course, module, lesson, or topic.",
-    "object.xor": "Content must be attached to exactly one of course, module, lesson, or topic.",
+    "object.missing":
+      "Content must be attached to exactly one of course, module, lesson, topic, subtopic, or concept.",
+    "object.xor":
+      "Content must be attached to exactly one of course, module, lesson, topic, subtopic, or concept.",
   });
 
 const updateContentSchema = Joi.object({
