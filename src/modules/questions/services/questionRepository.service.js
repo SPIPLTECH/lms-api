@@ -494,8 +494,8 @@ class QuestionRepositoryService {
    * @param {string} filename 
    * @param {string} userId 
    */
-  async bulkUploadQuestions(buffer, filename, userId) {
-    const report = await QuestionUploadParser.parseAndValidate(buffer, filename, userId);
+  async bulkUploadQuestions(buffer, filename, userId, user = null) {
+    const report = await QuestionUploadParser.parseAndValidate(buffer, filename, userId, user);
 
     if (report.validQuestions.length > 0) {
       await prisma.question.createMany({

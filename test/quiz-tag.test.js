@@ -6,6 +6,34 @@ const { createQuizSchema, updateQuizSchema } = require("../src/modules/quizzes/q
 const prisma = require("../src/config/database");
 const { createTransactionStub } = require("./sequence-db.fake");
 
+// createQuiz/updateQuiz write the Quiz and its learning-sequence Content row
+// in one prisma.$transaction. These tests are about the tag rules, so the
+// transaction runs against the mocks below and the Content row is recorded,
+// never written to a real database.
+const stubSequenceWrites = (t) => {
+  const originals = {
+    transaction: prisma.$transaction,
+    contentCreate: prisma.content.create,
+    contentFindUnique: prisma.content.findUnique,
+    contentUpdate: prisma.content.update,
+  };
+  const created = [];
+  prisma.$transaction = createTransactionStub(prisma).$transaction;
+  prisma.content.create = async ({ data }) => {
+    created.push(data);
+    return { id: `content-${created.length}`, ...data };
+  };
+  prisma.content.findUnique = async () => null;
+  prisma.content.update = async ({ data }) => data;
+  t.after(() => {
+    prisma.$transaction = originals.transaction;
+    prisma.content.create = originals.contentCreate;
+    prisma.content.findUnique = originals.contentFindUnique;
+    prisma.content.update = originals.contentUpdate;
+  });
+  return created;
+};
+
 // The invariant under test: quizTag === "SELF_TEST" implies timeLimit === null,
 // enforced in the service so no client can save a timed Self-Test.
 
@@ -29,14 +57,7 @@ test("createQuiz — a Self-Test is written untimed even when a limit is sent", 
   prisma.course.findUnique = async () => ({ id: "c1" });
   prisma.content.findFirst = async () => null;
   prisma.quiz.findFirst = async () => null;
-  // createQuiz claims its position in the parent's common sequence inside
-  // prisma.$transaction — run that callback against the mocks installed here,
-  // so these stay unit tests rather than reaching the live database.
-  const originalTransaction = prisma.$transaction;
-  prisma.$transaction = createTransactionStub(prisma).$transaction;
-  t.after(() => {
-    prisma.$transaction = originalTransaction;
-  });
+  stubSequenceWrites(t);
   // createQuiz returns getQuizById(...) at the end -- stubbed so these stay
   // unit tests rather than quietly reaching the live database.
   prisma.quiz.findUnique = async () => ({ id: "q1", quizQuestions: [] });
@@ -108,6 +129,7 @@ test("updateQuiz — the effective tag governs the time limit", async (t) => {
     prisma.quiz.findUnique = originals.quizFindUnique;
     prisma.quiz.update = originals.quizUpdate;
   });
+  stubSequenceWrites(t);
 
   const stubExisting = (row) => {
     prisma.quiz.findUnique = async () => row;
@@ -220,14 +242,7 @@ test("createQuiz — attempts follow the tag", async (t) => {
   prisma.course.findUnique = async () => ({ id: "c1" });
   prisma.content.findFirst = async () => null;
   prisma.quiz.findFirst = async () => null;
-  // createQuiz claims its position in the parent's common sequence inside
-  // prisma.$transaction — run that callback against the mocks installed here,
-  // so these stay unit tests rather than reaching the live database.
-  const originalTransaction = prisma.$transaction;
-  prisma.$transaction = createTransactionStub(prisma).$transaction;
-  t.after(() => {
-    prisma.$transaction = originalTransaction;
-  });
+  stubSequenceWrites(t);
   prisma.quiz.findUnique = async () => ({ id: "q1", quizQuestions: [] });
 
   const captureCreate = () => {
@@ -276,6 +291,7 @@ test("updateQuiz — attempts follow the effective tag", async (t) => {
     prisma.quiz.findUnique = originals.quizFindUnique;
     prisma.quiz.update = originals.quizUpdate;
   });
+  stubSequenceWrites(t);
 
   const stubExisting = (row) => {
     prisma.quiz.findUnique = async () => row;

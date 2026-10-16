@@ -1,5 +1,6 @@
+const ApiError = require("../../utils/ApiError");
 const prisma = require("../../config/database");
-const { claimSequenceOrder, releaseSequenceOrder } = require("../contents/contentOrder.util");
+const { claimContainerOrder, releaseContainerOrder, moveContainers } = require("../contents/contentOrder.util");
 
 const getSubTopics = async (topicId, role, userId) => {
   const where = {};
@@ -61,27 +62,18 @@ const createSubTopic = async (data) => {
   const requestedOrder =
     data.order === undefined || data.order === null || isNaN(Number(data.order)) ? null : Number(data.order);
 
-  // A subtopic added to an already-published course goes live with it --
-  // same rule topic.service.createTopic applies one level up.
-  const parentTopic = await prisma.topic.findUnique({
-    where: { id: data.topicId },
-    select: {
-      lesson: { select: { module: { select: { course: { select: { status: true } } } } } },
-    },
-  });
-
   // Takes its position in the topic's ONE common sequence (shared with the
   // topic's Content, Quizzes and Assignments): appended, or inserted at the
   // requested order with every later item moved down one.
   return prisma.$transaction(async (tx) => {
-    const order = await claimSequenceOrder("topicId", data.topicId, requestedOrder, tx, "subTopic");
+    const order = await claimContainerOrder("subTopic", data.topicId, requestedOrder, tx);
     return tx.subTopic.create({
       data: {
         ...data,
         order,
-        isPublished:
-          data.isPublished ??
-          parentTopic?.lesson?.module?.course?.status === "PUBLISHED",
+        // Published on creation: a draft is invisible to students along with
+        // everything inside it. The course's own status still gates access.
+        isPublished: data.isPublished ?? true,
       },
     });
   });
@@ -157,38 +149,30 @@ const deleteSubTopic = async (subTopicId) => {
     });
 
     // 4. Close the subtopic's slot in its topic's common sequence
-    await releaseSequenceOrder("topicId", existing.topicId, existing.order, tx);
+    await releaseContainerOrder("subTopic", existing.topicId, existing.order, tx);
     return deleted;
   });
 };
 
+/**
+ * Moves subtopics within their topic's learning sequence, which they share
+ * with the topic's Content rows: each listed subtopic goes to its requested
+ * position, everything else keeps its relative order, and the sequence stays
+ * 1..n. A subtopic of another topic is refused.
+ */
 const reorderSubTopics = async (topicId, subTopics) => {
-  // Two-phase reorder: @@unique([topicId, order]) rejects a naive
-  // parallel swap (A->2 while B still holds 2), so first move every
-  // row to a disjoint negative placeholder, then to its final order.
-  const offsetUpdates = subTopics.map((subTopic, index) =>
-    prisma.subTopic.update({
-      where: {
-        id: subTopic.id,
-      },
-      data: {
-        order: -1000 - index,
-      },
-    })
-  );
+  const existing = await prisma.subTopic.findMany({
+    where: { topicId },
+    select: { id: true }
+  });
+  const validIds = new Set(existing.map((row) => row.id));
+  if (!subTopics.every((row) => validIds.has(row.id))) {
+    throw new ApiError(403, "One or more subtopics do not belong to this topic.");
+  }
 
-  const finalUpdates = subTopics.map((subTopic) =>
-    prisma.subTopic.update({
-      where: {
-        id: subTopic.id,
-      },
-      data: {
-        order: subTopic.order,
-      },
-    })
+  return prisma.$transaction((tx) =>
+    moveContainers("subTopic", topicId, subTopics.map(({ id, order }) => ({ id, order })), tx)
   );
-
-  return prisma.$transaction([...offsetUpdates, ...finalUpdates]);
 };
 
 module.exports = {

@@ -124,6 +124,9 @@ test("SubTopic + Concept hierarchy", async (t) => {
     });
 
     // Quiz + Assignment on the two NEW levels, proving CQA works there.
+    // The quiz and assignment rows are wrapped in Content(type=QUIZ/ASSIGNMENT)
+    // so the unified Content ordering sequence includes them at the correct
+    // positions (content=1, quiz-content=2, assignment-content=3).
     await prisma.quiz.createMany({
       data: [
         { id: "stc_quiz_subtopic", title: "ST quiz", order: 2, passingScore: 50, isPublished: true, courseId, subTopicId: ids.subTopic },
@@ -134,6 +137,17 @@ test("SubTopic + Concept hierarchy", async (t) => {
       data: [
         { id: "stc_asg_subtopic", title: "ST asg", order: 3, dueDate: new Date("2030-01-01"), isPublished: true, courseId, subTopicId: ids.subTopic },
         { id: "stc_asg_concept", title: "C asg", order: 3, dueDate: new Date("2030-01-01"), isPublished: true, courseId, conceptId: ids.concept },
+      ],
+    });
+    // Content wrappers for the quizzes and assignments so the unified Content
+    // ordering sequence sees them. Without wrappers the new sequenceMembers()
+    // only queries the `content` table, so order-claiming would ignore them.
+    await prisma.content.createMany({
+      data: [
+        { id: "stc_cnt_quiz_subtopic", order: 2, subTopicId: ids.subTopic, type: "QUIZ", title: "ST quiz", quizId: "stc_quiz_subtopic" },
+        { id: "stc_cnt_asg_subtopic", order: 3, subTopicId: ids.subTopic, type: "ASSIGNMENT", title: "ST asg", assignmentId: "stc_asg_subtopic" },
+        { id: "stc_cnt_quiz_concept", order: 2, conceptId: ids.concept, type: "QUIZ", title: "C quiz", quizId: "stc_quiz_concept" },
+        { id: "stc_cnt_asg_concept", order: 3, conceptId: ids.concept, type: "ASSIGNMENT", title: "C asg", assignmentId: "stc_asg_concept" },
       ],
     });
   });
@@ -166,13 +180,24 @@ test("SubTopic + Concept hierarchy", async (t) => {
   await t.test("B. CQA is carried at SubTopic and Concept level", async () => {
     const { subTopic, concept } = await tree();
 
-    assert.deepStrictEqual(subTopic.contents.map((c) => c.id), ["stc_cnt_subtopic"]);
-    assert.deepStrictEqual(subTopic.quizzes.map((q) => q.id), ["stc_quiz_subtopic"]);
-    assert.deepStrictEqual(subTopic.assignments.map((a) => a.id), ["stc_asg_subtopic"]);
+    // Non-QUALIFYING quizzes and assignments now appear as Content items (type QUIZ/ASSIGNMENT).
+    // The unwrapped quiz/assignment relations are empty because the items have Content wrappers
+    // (filtered out by progressRollup's UNWRAPPED_QUIZ/UNWRAPPED_ASSIGNMENT filter).
+    assert.deepStrictEqual(
+      subTopic.contents.map((c) => c.id).sort(),
+      ["stc_cnt_subtopic", "stc_cnt_quiz_subtopic", "stc_cnt_asg_subtopic"].sort(),
+      "subtopic contents include the base content and the QUIZ/ASSIGNMENT wrapper rows"
+    );
+    assert.deepStrictEqual(subTopic.quizzes, [], "wrapped quiz does not appear in quizzes array");
+    assert.deepStrictEqual(subTopic.assignments, [], "wrapped assignment does not appear in assignments array");
 
-    assert.deepStrictEqual(concept.contents.map((c) => c.id), ["stc_cnt_concept"]);
-    assert.deepStrictEqual(concept.quizzes.map((q) => q.id), ["stc_quiz_concept"]);
-    assert.deepStrictEqual(concept.assignments.map((a) => a.id), ["stc_asg_concept"]);
+    assert.deepStrictEqual(
+      concept.contents.map((c) => c.id).sort(),
+      ["stc_cnt_concept", "stc_cnt_quiz_concept", "stc_cnt_asg_concept"].sort(),
+      "concept contents include base content and QUIZ/ASSIGNMENT wrapper rows"
+    );
+    assert.deepStrictEqual(concept.quizzes, [], "wrapped quiz does not appear in quizzes array");
+    assert.deepStrictEqual(concept.assignments, [], "wrapped assignment does not appear in assignments array");
   });
 
   await t.test("C. Concept/SubTopic items are NOT counted as Topic-direct items", async () => {
@@ -204,7 +229,7 @@ test("SubTopic + Concept hierarchy", async (t) => {
 
     const dupes = seen.filter((id, i) => seen.indexOf(id) !== i);
     assert.deepStrictEqual(dupes, [], "no item may be counted twice, duplicates found: " + dupes);
-    // 7 contents + 2 quizzes + 2 assignments
+    // 7 original contents + 4 QUIZ/ASSIGNMENT wrapper content rows = 11, 0 standalone quizzes/assignments
     assert.strictEqual(seen.length, 11, "every fixture item is present exactly once");
   });
 
@@ -221,30 +246,23 @@ test("SubTopic + Concept hierarchy", async (t) => {
 
   await t.test("B. Progress rolls Content -> Concept -> SubTopic -> Topic", async () => {
     // Concept needs all three of its own items before it completes.
+    // Quiz and assignment are now tracked as Content items (type QUIZ/ASSIGNMENT),
+    // completed via ContentProgress, not QuizProgress/AssignmentProgress.
     await progressService.completeContent(studentId, "stc_cnt_concept", true);
     let s = await tree();
-    assert.strictEqual(s.concept.completed, false, "concept still has an open quiz and assignment");
+    assert.strictEqual(s.concept.completed, false, "concept still has open QUIZ and ASSIGNMENT content items");
 
-    await prisma.quizProgress.upsert({
-      where: { studentId_quizId: { studentId, quizId: "stc_quiz_concept" } },
-      create: { studentId, quizId: "stc_quiz_concept", completed: true, completedAt: new Date() },
-      update: { completed: true },
-    });
-    await prisma.assignmentProgress.upsert({
-      where: { studentId_assignmentId: { studentId, assignmentId: "stc_asg_concept" } },
-      create: { studentId, assignmentId: "stc_asg_concept", completed: true, completedAt: new Date() },
-      update: { completed: true },
-    });
+    await progressService.completeContent(studentId, "stc_cnt_quiz_concept", true);
+    await progressService.completeContent(studentId, "stc_cnt_asg_concept", true);
 
     s = await tree();
-    assert.strictEqual(s.concept.completed, true, "concept completes once all its own CQA is done");
+    assert.strictEqual(s.concept.completed, true, "concept completes once all its own content (incl QUIZ/ASSIGNMENT) is done");
     assert.strictEqual(s.concept.progressPercent, 100);
 
-    // SubTopic denominator = 3 own items + 1 applicable concept = 4, and the
-    // completed concept contributes exactly ONE unit.
+    // SubTopic denominator = 3 own content items + 1 applicable concept = 4.
     assert.strictEqual(s.subTopic.totalItems, 4);
     assert.strictEqual(s.subTopic.completedItems, 1, "only the concept unit so far");
-    assert.strictEqual(s.subTopic.completed, false, "subtopic still has its own CQA open");
+    assert.strictEqual(s.subTopic.completed, false, "subtopic still has its own content items open");
 
     // Topic must not complete while the subtopic below it is incomplete.
     assert.strictEqual(s.topicNew.completed, false);
@@ -252,19 +270,11 @@ test("SubTopic + Concept hierarchy", async (t) => {
 
   await t.test("B. Completing SubTopic CQA completes SubTopic, then Topic", async () => {
     await progressService.completeContent(studentId, "stc_cnt_subtopic", true);
-    await prisma.quizProgress.upsert({
-      where: { studentId_quizId: { studentId, quizId: "stc_quiz_subtopic" } },
-      create: { studentId, quizId: "stc_quiz_subtopic", completed: true, completedAt: new Date() },
-      update: { completed: true },
-    });
-    await prisma.assignmentProgress.upsert({
-      where: { studentId_assignmentId: { studentId, assignmentId: "stc_asg_subtopic" } },
-      create: { studentId, assignmentId: "stc_asg_subtopic", completed: true, completedAt: new Date() },
-      update: { completed: true },
-    });
+    await progressService.completeContent(studentId, "stc_cnt_quiz_subtopic", true);
+    await progressService.completeContent(studentId, "stc_cnt_asg_subtopic", true);
 
     let s = await tree();
-    assert.strictEqual(s.subTopic.completed, true, "subtopic completes: own CQA plus its concept");
+    assert.strictEqual(s.subTopic.completed, true, "subtopic completes: own content items plus its concept");
     assert.strictEqual(s.subTopic.completedItems, 4);
     assert.strictEqual(s.topicNew.completed, false, "topic still owns one incomplete content");
 

@@ -312,6 +312,16 @@ model Concept {
   @@unique([subTopicId, order])
 }
 
+// THE learning-sequence entity. Every item a container holds is a Content
+// row with exactly one parent (CHECK content_exactly_one_parent), ordered by
+// Content.order — the ONLY sequence order. A Quiz or an Assignment takes part
+// in a sequence through the Content row that wraps it:
+//   type QUIZ        -> quizId set, assignmentId null
+//   type ASSIGNMENT  -> assignmentId set, quizId null
+//   any other type   -> both null
+// (CHECK content_type_link; quizId / assignmentId are unique, so a Quiz or
+// Assignment is placed at most once.) Constraints that schema.prisma cannot
+// express live in scripts/content-sequence-2-constraints.sql.
 model Content {
   id            String              @id @default(cuid())
   order         Int
@@ -329,6 +339,10 @@ model Content {
   externalUrl   String?
   duration      Int?
   data          Json?
+  quizId        String?             @unique
+  quiz          Quiz?               @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  assignmentId  String?             @unique
+  assignment    Assignment?         @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
   course        Course?             @relation(fields: [courseId], references: [id], onDelete: Cascade)
@@ -593,6 +607,10 @@ model PaymentOrder {
 
 model Quiz {
   id               String           @id @default(cuid())
+  /// @deprecated Not read or written. A quiz's position in the learning
+  /// sequence is its Content(type=QUIZ) row's order. Kept only so branches
+  /// still deployed against the shared database keep working; drop once all
+  /// have merged.
   order            Int?
   title            String
   description      String?
@@ -632,6 +650,7 @@ model Quiz {
   negativeMarking  Float            @default(0)
   attempts         Int              @default(1)
   quizQuestions    QuizQuestion[]
+  content          Content?
 
   @@index([batchId])
   @@index([moduleId])
@@ -1003,11 +1022,15 @@ model StudentAchievement {
 
 model Assignment {
   id             String                 @id @default(cuid())
+  /// @deprecated Not read or written. An assignment's position in the learning
+  /// sequence is its Content(type=ASSIGNMENT) row's order. Kept only so
+  /// branches still deployed against the shared database keep working.
   order          Int?
   title          String
   description    String?
   startDate      DateTime?
-  dueDate        DateTime
+  // Optional: an assignment written as a lesson-composer block has none.
+  dueDate        DateTime?
   totalQuestions Int?                   @default(0)
   estimatedTime  Int?                   @default(0)
   resources      Int?                   @default(0)
@@ -1035,6 +1058,7 @@ model Assignment {
   submissions    AssignmentSubmission[]
   progresses     AssignmentProgress[]
   lessonQueries  LessonQuery[]
+  content        Content?
 
   @@index([courseId])
   @@index([moduleId])
@@ -1071,9 +1095,11 @@ model AssignmentSubmission {
   @@index([studentId])
 }
 
-// A student's uploaded PDF for a lesson-composer Assignment block — a Content
-// row with type ASSIGNMENT, which has no Assignment row of its own. Same shape
-// and one-per-student semantics as AssignmentSubmission.
+/// @deprecated Read-only history. Lesson-composer assignment blocks are real
+/// Assignments now (Content(type=ASSIGNMENT, assignmentId)), and every row of
+/// this table was migrated into AssignmentSubmission by
+/// scripts/migrateContentSequence.js. Nothing writes it; kept for audit until
+/// it is dropped together with the deprecated columns.
 model ContentSubmission {
   id          String   @id @default(cuid())
   contentId   String
@@ -1423,6 +1449,7 @@ enum ContentType {
   EXTERNAL_LINK
   HTML
   CODE
+  QUIZ
   ASSIGNMENT
   CODING_EXERCISE
   SCORM

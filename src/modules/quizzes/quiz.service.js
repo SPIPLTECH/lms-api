@@ -5,10 +5,11 @@ const learnerModelService = require("../learner-model/learnerModel.service");
 const { MISCONCEPTION_TAXONOMY, isKnownMisconceptionType } = require("../learner-model/misconceptionTaxonomy.config");
 const misconceptionClassifier = require("../learner-model/misconceptionClassifier.service");
 const {
-  claimSequenceOrder,
-  releaseSequenceOrder,
+  claimContentOrder,
+  releaseContentOrder,
+  moveSequenceItems,
   mostSpecificParentField,
-  assertCourseReorderAllowed,
+  singleParentPlacement,
 } = require("../contents/contentOrder.util");
 const { buildQualificationOutcome } = require("../../utils/qualificationResult");
 const { QUALIFYING_TAG } = require("../../utils/qualification");
@@ -608,15 +609,6 @@ const validateQuizScope = async ({ batchId, courseId, moduleId, lessonId, topicI
   }
 };
 
-const QUIZ_PARENT_PRECEDENCE = ["conceptId", "subTopicId", "topicId", "lessonId", "moduleId", "courseId"];
-
-/** Most-specific non-null parent field on a quiz payload — courseId is
- * always present (schema-required), so this always resolves. Matches the
- * concept > subtopic > topic > lesson > module > course precedence this
- * codebase already uses elsewhere (validateQuizScope's nesting checks, the
- * frontend's isTopicQuiz/isLessonQuiz labeling). */
-const resolveQuizParentField = (data) => QUIZ_PARENT_PRECEDENCE.find((f) => data[f]);
-
 /** A Self-Test is never timed, and the server -- not the form -- owns that.
  * The *effective* tag decides, never the presence of a timeLimit key: a
  * client flipping FINAL -> SELF_TEST legitimately sends only { quizTag },
@@ -666,6 +658,40 @@ const applyTagAttemptRule = (effectiveTag, quizData, existingAttempts) => {
   return quizData;
 };
 
+/**
+ * Whether a quiz is a learning-sequence item. A sequence quiz is placed by
+ * its Content(type=QUIZ) row; a standalone one has no Content row:
+ *   - QUALIFYING: the test that lets a student SKIP a lesson/topic, reached
+ *     through the skip flow, never by working through the course;
+ *   - batch-scoped: an assessment for one batch, not course material;
+ *   - `inSequence: false`: a quiz the caller manages itself (the lesson
+ *     composer's one-question blocks back their question with one).
+ */
+const isSequenceQuiz = (quiz, { inSequence } = {}) =>
+  quiz.quizTag !== QUALIFYING_TAG && !quiz.batchId && inSequence !== false;
+
+/**
+ * Places a quiz in its most specific parent's sequence by creating its
+ * Content(type=QUIZ) row — appended, or inserted at `requestedOrder`.
+ */
+const placeQuizInSequence = async (quiz, requestedOrder, tx) => {
+  const placement = singleParentPlacement(quiz);
+  if (!placement) return null;
+  const order = await claimContentOrder(placement.parentField, placement.parentId, requestedOrder, tx);
+  return tx.content.create({
+    data: { type: "QUIZ", title: quiz.title, order, quizId: quiz.id, ...placement.data }
+  });
+};
+
+/** Takes a quiz out of the sequence: deletes its Content row and closes the slot. */
+const removeQuizFromSequence = async (quizId, tx) => {
+  const wrapper = await tx.content.findUnique({ where: { quizId } });
+  if (!wrapper) return null;
+  await tx.content.delete({ where: { id: wrapper.id } });
+  await releaseContentOrder(wrapper, tx);
+  return wrapper;
+};
+
 // userId: the instructor building the quiz. Questions typed straight into the
 // builder are real repository rows, and the repository shows an instructor only
 // their own — a row inserted here without an author would belong to nobody and
@@ -677,26 +703,31 @@ const createQuiz = async (
   await validateQuizScope(data);
   assertQualifyingTargetPresent(data.quizTag, data);
 
-  const { questions, ...quizData } = data;
+  // `order` is the quiz's position in the learning sequence — its Content
+  // row's order. Quiz.order is no longer written.
+  const { questions, order: requestedOrder = null, inSequence, ...quizData } = data;
 
-  const orderField = resolveQuizParentField(quizData);
-  const requestedOrder =
-    quizData.order === undefined || quizData.order === null ? null : quizData.order;
-
-  // The quiz takes its position in its most specific parent's ONE common
-  // sequence (shared with that parent's Content, Assignments and child
-  // entity): appended after the last item of any type, or — the Composer's
-  // "add quiz here" — inserted at the given position with every later item
-  // of any type moved down one, atomically with the insert.
+  // The Quiz and its Content row are written in one transaction: a sequence
+  // quiz can never exist without its place in the course, nor the place
+  // without the quiz.
   const quiz = await prisma.$transaction(async (tx) => {
-    quizData.order = await claimSequenceOrder(orderField, quizData[orderField], requestedOrder, tx, "quiz");
-    return tx.quiz.create({
+    const createdQuiz = await tx.quiz.create({
       data: {
         ...applyTagAttemptRule(quizData.quizTag, applyTagTimerRule(quizData.quizTag, quizData)),
+        courseId: quizData.courseId || null,
         moduleId: quizData.moduleId || null,
-        lessonId: quizData.lessonId || null
+        lessonId: quizData.lessonId || null,
+        topicId: quizData.topicId || null,
+        subTopicId: quizData.subTopicId || null,
+        conceptId: quizData.conceptId || null,
       }
     });
+
+    if (isSequenceQuiz(createdQuiz, { inSequence })) {
+      await placeQuizInSequence(createdQuiz, requestedOrder, tx);
+    }
+
+    return createdQuiz;
   });
 
   if (Array.isArray(questions) && questions.length > 0) {
@@ -786,7 +817,9 @@ const updateQuiz = async (
     throw error;
   }
 
-  const { questions, ...quizData } = data;
+  // `order` moves the quiz within the learning sequence (its Content row);
+  // Quiz.order is no longer written.
+  const { questions, order: requestedOrder, ...quizData } = data;
 
   // The tag may be changing in this very request, or may not be in the
   // payload at all -- either way the row's resulting tag is what governs
@@ -801,11 +834,34 @@ const updateQuiz = async (
     topicId: quizData.topicId ?? existing.topicId
   });
 
-  const updatedQuiz = await prisma.quiz.update({
-    where: {
-      id: quizId
-    },
-    data: applyTagAttemptRule(effectiveTag, applyTagTimerRule(effectiveTag, quizData), existing.attempts)
+  // The quiz row and its place in the sequence change together: retagging to
+  // QUALIFYING takes it out of the course sequence (it becomes the skip test);
+  // retagging a QUALIFYING quiz to FINAL/SELF_TEST puts it back in, at the end
+  // of its parent; a new title is the title its Content row shows.
+  const updatedQuiz = await prisma.$transaction(async (tx) => {
+    const row = await tx.quiz.update({
+      where: {
+        id: quizId
+      },
+      data: applyTagAttemptRule(effectiveTag, applyTagTimerRule(effectiveTag, quizData), existing.attempts)
+    });
+
+    const wrapper = await tx.content.findUnique({ where: { quizId } });
+    if (wrapper && !isSequenceQuiz(row)) {
+      await removeQuizFromSequence(quizId, tx);
+    } else if (!wrapper && existing.quizTag === QUALIFYING_TAG && isSequenceQuiz(row)) {
+      await placeQuizInSequence(row, requestedOrder ?? null, tx);
+    } else if (wrapper) {
+      if (requestedOrder !== undefined && requestedOrder !== null && Number(requestedOrder) !== wrapper.order) {
+        const parentField = mostSpecificParentField(wrapper);
+        await moveSequenceItems(parentField, wrapper[parentField], [{ id: wrapper.id, order: Number(requestedOrder) }], tx);
+      }
+      if (quizData.title && quizData.title !== wrapper.title) {
+        await tx.content.update({ where: { id: wrapper.id }, data: { title: quizData.title } });
+      }
+    }
+
+    return row;
   });
 
   if (Array.isArray(questions)) {
@@ -916,16 +972,11 @@ const deleteQuiz = async (
     throw error;
   }
 
-  // Removing a quiz closes its slot in its most specific parent's common sequence.
+  // The quiz and its place in the sequence go together, and the gap its
+  // Content row leaves is closed so the sequence stays 1..n.
   return prisma.$transaction(async (tx) => {
-    const deleted = await tx.quiz.delete({
-      where: {
-        id: quizId
-      }
-    });
-    const parentField = mostSpecificParentField(existing);
-    await releaseSequenceOrder(parentField, parentField && existing[parentField], existing.order, tx);
-    return deleted;
+    await removeQuizFromSequence(quizId, tx);
+    return tx.quiz.delete({ where: { id: quizId } });
   });
 };
 
@@ -1117,6 +1168,11 @@ const submitQuiz = async (
     error.statusCode = 404;
     throw error;
   }
+
+  // A quiz in the learning sequence can only be submitted once the student
+  // has reached it — the same gate the player and every other item use.
+  // Required lazily: progress.service sits above this module.
+  await require("../progress/progress.service").assertSequenceItemAccessible(studentId, { quizId });
 
   const result = calculateSubmissionResult(quiz, answers);
   // One record per question, graded server-side, with the attempt UI's visit
@@ -1812,34 +1868,6 @@ const generateSelfAssessmentQuiz = async (courseId, questionCount = 5) => {
   });
 };
 
-// Two-phase reorder: the same @@unique([...parentId, order]) partial index
-// that content rows sit under rejects a naive parallel swap (A->2 while B
-// still holds 2), so first move every row to a disjoint negative
-// placeholder, then to its final order. Mirrors content.service.js's
-// reorderContents exactly.
-const reorderQuizzes = async (quizzes) => {
-  // Course level only: a course quiz stays in the last group — it can never
-  // be moved above a course content, module or assignment. Quizzes at every
-  // other level are free.
-  await assertCourseReorderAllowed("quiz", quizzes);
-
-  const offsetUpdates = quizzes.map((quiz, index) =>
-    prisma.quiz.update({
-      where: { id: quiz.id },
-      data: { order: -1000 - index }
-    })
-  );
-
-  const finalUpdates = quizzes.map((quiz) =>
-    prisma.quiz.update({
-      where: { id: quiz.id },
-      data: { order: quiz.order }
-    })
-  );
-
-  return prisma.$transaction([...offsetUpdates, ...finalUpdates]);
-};
-
 module.exports = {
   evaluateAnswer,
   resolveMisconceptionTag,
@@ -1859,5 +1887,5 @@ module.exports = {
   generateSelfAssessmentQuiz,
   flushPendingMisconceptionClassifications,
   flushPendingSubmissionSideEffects,
-  reorderQuizzes
+  isSequenceQuiz
 };

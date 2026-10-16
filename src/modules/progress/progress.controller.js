@@ -170,12 +170,43 @@ async function getLearningPath(req, res, next) {
   }
 }
 
+/**
+ * GET /progress/learning-sequence?courseId=<id>[&studentId=<id>]
+ *
+ * THE student learning sequence for one course: every Content item —
+ * ordinary content, quizzes and assignments — as one ordered list of steps,
+ * plus the course tree the Course Map draws from the same steps. Each step
+ * says whether it is complete, visited and locked; a locked step carries no
+ * material. Same access guard as the progress tree.
+ */
+async function getLearningSequence(req, res, next) {
+  try {
+    const studentId = await resolveStudentId(req);
+    const courseId = req.query?.courseId;
+
+    if (!courseId) {
+      return res.status(400).json({
+        success: false,
+        message: 'courseId is required'
+      });
+    }
+
+    await progressService.assertCourseProgressAccess(req.user, studentId, courseId);
+    const data = await progressService.getStudentLearningSequence(studentId, courseId);
+
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   markContentComplete,
   markLessonComplete,
   markVisited,
   getCourseProgress,
   getLearningPath,
+  getLearningSequence,
   getOverallProgress,
   getInstructorProgress
 };

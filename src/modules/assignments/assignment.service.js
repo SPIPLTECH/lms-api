@@ -1,9 +1,10 @@
 const prisma = require("../../config/database");
 const {
-  claimSequenceOrder,
-  releaseSequenceOrder,
+  claimContentOrder,
+  releaseContentOrder,
+  moveSequenceItems,
   mostSpecificParentField,
-  assertCourseReorderAllowed,
+  singleParentPlacement,
 } = require("../contents/contentOrder.util");
 const {
     BREADCRUMB_INCLUDE,
@@ -13,25 +14,43 @@ const {
     resolveBreadcrumb,
 } = require("../../utils/helpers/courseBreadcrumb.helper");
 
+// A course the student is enrolled in, reached from whichever of the six
+// levels a row hangs off.
+const enrolledVia = (studentId) => {
+    const enrolled = { enrollments: { some: { studentId } } };
+    return [
+        { course: enrolled },
+        { module: { course: enrolled } },
+        { lesson: { module: { course: enrolled } } },
+        { topic: { lesson: { module: { course: enrolled } } } },
+        { subTopic: { topic: { lesson: { module: { course: enrolled } } } } },
+        { concept: { subTopic: { topic: { lesson: { module: { course: enrolled } } } } } },
+    ];
+};
+
+/**
+ * Every assignment in the courses this student is enrolled in, at any level
+ * of the hierarchy. (Matching on Assignment.course alone used to list only
+ * course-level assignments: a module/lesson/topic assignment has no courseId
+ * of its own.) The lesson composer's assignment blocks are Assignments too
+ * now — each placed by its Content(type=ASSIGNMENT) row — so there is one
+ * kind of assignment, listed once.
+ */
 const getAssignments = async (studentId) => {
+    const COURSE = { select: { id: true, title: true } };
+    const MODULE_PATH = { select: { id: true, title: true, course: COURSE } };
+    const LESSON_PATH = { select: { id: true, module: MODULE_PATH } };
+    const TOPIC_PATH = { select: { lessonId: true, lesson: LESSON_PATH } };
     const assignments = await prisma.assignment.findMany({
-        // Only assignments from courses this student is actually enrolled in —
-        // previously unscoped, which returned every assignment in the system
-        // to every student regardless of enrollment.
-        where: {
-            course: { enrollments: { some: { studentId } } }
-        },
+        where: { isPublished: true, OR: enrolledVia(studentId) },
         include: {
-            course: {
-                select: {
-                    id: true,
-                    title: true,
-                }
-            },
-            // Where in the course it sits, for the "Course · Module" line.
-            module: { select: { title: true } },
-            lesson: { select: { module: { select: { title: true } } } },
-            topic: { select: { lesson: { select: { module: { select: { title: true } } } } } },
+            course: COURSE,
+            module: MODULE_PATH,
+            lesson: LESSON_PATH,
+            topic: TOPIC_PATH,
+            subTopic: { select: { topic: TOPIC_PATH } },
+            concept: { select: { subTopic: { select: { topic: TOPIC_PATH } } } },
+            content: { select: { id: true } },
             submissions: {
                 where: { studentId },
             }
@@ -39,12 +58,11 @@ const getAssignments = async (studentId) => {
         orderBy: { createdAt: "desc" }
     });
 
-    const assignmentItems = assignments.map(a => {
+    return assignments.map((a) => {
         const submission = a.submissions[0];
-        let status = "Not Submitted";
-        if (submission) {
-            status = submission.status;
-        }
+        const topic = a.topic || a.subTopic?.topic || a.concept?.subTopic?.topic || null;
+        const lesson = a.lesson || topic?.lesson || null;
+        const mod = a.module || lesson?.module || null;
         return {
             id: a.id,
             title: a.title,
@@ -55,9 +73,12 @@ const getAssignments = async (studentId) => {
             totalQuestions: a.totalQuestions,
             estimatedTime: a.estimatedTime,
             resources: a.resources,
-            status,
-            course: a.course,
-            moduleTitle: a.module?.title || a.lesson?.module?.title || a.topic?.lesson?.module?.title || null,
+            status: submission ? submission.status : "Not Submitted",
+            course: a.course || mod?.course || null,
+            moduleTitle: mod?.title || null,
+            // The course player deep-links by lesson and by the item's Content row.
+            lessonId: lesson?.id || null,
+            contentId: a.content?.id || null,
             marks: a.marks ?? null,
             grade: submission?.grade || null,
             feedback: submission?.feedback || null,
@@ -65,61 +86,15 @@ const getAssignments = async (studentId) => {
             kind: "assignment",
         };
     });
-
-    // Lesson-composer Assignment blocks (Content type ASSIGNMENT) from the
-    // same enrolled courses, so the student's Assignments page lists — and
-    // shows the grade and feedback for — both kinds in one place.
-    const enrolled = { enrollments: { some: { studentId } } };
-    const COURSE = { select: { id: true, title: true } };
-    const contents = await prisma.content.findMany({
-        where: {
-            type: "ASSIGNMENT",
-            OR: [
-                { course: enrolled },
-                { module: { course: enrolled } },
-                { lesson: { module: { course: enrolled } } },
-                { topic: { lesson: { module: { course: enrolled } } } },
-            ],
-        },
-        include: {
-            course: COURSE,
-            module: { select: { title: true, course: COURSE } },
-            lesson: { select: { module: { select: { title: true, course: COURSE } } } },
-            topic: { select: { lessonId: true, lesson: { select: { module: { select: { title: true, course: COURSE } } } } } },
-            submissions: { where: { studentId } },
-        },
-        orderBy: { createdAt: "desc" },
-    });
-
-    const contentItems = contents.map((c) => {
-        const submission = c.submissions[0];
-        return {
-            id: c.id,
-            kind: "content",
-            title: c.title || "Assignment",
-            description: c.htmlContent,
-            dueDate: null,
-            createdAt: c.createdAt,
-            status: submission?.status || "Not Submitted",
-            course:
-                c.course ||
-                c.module?.course ||
-                c.lesson?.module?.course ||
-                c.topic?.lesson?.module?.course ||
-                null,
-            moduleTitle: c.module?.title || c.lesson?.module?.title || c.topic?.lesson?.module?.title || null,
-            // The course player deep-links by lesson; a topic's lesson works too.
-            lessonId: c.lessonId || c.topic?.lessonId || null,
-            grade: submission?.grade || null,
-            feedback: submission?.feedback || null,
-            submittedAt: submission?.submittedAt || null,
-        };
-    });
-
-    return [...assignmentItems, ...contentItems];
 };
 
 const getAssignmentById = async (assignmentId, studentId) => {
+    // A student opens a course assignment only once they have reached it in
+    // the learning sequence (and only in a course they are enrolled in).
+    if (studentId) {
+        await require("../progress/progress.service").assertSequenceItemAccessible(studentId, { assignmentId });
+    }
+
     const a = await prisma.assignment.findUnique({
         where: { id: assignmentId },
         include: {
@@ -201,6 +176,10 @@ const submitAssignment = async (assignmentId, studentId, data) => {
         throw err;
     }
 
+    // Same gate as opening it: an assignment the student has not reached yet
+    // cannot be submitted either.
+    await require("../progress/progress.service").assertSequenceItemAccessible(studentId, { assignmentId });
+
     // One submission per student per assignment (@@unique) — resubmitting
     // replaces the stored PDF and timestamp rather than creating a second row.
     // That is the existing upsert semantics; only the file fields are new.
@@ -239,7 +218,9 @@ const submitAssignment = async (assignmentId, studentId, data) => {
         }
     });
 
-    // Synchronize AssignmentProgress when assignment is submitted authoritatively
+    // AssignmentProgress mirrors the submission for older readers. The item's
+    // ContentProgress — its sequence-level progress — is set by the roll-up
+    // below from the one completion rule (utils/itemCompletion.js).
     try {
         const existingAp = await prisma.assignmentProgress.findUnique({
             where: { studentId_assignmentId: { studentId, assignmentId } }
@@ -468,9 +449,13 @@ const gradeAssignmentSubmission = async (assignmentId, submissionId, { grade, fe
     };
 };
 
+/**
+ * Creates an Assignment and its place in the learning sequence — its
+ * Content(type=ASSIGNMENT) row — in one transaction, so neither can exist
+ * without the other. `order` inserts it at that position of its parent's
+ * sequence (every later item moves down one); omitted, it is appended.
+ */
 const createAssignment = async (data) => {
-    // PARENT_FIELDS is the shared six-level list, so this check and the
-    // order-scope field below can never disagree about what a parent is.
     const presentParents = PARENT_FIELDS.filter((field) => data[field]);
     if (presentParents.length !== 1) {
         const error = new Error("Assignment must be attached to exactly one of course, module, lesson, topic, subtopic, or concept.");
@@ -478,19 +463,14 @@ const createAssignment = async (data) => {
         throw error;
     }
 
-    const orderField = presentParents[0];
+    const requestedOrder = data.order !== undefined && data.order !== null ? Number(data.order) : null;
 
-    // Appended to the parent's ONE common sequence, after its last Content,
-    // Quiz, Assignment or child entity.
     return await prisma.$transaction(async (tx) => {
-        const order = await claimSequenceOrder(orderField, data[orderField], null, tx, "assignment");
-
-        return await tx.assignment.create({
+        const createdAssignment = await tx.assignment.create({
             data: {
                 title: data.title,
                 description: data.description || null,
-                dueDate: new Date(data.dueDate),
-                order,
+                dueDate: data.dueDate ? new Date(data.dueDate) : null,
                 totalQuestions: data.totalQuestions ? parseInt(data.totalQuestions) : 0,
                 estimatedTime: data.estimatedTime ? parseInt(data.estimatedTime) : 0,
                 resources: data.resources ? parseInt(data.resources) : 0,
@@ -506,9 +486,26 @@ const createAssignment = async (data) => {
                 isPublished: data.isPublished !== undefined ? data.isPublished : true,
             }
         });
+
+        await placeAssignmentInSequence(createdAssignment, requestedOrder, tx);
+        return createdAssignment;
     });
 };
 
+/** Creates an assignment's Content(type=ASSIGNMENT) row at its parent's sequence position. */
+const placeAssignmentInSequence = async (assignment, requestedOrder, tx) => {
+    const placement = singleParentPlacement(assignment);
+    if (!placement) return null;
+    const order = await claimContentOrder(placement.parentField, placement.parentId, requestedOrder, tx);
+    return tx.content.create({
+        data: { type: "ASSIGNMENT", title: assignment.title, order, assignmentId: assignment.id, ...placement.data }
+    });
+};
+
+/**
+ * Updates an assignment. `order` moves it within its parent's learning
+ * sequence (its Content row); a new title is the title the row shows.
+ */
 const updateAssignment = async (assignmentId, data) => {
     const existing = await prisma.assignment.findUnique({ where: { id: assignmentId } });
     if (!existing) {
@@ -517,23 +514,42 @@ const updateAssignment = async (assignmentId, data) => {
         throw error;
     }
 
-    return await prisma.assignment.update({
-        where: { id: assignmentId },
-        data: {
-            title: data.title,
-            description: data.description,
-            dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
-            totalQuestions: data.totalQuestions !== undefined ? parseInt(data.totalQuestions) : undefined,
-            estimatedTime: data.estimatedTime !== undefined ? parseInt(data.estimatedTime) : undefined,
-            resources: data.resources !== undefined ? parseInt(data.resources) : undefined,
-            marks: data.marks !== undefined ? (data.marks === null ? null : parseInt(data.marks)) : undefined,
-            assessmentType: data.assessmentType !== undefined ? data.assessmentType : undefined,
-            attachments: data.attachments !== undefined ? data.attachments : undefined,
-            isPublished: data.isPublished !== undefined ? data.isPublished : undefined,
+    return await prisma.$transaction(async (tx) => {
+        const updated = await tx.assignment.update({
+            where: { id: assignmentId },
+            data: {
+                title: data.title,
+                description: data.description,
+                dueDate: data.dueDate === null ? null : data.dueDate ? new Date(data.dueDate) : undefined,
+                totalQuestions: data.totalQuestions !== undefined ? parseInt(data.totalQuestions) : undefined,
+                estimatedTime: data.estimatedTime !== undefined ? parseInt(data.estimatedTime) : undefined,
+                resources: data.resources !== undefined ? parseInt(data.resources) : undefined,
+                marks: data.marks !== undefined ? (data.marks === null ? null : parseInt(data.marks)) : undefined,
+                assessmentType: data.assessmentType !== undefined ? data.assessmentType : undefined,
+                attachments: data.attachments !== undefined ? data.attachments : undefined,
+                isPublished: data.isPublished !== undefined ? data.isPublished : undefined,
+            }
+        });
+
+        const wrapper = await tx.content.findUnique({ where: { assignmentId } });
+        if (wrapper) {
+            if (data.order !== undefined && data.order !== null && Number(data.order) !== wrapper.order) {
+                const parentField = mostSpecificParentField(wrapper);
+                await moveSequenceItems(parentField, wrapper[parentField], [{ id: wrapper.id, order: Number(data.order) }], tx);
+            }
+            if (data.title && data.title !== wrapper.title) {
+                await tx.content.update({ where: { id: wrapper.id }, data: { title: data.title } });
+            }
         }
+
+        return updated;
     });
 };
 
+/**
+ * Deletes an assignment together with its place in the sequence, closing the
+ * gap its Content row leaves so the sequence stays 1..n.
+ */
 const deleteAssignment = async (assignmentId) => {
     const existing = await prisma.assignment.findUnique({ where: { id: assignmentId } });
     if (!existing) {
@@ -542,41 +558,14 @@ const deleteAssignment = async (assignmentId) => {
         throw error;
     }
 
-    // Removing an item closes its slot in the parent's common sequence.
     return await prisma.$transaction(async (tx) => {
-        const deleted = await tx.assignment.delete({
-            where: { id: assignmentId }
-        });
-        const parentField = mostSpecificParentField(existing);
-        await releaseSequenceOrder(parentField, parentField && existing[parentField], existing.order, tx);
-        return deleted;
+        const wrapper = await tx.content.findUnique({ where: { assignmentId } });
+        if (wrapper) {
+            await tx.content.delete({ where: { id: wrapper.id } });
+            await releaseContentOrder(wrapper, tx);
+        }
+        return tx.assignment.delete({ where: { id: assignmentId } });
     });
-};
-
-// Two-phase reorder: mirrors quizService.reorderQuizzes and
-// content.service.js's reorderContents exactly — move every row to a
-// disjoint negative placeholder first, then to its final order, inside one
-// transaction, so a direct swap never collides mid-flight.
-const reorderAssignments = async (assignments) => {
-  // Course level only: a course assignment stays between the modules and the
-    // quizzes — it is the work that follows every module.
-    await assertCourseReorderAllowed("assignment", assignments);
-
-    const offsetUpdates = assignments.map((a, index) =>
-        prisma.assignment.update({
-            where: { id: a.id },
-            data: { order: -1000 - index }
-        })
-    );
-
-    const finalUpdates = assignments.map((a) =>
-        prisma.assignment.update({
-            where: { id: a.id },
-            data: { order: a.order }
-        })
-    );
-
-    return prisma.$transaction([...offsetUpdates, ...finalUpdates]);
 };
 
 module.exports = {
@@ -589,5 +578,5 @@ module.exports = {
     createAssignment,
     updateAssignment,
     deleteAssignment,
-    reorderAssignments,
+    placeAssignmentInSequence,
 };

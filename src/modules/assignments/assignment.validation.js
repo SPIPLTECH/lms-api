@@ -26,7 +26,10 @@ const createAssignmentSchema = Joi.object({
   assessmentType: Joi.string().optional().allow(null, ""),
   attachments: Joi.array().items(attachmentSchema).optional(),
   isPublished: Joi.boolean().optional(),
-  status: Joi.string().optional().allow(null, "")
+  status: Joi.string().optional().allow(null, ""),
+  // The assignment's position in its parent's learning sequence (its Content
+  // row's order). Omitted: appended after the parent's last item.
+  order: Joi.number().integer().min(0).optional()
 })
   // Exactly one parent, now across six levels. Existing four-level callers
   // are unaffected: .xor still rejects zero parents and still rejects two.
@@ -41,7 +44,8 @@ const createAssignmentSchema = Joi.object({
 const updateAssignmentSchema = Joi.object({
   title: Joi.string().optional(),
   description: Joi.string().optional().allow(null, ""),
-  dueDate: Joi.date().iso().optional(),
+  // null clears it: an assignment may have no due date (lesson-composer blocks).
+  dueDate: Joi.date().iso().optional().allow(null),
   startDate: Joi.date().iso().optional().allow(null),
   availableFrom: Joi.date().iso().optional().allow(null),
   availableUntil: Joi.date().iso().optional().allow(null),
@@ -52,7 +56,9 @@ const updateAssignmentSchema = Joi.object({
   assessmentType: Joi.string().optional().allow(null, ""),
   attachments: Joi.array().items(attachmentSchema).optional(),
   isPublished: Joi.boolean().optional(),
-  status: Joi.string().optional().allow(null, "")
+  status: Joi.string().optional().allow(null, ""),
+  // Moves the assignment within its parent's learning sequence.
+  order: Joi.number().integer().min(0).optional()
 });
 
 // The student's answer is an uploaded PDF, a typed/pasted written answer, or
@@ -107,19 +113,9 @@ const gradeSubmissionSchema = Joi.object({
   feedback: Joi.string().trim().max(2000).optional().allow(null, "")
 });
 
-const reorderAssignmentsSchema = Joi.object({
-  assignments: Joi.array().items(
-    Joi.object({
-      id: Joi.string().required(),
-      order: Joi.number().integer().required(),
-    })
-  ).min(1).required(),
-});
-
 module.exports = {
   createAssignmentSchema,
   updateAssignmentSchema,
   submitAssignmentSchema,
-  gradeSubmissionSchema,
-  reorderAssignmentsSchema
+  gradeSubmissionSchema
 };

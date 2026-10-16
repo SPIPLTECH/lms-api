@@ -1,41 +1,119 @@
 const prisma = require('../../config/database');
 const { recomputeCourseProgress, ensureProgressInitialized } = require('../../utils/progressRollup');
-const { buildLearningPath, resolveAccess, resolveNextItem } = require('../../utils/learningPath');
+const { buildLearningPath, resolveNextItem } = require('../../utils/learningPath');
+const { buildLearningSequence, findStepForContent } = require('../../utils/learningSequence');
 const { getCourseQualifyingQuizzes } = require('../../utils/qualification');
+const { isAssessmentContent } = require('../contents/contentOrder.util');
 const {
   COURSE_ID_INCLUDE,
   resolveCourseId
 } = require('../../utils/helpers/courseBreadcrumb.helper');
 
-const MODULE_COURSE = { select: { module: { select: { courseId: true } } } };
+const forbidden = (message) => Object.assign(new Error(message), { statusCode: 403 });
 
-/**
- * COURSE_ID_INCLUDE plus the lesson/topic ids along the way, so the learning
- * path gate can locate a Content row attached at any of the six levels.
- */
-const PATH_ACCESS_INCLUDE = {
-  ...COURSE_ID_INCLUDE,
-  topic: { select: { lessonId: true, lesson: MODULE_COURSE } },
-  subTopic: { select: { topicId: true, topic: { select: { lessonId: true, lesson: MODULE_COURSE } } } },
-  concept: {
-    select: {
-      subTopic: { select: { topicId: true, topic: { select: { lessonId: true, lesson: MODULE_COURSE } } } }
+/** Every Content id the roll-up hierarchy holds, at every level. */
+function collectHierarchyContentIds(hierarchy) {
+  const ids = [];
+  const walk = (node) => {
+    if (!node) return;
+    for (const item of node.items || []) ids.push(item.contentId);
+    for (const child of [
+      ...(node.modules || []),
+      ...(node.lessons || []),
+      ...(node.topics || []),
+      ...(node.subTopics || []),
+      ...(node.concepts || [])
+    ]) {
+      walk(child);
     }
-  }
+  };
+  walk(hierarchy);
+  return ids;
+}
+
+const BODY_SELECT = {
+  id: true,
+  type: true,
+  title: true,
+  videoUrl: true,
+  fileUrl: true,
+  htmlContent: true,
+  externalUrl: true,
+  duration: true,
+  data: true
 };
 
 /**
- * The lesson/topic a Content row sits in on the learning path. SubTopic and
- * Concept are not path steps themselves, so their content is gated by the
- * topic they belong to.
+ * Content body columns for the sequence builder. Document merging only ever
+ * looks at HTML rows, so an access check (`allBodies: false`) loads just
+ * those; the learning-sequence endpoint loads everything it may hand out.
  */
-const pathTargetOf = (content) => {
-  const subTopic = content.subTopic || content.concept?.subTopic || null;
-  const topicId = content.topicId || subTopic?.topicId || null;
-  const lessonId =
-    content.lessonId || content.topic?.lessonId || subTopic?.topic?.lessonId || null;
-  return { lessonId, topicId };
-};
+async function loadSequenceBodies(hierarchy, { allBodies }) {
+  const ids = collectHierarchyContentIds(hierarchy);
+  if (ids.length === 0) return new Map();
+  const rows = await prisma.content.findMany({
+    where: { id: { in: ids }, ...(allBodies ? {} : { type: 'HTML' }) },
+    select: allBodies ? BODY_SELECT : { id: true, type: true, title: true, htmlContent: true }
+  });
+  return new Map(rows.map((row) => [row.id, row]));
+}
+
+/**
+ * The student's learning sequence for a course: the roll-up (the single
+ * source of completion) turned into ordered, lock-stamped steps.
+ *
+ * `persist: false` for access checks, which must not write progress rows.
+ */
+async function computeStudentSequence(studentId, courseId, { persist = false, allBodies = false } = {}) {
+  const rollup = await recomputeCourseProgress(studentId, courseId, null, { includeTree: true, persist });
+  const bodies = await loadSequenceBodies(rollup.hierarchy, { allBodies });
+  return { rollup, sequence: buildLearningSequence(rollup.hierarchy, { bodies }) };
+}
+
+/**
+ * Throws 403 unless every one of `contentIds` is an open step of this
+ * student's learning sequence. THE server-side gate: opening, completing or
+ * visiting content and opening/submitting a quiz or assignment all come
+ * through here, so a student who skips the player (a typed URL, a direct API
+ * call) is refused exactly as the player would refuse them.
+ *
+ * A Content row that is not a step (unpublished, or not in this course's
+ * published tree) is not this check's concern — the caller's own
+ * existence/enrollment checks still apply.
+ */
+async function assertContentsAccessible(studentId, courseId, contentIds) {
+  const ids = [...new Set((contentIds || []).filter(Boolean))];
+  if (!courseId || ids.length === 0) return;
+
+  const { sequence } = await computeStudentSequence(studentId, courseId);
+  for (const id of ids) {
+    const step = findStepForContent(sequence, id);
+    if (!step?.locked) continue;
+    const blocker = sequence.steps[step.blockedByIndex];
+    throw forbidden(
+      blocker
+        ? `Finish “${blocker.title || 'the previous item'}” before opening this item.`
+        : 'Finish the earlier items in this course before opening this item.'
+    );
+  }
+}
+
+/**
+ * The same gate, addressed by the Quiz or Assignment a student is opening or
+ * submitting. A quiz/assignment with no Content wrapper is not a sequence item
+ * (a QUALIFYING test, a batch assessment, a practice quiz) and is not gated
+ * here — those have their own rules.
+ */
+async function assertSequenceItemAccessible(studentId, { quizId = null, assignmentId = null }) {
+  const where = quizId ? { quizId } : assignmentId ? { assignmentId } : null;
+  if (!where || !studentId) return;
+  const wrapper = await prisma.content.findUnique({ where, include: COURSE_ID_INCLUDE });
+  if (!wrapper) return;
+  const courseId = resolveCourseId(wrapper);
+  // A course item is only for students enrolled in that course.
+  await assertCourseProgressAccess({ role: 'STUDENT' }, studentId, courseId);
+  await assertContentsAccessible(studentId, courseId, [wrapper.id]);
+}
 
 /**
  * Upserts ContentProgress rows for `contentIds` to `completed`, preserving
@@ -225,7 +303,7 @@ async function completeContent(studentId, contentId, completed = true, requestin
   const [contents, existingRows] = await Promise.all([
     prisma.content.findMany({
       where: { id: { in: contentIds } },
-      include: PATH_ACCESS_INCLUDE
+      include: COURSE_ID_INCLUDE
     }),
     prisma.contentProgress.findMany({ where: { studentId, contentId: { in: contentIds } } })
   ]);
@@ -236,27 +314,36 @@ async function completeContent(studentId, contentId, completed = true, requestin
     throw error;
   }
 
-  const courseIds = new Set();
+  // A Quiz or Assignment item is complete when the Quiz/Assignment says so
+  // (utils/itemCompletion.js) — never because someone asserted it here.
+  if (contents.some(isAssessmentContent)) {
+    const error = new Error('A quiz or assignment is completed by submitting it, not by marking it complete.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const contentIdsByCourse = new Map();
   for (const content of contents) {
     const courseId = resolveCourseId(content);
-    if (courseId) courseIds.add(courseId);
+    if (!courseId) continue;
+    if (!contentIdsByCourse.has(courseId)) contentIdsByCourse.set(courseId, []);
+    contentIdsByCourse.get(courseId).push(content.id);
   }
+  const courseIds = new Set(contentIdsByCourse.keys());
 
   if (requestingUser) {
     await Promise.all([...courseIds].map((courseId) => assertCourseProgressAccess(requestingUser, studentId, courseId)));
 
     // Sequential learning, enforced where it actually matters: a student may
-    // not record progress inside a lesson/topic they have not reached. The
-    // player already refuses to navigate there, but a client that skips that
-    // check — or calls this endpoint directly — must be refused too, or the
-    // gate is decoration. Only students are gated: an instructor or admin
-    // correcting a student's progress is not walking the path.
+    // not record progress on a step they have not reached. The player already
+    // refuses to navigate there, but a client that skips that check — or calls
+    // this endpoint directly — must be refused too, or the gate is decoration.
+    // Only students are gated: an instructor or admin correcting a student's
+    // progress is not walking the path.
     if (requestingUser.role === 'STUDENT') {
-      await Promise.all(
-        contents.map((content) =>
-          assertLearningPathAccess(studentId, resolveCourseId(content), pathTargetOf(content))
-        )
-      );
+      for (const [courseId, ids] of contentIdsByCourse) {
+        await assertContentsAccessible(studentId, courseId, ids);
+      }
     }
   }
 
@@ -340,14 +427,17 @@ async function completeLesson(studentId, lessonId, completed = true, requestingU
     await assertCourseProgressAccess(requestingUser, studentId, courseId);
   }
 
+  // Ordinary content only: a Quiz/Assignment item is completed by its own
+  // submission (utils/itemCompletion.js), never by bulk-marking.
   const contentIds = [];
-  lesson.contents.forEach((c) => contentIds.push(c.id));
+  const take = (rows) => rows.filter((c) => !isAssessmentContent(c)).forEach((c) => contentIds.push(c.id));
+  take(lesson.contents);
   for (const topic of lesson.topics) {
-    topic.contents.forEach((c) => contentIds.push(c.id));
+    take(topic.contents);
     for (const subTopic of topic.subTopics) {
-      subTopic.contents.forEach((c) => contentIds.push(c.id));
+      take(subTopic.contents);
       for (const concept of subTopic.concepts) {
-        concept.contents.forEach((c) => contentIds.push(c.id));
+        take(concept.contents);
       }
     }
   }
@@ -505,14 +595,36 @@ async function markVisited(studentId, params, visited = true, requestingUser = n
     await assertCourseProgressAccess(requestingUser, studentId, courseId);
   }
 
+  // A Quiz/Assignment in the learning sequence is visited through its Content
+  // row — ContentProgress is the sequence-level progress of every item.
+  // Unwrapped ones (qualifying tests, batch assessments) keep their own rows.
+  let progressHandler = handler;
+  let progressEntityId = entityId;
+  if (entityType === 'QUIZ' || entityType === 'ASSIGNMENT') {
+    const wrapper = await prisma.content.findUnique({
+      where: entityType === 'QUIZ' ? { quizId: entityId } : { assignmentId: entityId },
+      select: { id: true }
+    });
+    if (wrapper) {
+      progressHandler = ENTITY_HANDLERS.CONTENT;
+      progressEntityId = wrapper.id;
+    }
+  }
+
+  // A recorded visit keeps a step open for good (visited steps never
+  // re-lock), so a student may only visit a step they may already open.
+  if (requestingUser?.role === 'STUDENT' && courseId && visited && progressHandler === ENTITY_HANDLERS.CONTENT) {
+    await assertContentsAccessible(studentId, courseId, [progressEntityId]);
+  }
+
   // Whether this call actually changed anything. Revisiting an
   // already-visited item is a no-op: no upsert, and (below) no rollup either
   // -- there is nothing new for a rollup to recompute, so it must not
   // burn a full course recompute on every re-open of the same content.
   const { changed } = await upsertVisitedIfNeeded(
-    handler.progress(),
-    { [`studentId_${handler.idField}`]: { studentId, [handler.idField]: entityId } },
-    { studentId, [handler.idField]: entityId },
+    progressHandler.progress(),
+    { [`studentId_${progressHandler.idField}`]: { studentId, [progressHandler.idField]: progressEntityId } },
+    { studentId, [progressHandler.idField]: progressEntityId },
     visited
   );
 
@@ -612,34 +724,42 @@ async function getStudentCourseProgress(studentId, courseId) {
  * it — with the path's derived summary attached separately by the controller.
  */
 async function getStudentLearningPath(studentId, courseId) {
-  const [rollup, qualifyingQuizzes] = await Promise.all([
-    recomputeCourseProgress(studentId, courseId, null, { includeTree: true }),
+  const [{ rollup, sequence }, qualifyingQuizzes] = await Promise.all([
+    computeStudentSequence(studentId, courseId, { persist: true }),
     // Student-scoped, so each qualifying quiz carries this student's remaining
     // allowance and the path can stop offering a skip they cannot take.
     getCourseQualifyingQuizzes(courseId, null, studentId)
   ]);
 
-  return buildLearningPath(rollup.hierarchy, qualifyingQuizzes);
+  return buildLearningPath(rollup.hierarchy, qualifyingQuizzes, sequence);
 }
 
 /**
- * Throws unless the student may open this lesson/topic right now.
- *
- * The backend's own answer to "can they be here?" — so a student who reaches
- * locked content by typing a URL, or by calling the API directly, is refused
- * the same way the player refuses them. Never trusts a client-side gate.
+ * THE student learning sequence for a course — what the player steps
+ * through, what the Course Map draws, where "Continue learning" lands, and
+ * what the server lets the student open. Steps the student may not open yet
+ * carry no material (`body: null`).
  */
-async function assertLearningPathAccess(studentId, courseId, { lessonId = null, topicId = null } = {}) {
-  if (!lessonId && !topicId) return;
+async function getStudentLearningSequence(studentId, courseId) {
+  const { rollup, sequence } = await computeStudentSequence(studentId, courseId, {
+    persist: true,
+    allBodies: true
+  });
 
-  const path = await getStudentLearningPath(studentId, courseId);
-  const { allowed, reason } = resolveAccess(path, { lessonId, topicId });
-
-  if (!allowed) {
-    const error = new Error(reason);
-    error.statusCode = 403;
-    throw error;
-  }
+  return {
+    courseId,
+    title: rollup.hierarchy.title,
+    progress: {
+      progressPercent: rollup.progressPercent,
+      completedItems: rollup.completedItems,
+      totalItems: rollup.totalItems,
+      completed: rollup.completed
+    },
+    steps: sequence.steps,
+    tree: sequence.tree,
+    currentIndex: sequence.currentIndex,
+    resumeIndex: sequence.resumeIndex
+  };
 }
 
 /**
@@ -753,12 +873,15 @@ async function getInstructorCourseProgress(courseId) {
 
 module.exports = {
   assertCourseProgressAccess,
+  assertContentsAccessible,
+  assertSequenceItemAccessible,
+  computeStudentSequence,
   completeContent,
   completeLesson,
   markVisited,
   getStudentCourseProgress,
   getStudentLearningPath,
-  assertLearningPathAccess,
+  getStudentLearningSequence,
   resolveNextItem,
   getStudentOverallProgress,
   getInstructorCourseProgress,

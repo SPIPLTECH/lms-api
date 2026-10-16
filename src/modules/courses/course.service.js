@@ -1,4 +1,3 @@
-const crypto = require("crypto");
 const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
 const ApiError = require("../../utils/ApiError");
@@ -445,27 +444,72 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
   const { includeModules = true } = options;
   const isStudentOrGuest = role === "STUDENT" || role === "GUEST";
 
-  // Same quiz-question shape the four existing levels already select, hoisted
-  // so the two new levels cannot drift from them -- in particular so a
-  // SubTopic/Concept quiz never leaks correctAnswer/explanation to a student.
-  const QUIZ_QUESTIONS_INCLUDE = {
+  // A student reads quizzes through GET /quizzes/:id (sequence-gated, answers
+  // withheld); the course tree only says how many questions there are, so a
+  // quiz the student has not reached cannot be read off this response.
+  // Instructors get the full question list, answer key included.
+  const quizzesInclude = (where = {}) => ({
+    where: { ...where, ...(isStudentOrGuest ? { quizTag: { not: "QUALIFYING" } } : {}) },
+    orderBy: { createdAt: "asc" },
+    include: isStudentOrGuest
+      ? { _count: { select: { quizQuestions: true } } }
+      : {
+          quizQuestions: {
+            orderBy: { order: "asc" },
+            select: {
+              id: true,
+              quizId: true,
+              order: true,
+              marks: true,
+              question: {
+                select: {
+                  id: true,
+                  question: true,
+                  questionType: true,
+                  options: true,
+                  difficulty: true,
+                  correctAnswer: true,
+                  explanation: true,
+                },
+              },
+            },
+          },
+        },
+  });
+
+  // Every level's learning items, in Content.order — ordinary content plus
+  // the Content(type=QUIZ/ASSIGNMENT) rows that place quizzes and
+  // assignments, each carrying the Quiz/Assignment it stands for.
+  const contentsInclude = {
     orderBy: { order: "asc" },
-    select: {
-      id: true,
-      quizId: true,
-      order: true,
-      marks: true,
-      question: {
+    include: {
+      quiz: {
         select: {
           id: true,
-          question: true,
-          questionType: true,
-          options: true,
-          difficulty: true,
-          ...(isStudentOrGuest ? {} : { correctAnswer: true, explanation: true }),
-        }
-      }
-    }
+          title: true,
+          quizTag: true,
+          passingScore: true,
+          timeLimit: true,
+          attempts: true,
+          isPublished: true,
+          _count: { select: { quizQuestions: true } },
+        },
+      },
+      assignment: {
+        select: { id: true, title: true, description: true, dueDate: true, marks: true, isPublished: true },
+      },
+    },
+  };
+
+  // Own items only at each level — a quiz may still carry ancestor ids, but
+  // it belongs to its most specific parent alone.
+  const OWN = {
+    course: { moduleId: null, lessonId: null, topicId: null, subTopicId: null, conceptId: null },
+    module: { lessonId: null, topicId: null, subTopicId: null, conceptId: null },
+    lesson: { topicId: null, subTopicId: null, conceptId: null },
+    topic: { subTopicId: null, conceptId: null },
+    subTopic: { conceptId: null },
+    concept: {},
   };
 
   // If role is STUDENT, check if student holds an active enrollment
@@ -489,6 +533,8 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
       if (enrollment) isEnrolledStudent = true;
     }
   }
+
+  const publishedOnly = isStudentOrGuest ? { isPublished: true } : undefined;
 
   const course = await prisma.course.findUnique({
     where: {
@@ -517,167 +563,47 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
       },
 
       // The deep tree. Omitted entirely when includeModules is false so
-      // metadata-only callers don't transfer every content cell and quiz answer.
+      // metadata-only callers don't transfer every content cell and quiz.
       ...(includeModules ? {
-      // Content attached directly to the Course / a Module / a Lesson (not
-      // under a Topic). The student player and Course Map need these to
-      // reach — and step through — every item the progress roll-up counts;
-      // without them those rows did nothing when clicked and Next stopped
-      // short of them.
-      contents: { orderBy: { order: "asc" } },
-      // Assignments attached directly to the Course, the way every level below
-      // already returns its own (see modules/lessons/topics/subTopics/concepts
-      // below). Without these the Course Map had no course-level assignment to
-      // place between the Modules and the Quizzes. Scoped to the course's OWN
-      // rows, the same rule the progress roll-up uses, so a legacy row that
-      // also carries a deeper parent stays at its deepest level only.
-      assignments: {
-        where: { moduleId: null, lessonId: null, topicId: null, subTopicId: null, conceptId: null },
-        orderBy: { order: "asc" },
-      },
+      contents: contentsInclude,
+      assignments: { where: OWN.course, orderBy: { createdAt: "asc" } },
       modules: {
-        where: isStudentOrGuest ? { isPublished: true } : undefined,
-        orderBy: {
-          order: "asc"
-        },
+        where: publishedOnly,
+        orderBy: { order: "asc" },
         include: {
-          contents: { orderBy: { order: "asc" } },
-          quizzes: {
-            // A qualifying test is not learning content — it is the test that lets
-            // a student SKIP this lesson/topic, and it is reached through the skip
-            // flow (GET /progress/learning-path), not by working through the course.
-            // Listing it here would put it in the course map as an item to do,
-            // which is the opposite of what it is for. Instructors still see it.
-            ...(isStudentOrGuest ? { where: { quizTag: { not: "QUALIFYING" } } } : {}),
+          contents: contentsInclude,
+          quizzes: quizzesInclude(OWN.module),
+          assignments: { where: { ...OWN.module, ...publishedOnly }, orderBy: { createdAt: "asc" } },
+          lessons: {
+            where: publishedOnly,
             orderBy: { order: "asc" },
             include: {
-              quizQuestions: {
-                orderBy: { order: "asc" },
-                select: {
-                  id: true,
-                  quizId: true,
-                  order: true,
-                  marks: true,
-                  question: {
-                    select: {
-                      id: true,
-                      question: true,
-                      questionType: true,
-                      options: true,
-                      difficulty: true,
-                      ...(isStudentOrGuest ? {} : { correctAnswer: true, explanation: true }),
-                    }
-                  }
-                }
-              }
-            }
-          },
-          assignments: { orderBy: { order: "asc" } },
-          lessons: {
-            where: isStudentOrGuest ? { isPublished: true } : undefined,
-            orderBy: {
-              order: "asc"
-            },
-            include: {
-              contents: { orderBy: { order: "asc" } },
-              quizzes: {
-                // A qualifying test is not learning content — it is the test that lets
-                // a student SKIP this lesson/topic, and it is reached through the skip
-                // flow (GET /progress/learning-path), not by working through the course.
-                // Listing it here would put it in the course map as an item to do,
-                // which is the opposite of what it is for. Instructors still see it.
-                ...(isStudentOrGuest ? { where: { quizTag: { not: "QUALIFYING" } } } : {}),
-                orderBy: { order: "asc" },
-                include: {
-                  quizQuestions: {
-                    orderBy: { order: "asc" },
-                    select: {
-                      id: true,
-                      quizId: true,
-                      order: true,
-                      marks: true,
-                      question: {
-                        select: {
-                          id: true,
-                          question: true,
-                          questionType: true,
-                          options: true,
-                          difficulty: true,
-                          ...(isStudentOrGuest ? {} : { correctAnswer: true, explanation: true }),
-                        }
-                      }
-                    }
-                  }
-                }
-              },
-              assignments: { orderBy: { order: "asc" } },
+              contents: contentsInclude,
+              quizzes: quizzesInclude(OWN.lesson),
+              assignments: { where: { ...OWN.lesson, ...publishedOnly }, orderBy: { createdAt: "asc" } },
               topics: {
-                orderBy: {
-                  order: "asc"
-                },
+                where: publishedOnly,
+                orderBy: { order: "asc" },
                 include: {
-                  quizzes: {
-                    // A qualifying test is not learning content — it is the test that lets
-                    // a student SKIP this lesson/topic, and it is reached through the skip
-                    // flow (GET /progress/learning-path), not by working through the course.
-                    // Listing it here would put it in the course map as an item to do,
-                    // which is the opposite of what it is for. Instructors still see it.
-                    ...(isStudentOrGuest ? { where: { quizTag: { not: "QUALIFYING" } } } : {}),
-                    orderBy: { order: "asc" },
-                    include: {
-                      quizQuestions: {
-                        orderBy: { order: "asc" },
-                        select: {
-                          id: true,
-                          quizId: true,
-                          order: true,
-                          marks: true,
-                          question: {
-                            select: {
-                              id: true,
-                              question: true,
-                              questionType: true,
-                              options: true,
-                              difficulty: true,
-                              ...(isStudentOrGuest ? {} : { correctAnswer: true, explanation: true }),
-                            }
-                          }
-                        }
-                      }
-                    }
-                  },
-                  assignments: { orderBy: { order: "asc" } },
-                  contents: {
-                    orderBy: {
-                      order: "asc"
-                    }
-                  },
-                  _count: {
-                    select: { contents: true }
-                  },
-                  // The two new levels, nested under Topic. Topic-direct
-                  // contents/quizzes/assignments above are untouched, so a
-                  // course with no SubTopics returns exactly what it did
-                  // before with `subTopics: []` added.
+                  contents: contentsInclude,
+                  quizzes: quizzesInclude(OWN.topic),
+                  assignments: { where: { ...OWN.topic, ...publishedOnly }, orderBy: { createdAt: "asc" } },
+                  _count: { select: { contents: true } },
                   subTopics: {
+                    where: publishedOnly,
                     orderBy: { order: "asc" },
                     include: {
-                      quizzes: {
-                        orderBy: { order: "asc" },
-                        include: { quizQuestions: QUIZ_QUESTIONS_INCLUDE }
-                      },
-                      assignments: { orderBy: { order: "asc" } },
-                      contents: { orderBy: { order: "asc" } },
+                      contents: contentsInclude,
+                      quizzes: quizzesInclude(OWN.subTopic),
+                      assignments: { where: { ...OWN.subTopic, ...publishedOnly }, orderBy: { createdAt: "asc" } },
                       _count: { select: { contents: true } },
                       concepts: {
+                        where: publishedOnly,
                         orderBy: { order: "asc" },
                         include: {
-                          quizzes: {
-                            orderBy: { order: "asc" },
-                            include: { quizQuestions: QUIZ_QUESTIONS_INCLUDE }
-                          },
-                          assignments: { orderBy: { order: "asc" } },
-                          contents: { orderBy: { order: "asc" } },
+                          contents: contentsInclude,
+                          quizzes: quizzesInclude(OWN.concept),
+                          assignments: { where: publishedOnly, orderBy: { createdAt: "asc" } },
                           _count: { select: { contents: true } }
                         }
                       }
@@ -691,40 +617,8 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
       },
       } : {}),
 
-      quizzes: {
-        // A qualifying test is not learning content — it is the test that lets
-        // a student SKIP this lesson/topic, and it is reached through the skip
-        // flow (GET /progress/learning-path), not by working through the course.
-        // Listing it here would put it in the course map as an item to do,
-        // which is the opposite of what it is for. Instructors still see it.
-        ...(isStudentOrGuest ? { where: { quizTag: { not: "QUALIFYING" } } } : {}),
-        orderBy: { order: "asc" },
-        include: {
-          quizQuestions: {
-            orderBy: {
-              order: "asc"
-            },
-            select: {
-              id: true,
-              quizId: true,
-              order: true,
-              marks: true,
-              question: {
-                select: {
-                  id: true,
-                  question: true,
-                  questionType: true,
-                  options: true,
-                  difficulty: true,
-                  ...(isStudentOrGuest
-                    ? {}
-                    : { correctAnswer: true, explanation: true }),
-                }
-              }
-            }
-          }
-        }
-      },
+      // Every quiz of the course, for counts and the instructor's quiz lists.
+      quizzes: quizzesInclude(),
       enrollments: true
     }
   });
@@ -735,9 +629,23 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
     return null;
   }
 
-  if (role === "STUDENT") {
-    const { lockMap, completedSet, qualifiedSet } = await buildLessonLockMap(courseId, studentProfileId);
+  if (role === "STUDENT" && includeModules) {
+    const { lockMap, completedSet, qualifiedSet, lockedContentIds } = await buildLessonLockMap(courseId, studentProfileId);
+
+    // A student never receives the material of an item they may not open yet —
+    // ordinary content, quiz or assignment, at any level.
+    const withholdLocked = (node) => {
+      if (!node?.contents) return;
+      node.contents = node.contents.map((content) => {
+        if (!lockedContentIds.has(content.id)) return content;
+        const redacted = { ...content, locked: true, videoUrl: null, fileUrl: null, htmlContent: null, externalUrl: null, data: null };
+        if (redacted.assignment) redacted.assignment = { ...redacted.assignment, description: null };
+        return redacted;
+      });
+    };
+    withholdLocked(course);
     course.modules.forEach((moduleItem) => {
+      withholdLocked(moduleItem);
       moduleItem.lessons.forEach((lesson) => {
         const locked = lockMap.get(lesson.id) ?? false;
         lesson.locked = locked;
@@ -750,6 +658,17 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
         if (locked) {
           lesson.topics = [];
           lesson.contents = [];
+          lesson.quizzes = [];
+          lesson.assignments = [];
+          return;
+        }
+        withholdLocked(lesson);
+        for (const topic of lesson.topics) {
+          withholdLocked(topic);
+          for (const subTopic of topic.subTopics || []) {
+            withholdLocked(subTopic);
+            for (const concept of subTopic.concepts || []) withholdLocked(concept);
+          }
         }
       });
     });
@@ -871,6 +790,9 @@ const validateCourseForPublish = async (courseId) => {
           ];
           const hasContent = candidateContents.some((c) => {
             if (!c) return false;
+            // A quiz or assignment item is real learning material; its Content
+            // row carries no body of its own.
+            if ((c.type === "QUIZ" && c.quizId) || (c.type === "ASSIGNMENT" && c.assignmentId)) return true;
             if (typeof c.htmlContent === "string" && c.htmlContent.trim().length > 0) return true;
             if (typeof c.videoUrl === "string" && c.videoUrl.trim().length > 0) return true;
             if (typeof c.fileUrl === "string" && c.fileUrl.trim().length > 0) return true;
@@ -1223,7 +1145,6 @@ const updateStatus = async (courseId, status, userId, userRole) => {
  * four existing levels already inline above.
  */
 const copyContentFields = (content) => ({
-  order: content.order,
   type: content.type,
   title: content.title,
   videoUrl: content.videoUrl,
@@ -1234,30 +1155,79 @@ const copyContentFields = (content) => ({
   data: content.data
 });
 
+const SINGLE_PARENT = { courseId: null, moduleId: null, lessonId: null, topicId: null, subTopicId: null, conceptId: null };
+
+/**
+ * Copies one container's Content rows into its duplicate at the SAME
+ * positions — a container's Content rows and its child containers share one
+ * sequence, and the child containers are copied with their own orders too:
+ *   - ordinary content is copied as is;
+ *   - an assignment item is copied as a new Assignment with its own
+ *     Content(type=ASSIGNMENT) row — assignments were always duplicated as
+ *     part of the content (the lesson composer's assignment blocks), and an
+ *     assignment row must never point at the source course's assignment;
+ *   - quizzes are not duplicated, exactly as before (a quiz carries its own
+ *     question bank links and attempt history and is rebuilt deliberately).
+ */
+const copyContentSequence = async (tx, rows, parent) => {
+  const parentData = { ...SINGLE_PARENT, ...parent };
+  const plain = [];
+  for (const content of rows) {
+    const order = content.order;
+    if (content.type === "QUIZ") continue;
+    if (content.type === "ASSIGNMENT") {
+      if (!content.assignment) continue;
+      const a = content.assignment;
+      const copy = await tx.assignment.create({
+        data: {
+          title: a.title,
+          description: a.description,
+          dueDate: a.dueDate,
+          totalQuestions: a.totalQuestions,
+          estimatedTime: a.estimatedTime,
+          resources: a.resources,
+          marks: a.marks,
+          assessmentType: a.assessmentType,
+          attachments: a.attachments ?? undefined,
+          isPublished: a.isPublished,
+          ...parentData
+        }
+      });
+      await tx.content.create({
+        data: { type: "ASSIGNMENT", title: content.title, order, assignmentId: copy.id, ...parentData }
+      });
+      continue;
+    }
+    plain.push({ ...copyContentFields(content), order, ...parentData });
+  }
+  if (plain.length > 0) await tx.content.createMany({ data: plain });
+};
+
 const duplicateCourse = async (courseId, instructorId) => {
+  const contentsWithAssignments = { orderBy: { order: "asc" }, include: { assignment: true } };
   const source = await prisma.course.findUnique({
     where: { id: courseId },
     include: {
-      contents: { orderBy: { order: "asc" } },
+      contents: contentsWithAssignments,
       modules: {
         orderBy: { order: "asc" },
         include: {
-          contents: { orderBy: { order: "asc" } },
+          contents: contentsWithAssignments,
           lessons: {
             orderBy: { order: "asc" },
             include: {
-              contents: { orderBy: { order: "asc" } },
+              contents: contentsWithAssignments,
               topics: {
                 orderBy: { order: "asc" },
                 include: {
-                  contents: { orderBy: { order: "asc" } },
+                  contents: contentsWithAssignments,
                   subTopics: {
                     orderBy: { order: "asc" },
                     include: {
-                      contents: { orderBy: { order: "asc" } },
+                      contents: contentsWithAssignments,
                       concepts: {
                         orderBy: { order: "asc" },
-                        include: { contents: { orderBy: { order: "asc" } } }
+                        include: { contents: contentsWithAssignments }
                       }
                     }
                   }
@@ -1291,76 +1261,48 @@ const duplicateCourse = async (courseId, instructorId) => {
         tags: source.tags,
         certificatesEnabled: source.certificatesEnabled,
         discussionEnabled: source.discussionEnabled,
-        
+
         estimatedLearningHours: source.estimatedLearningHours
       }
     });
 
-    const contentFields = (content) => ({
-      order: content.order,
-      type: content.type,
-      title: content.title,
-      videoUrl: content.videoUrl,
-      fileUrl: content.fileUrl,
-      htmlContent: content.htmlContent,
-      externalUrl: content.externalUrl,
-      duration: content.duration,
-      data: content.data
-    });
-
-    // Ids are generated here rather than read back from each insert, so a
-    // child level can reference its parent without the parent having been
-    // written yet. That turns the walk below into one createMany per level
-    // instead of two round trips per node.
-    const moduleRows = [];
-    const lessonRows = [];
-    const topicRows = [];
-    const contentRows = source.contents.map((content) => ({
-      ...contentFields(content),
-      courseId: newCourse.id
-    }));
+    await copyContentSequence(tx, source.contents, { courseId: newCourse.id });
 
     for (const module of source.modules) {
-      const moduleId = crypto.randomUUID();
-      moduleRows.push({
-        id: moduleId,
-        title: module.title,
-        description: module.description,
-        order: module.order,
-        isPublished: false,
-        courseId: newCourse.id
+      const newModule = await tx.module.create({
+        data: {
+          title: module.title,
+          description: module.description,
+          order: module.order,
+          isPublished: false,
+          courseId: newCourse.id
+        }
       });
-      for (const content of module.contents) {
-        contentRows.push({ ...contentFields(content), moduleId });
-      }
+      await copyContentSequence(tx, module.contents, { moduleId: newModule.id });
 
       for (const lesson of module.lessons) {
-        const lessonId = crypto.randomUUID();
-        lessonRows.push({
-          id: lessonId,
-          title: lesson.title,
-          description: lesson.description,
-          order: lesson.order,
-          isPublished: false,
-          moduleId
+        const newLesson = await tx.lesson.create({
+          data: {
+            title: lesson.title,
+            description: lesson.description,
+            order: lesson.order,
+            isPublished: false,
+            moduleId: newModule.id
+          }
         });
-        for (const content of lesson.contents) {
-          contentRows.push({ ...contentFields(content), lessonId });
-        }
+        await copyContentSequence(tx, lesson.contents, { lessonId: newLesson.id });
 
         for (const topic of lesson.topics) {
-          const topicId = crypto.randomUUID();
-          topicRows.push({
-            id: topicId,
-            title: topic.title,
-            description: topic.description,
-            order: topic.order,
-            isPublished: false,
-            lessonId
+          const newTopic = await tx.topic.create({
+            data: {
+              title: topic.title,
+              description: topic.description,
+              order: topic.order,
+              isPublished: false,
+              lessonId: newLesson.id
+            }
           });
-          for (const content of topic.contents) {
-            contentRows.push({ ...contentFields(content), topicId });
-          }
+          await copyContentSequence(tx, topic.contents, { topicId: newTopic.id });
 
           // SubTopics and their Concepts. Without this a duplicate would
           // silently drop everything below Topic -- no error, just a course
@@ -1375,15 +1317,7 @@ const duplicateCourse = async (courseId, instructorId) => {
                 topicId: newTopic.id
               }
             });
-
-            if (subTopic.contents.length > 0) {
-              await tx.content.createMany({
-                data: subTopic.contents.map((content) => ({
-                  ...copyContentFields(content),
-                  subTopicId: newSubTopic.id
-                }))
-              });
-            }
+            await copyContentSequence(tx, subTopic.contents, { subTopicId: newSubTopic.id });
 
             for (const concept of subTopic.concepts || []) {
               const newConcept = await tx.concept.create({
@@ -1395,29 +1329,15 @@ const duplicateCourse = async (courseId, instructorId) => {
                   subTopicId: newSubTopic.id
                 }
               });
-
-              if (concept.contents.length > 0) {
-                await tx.content.createMany({
-                  data: concept.contents.map((content) => ({
-                    ...copyContentFields(content),
-                    conceptId: newConcept.id
-                  }))
-                });
-              }
+              await copyContentSequence(tx, concept.contents, { conceptId: newConcept.id });
             }
           }
         }
       }
     }
 
-    // Ordered so each level exists before the level that references it.
-    if (moduleRows.length > 0) await tx.module.createMany({ data: moduleRows });
-    if (lessonRows.length > 0) await tx.lesson.createMany({ data: lessonRows });
-    if (topicRows.length > 0) await tx.topic.createMany({ data: topicRows });
-    if (contentRows.length > 0) await tx.content.createMany({ data: contentRows });
-
     return newCourse;
-  }, { maxWait: 20000, timeout: 60000 });
+  });
 };
 
 const getCourseStudents = async (courseId) => {
@@ -1517,7 +1437,10 @@ const exportCourse = async (courseId) => {
             include: {
               topics: {
                 orderBy: { order: "asc" },
-                include: { contents: { orderBy: { order: "asc" } } }
+                // Quiz/assignment items are not part of the package format
+                // (quizzes and assignments were never exported); their
+                // Content rows carry no material of their own.
+                include: { contents: { where: { type: { notIn: ["QUIZ", "ASSIGNMENT"] } }, orderBy: { order: "asc" } } }
               }
             }
           }

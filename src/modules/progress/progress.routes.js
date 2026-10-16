@@ -43,6 +43,10 @@ router.post(
 // before /courses/:courseId only for readability; the two don't collide.
 router.get('/learning-path', progressController.getLearningPath);
 
+// The unified learning sequence (Content, Quiz and Assignment steps in one
+// order) the player, the Course Map and resume all read.
+router.get('/learning-sequence', progressController.getLearningSequence);
+
 router.get('/courses/:courseId', progressController.getCourseProgress);
 
 router.get('/', progressController.getOverallProgress);

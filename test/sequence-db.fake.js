@@ -51,11 +51,36 @@ function createSequenceDb() {
   const assertUnique = (name) => {
     const seen = new Set();
     for (const row of tables[name]) {
+      // Content.quizId / Content.assignmentId are unique: a Quiz or an
+      // Assignment is placed in a learning sequence at most once.
+      for (const link of ["quizId", "assignmentId"]) {
+        if (name !== "content" || !row[link]) continue;
+        const key = `${link}=${row[link]}`;
+        if (seen.has(key)) throw new Error(`Unique constraint violated on content (${key})`);
+        seen.add(key);
+      }
       if (typeof row.order !== "number") continue;
       const key = `${uniquenessKey(name, row)}#${row.order}`;
       if (seen.has(key)) throw new Error(`Unique constraint violated on ${name} (${key})`);
       seen.add(key);
     }
+  };
+
+  // Prisma's orderBy: one { field: "asc" | "desc" } or an array of them.
+  const sortRows = (rows, orderBy) => {
+    const keys = (Array.isArray(orderBy) ? orderBy : orderBy ? [orderBy] : []).flatMap((entry) => Object.entries(entry));
+    if (keys.length === 0) return rows;
+    const value = (v) => (v instanceof Date ? v.getTime() : v);
+    return [...rows].sort((a, b) => {
+      for (const [field, direction] of keys) {
+        const x = value(a[field]);
+        const y = value(b[field]);
+        if (x === y) continue;
+        const cmp = x === null || x === undefined ? 1 : y === null || y === undefined ? -1 : x < y ? -1 : 1;
+        return direction === "desc" ? -cmp : cmp;
+      }
+      return 0;
+    });
   };
 
   const delegate = (name) => ({
@@ -105,11 +130,13 @@ function createSequenceDb() {
       const [row] = tables[name].splice(index, 1);
       return row;
     },
+    // By id, or by any other unique field (Content.quizId / assignmentId).
     findUnique: async ({ where }) => {
-      const row = tables[name].find((r) => r.id === where.id);
+      const row = tables[name].find((r) => Object.entries(where).every(([field, value]) => r[field] === value));
       return row ? { ...row, quizQuestions: [] } : null;
     },
-    findMany: async ({ where } = {}) => tables[name].filter((row) => rowMatches(row, where)).map((row) => ({ ...row })),
+    findMany: async ({ where, orderBy } = {}) =>
+      sortRows(tables[name].filter((row) => rowMatches(row, where)), orderBy).map((row) => ({ ...row })),
     deleteMany: async ({ where } = {}) => {
       const keep = tables[name].filter((row) => !rowMatches(row, where));
       const count = tables[name].length - keep.length;
@@ -129,21 +156,22 @@ function createSequenceDb() {
   db.$transaction = async (arg) => (typeof arg === "function" ? arg(db) : Promise.all(arg));
   db.tables = tables;
 
-  /** A parent's items of every type, in sequence order, as "kind:id@order". */
+  /**
+   * One parent's learning sequence — its Content rows and its child
+   * containers, which share one order — as "TYPE:title@order" (a container
+   * shows as MODULE / LESSON / TOPIC / SUBTOPIC / CONCEPT).
+   */
   db.sequenceOf = (parentField, parentId) => {
     const deeper = PARENT_FIELDS.slice(PARENT_FIELDS.indexOf(parentField) + 1);
     const own = (row) => row[parentField] === parentId && deeper.every((f) => row[f] === null || row[f] === undefined);
-    const items = [];
-    for (const name of ["content", "quiz", "assignment"]) {
-      for (const row of tables[name].filter(own)) items.push({ name, row });
-    }
+    const items = tables.content.filter(own).map((row) => ({ label: row.type, row }));
     for (const [name, field] of Object.entries(CHILD_PARENT_FIELD)) {
       if (field !== parentField) continue;
-      for (const row of tables[name].filter((r) => r[field] === parentId)) items.push({ name, row });
+      for (const row of tables[name].filter((r) => r[field] === parentId)) items.push({ label: name.toUpperCase(), row });
     }
     return items
       .sort((a, b) => a.row.order - b.row.order)
-      .map(({ name, row }) => `${name}:${row.title || row.id}@${row.order}`);
+      .map(({ label, row }) => `${label}:${row.title || row.id}@${row.order}`);
   };
 
   return db;
