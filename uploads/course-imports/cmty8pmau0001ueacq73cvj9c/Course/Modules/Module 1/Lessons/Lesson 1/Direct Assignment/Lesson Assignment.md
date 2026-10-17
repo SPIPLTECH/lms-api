@@ -1,3 +1,0 @@
-# Assignment
-
-Do the thing.

@@ -1,3 +1,0 @@
-# Some notes
-
-Plain content.
