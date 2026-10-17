@@ -35,19 +35,37 @@ const argValue = (name) => {
   return index > -1 ? process.argv[index + 1] : null;
 };
 
+/**
+ * ContentSubmission and Quiz.batchId were removed from schema.prisma (batches
+ * and lesson-composer submissions are gone), so the Prisma client can no
+ * longer read them — but a database migrated late may still hold them, and
+ * the plan needs both (legacy submissions are copied into AssignmentSubmission;
+ * a batch quiz stays standalone). Read them with SQL while they exist, so
+ * their rows are migrated, never silently skipped; once dropped, they are empty.
+ */
+async function loadRemovedLegacyRows(client) {
+  const [{ hasSubmissions, hasBatchId }] = await client.$queryRawUnsafe(`
+    SELECT to_regclass('public."ContentSubmission"') IS NOT NULL AS "hasSubmissions",
+           EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'Quiz' AND column_name = 'batchId') AS "hasBatchId"`);
+  const contentSubmissions = hasSubmissions ? await client.$queryRawUnsafe(`SELECT * FROM "ContentSubmission"`) : [];
+  const batchQuizzes = hasBatchId ? await client.$queryRawUnsafe(`SELECT "id", "batchId" FROM "Quiz" WHERE "batchId" IS NOT NULL`) : [];
+  return { contentSubmissions, batchIdByQuiz: new Map(batchQuizzes.map((row) => [row.id, row.batchId])) };
+}
+
 async function loadSnapshot(client) {
-  const [contents, quizzes, assignments, contentSubmissions, assignmentSubmissions, quizAttempts, quizSubmissions, contentProgress, quizProgress, assignmentProgress] =
+  const { contentSubmissions, batchIdByQuiz } = await loadRemovedLegacyRows(client);
+  const [contents, quizRows, assignments, assignmentSubmissions, quizAttempts, quizSubmissions, contentProgress, quizProgress, assignmentProgress] =
     await Promise.all([
       client.content.findMany({
         select: { id: true, type: true, order: true, title: true, ...PARENTS, quizId: true, assignmentId: true, createdAt: true, htmlContent: true, fileUrl: true, data: true },
       }),
       client.quiz.findMany({
-        select: { id: true, title: true, quizTag: true, batchId: true, order: true, passingScore: true, ...PARENTS, createdAt: true },
+        select: { id: true, title: true, quizTag: true, order: true, passingScore: true, ...PARENTS, createdAt: true },
       }),
       client.assignment.findMany({
         select: { id: true, title: true, order: true, dueDate: true, attachments: true, ...PARENTS, createdAt: true },
       }),
-      client.contentSubmission.findMany(),
       client.assignmentSubmission.findMany(),
       client.quizAttempt.findMany({ select: { quizId: true, studentId: true, passed: true, submittedAt: true } }),
       client.quizSubmission.findMany({ select: { quizId: true, studentId: true, passed: true, percentage: true, submittedAt: true } }),
@@ -55,6 +73,7 @@ async function loadSnapshot(client) {
       client.quizProgress.findMany(),
       client.assignmentProgress.findMany(),
     ]);
+  const quizzes = quizRows.map((quiz) => ({ ...quiz, batchId: batchIdByQuiz.get(quiz.id) ?? null }));
   const containers = {
     module: await client.module.findMany({ select: { id: true, courseId: true, order: true, createdAt: true } }),
     lesson: await client.lesson.findMany({ select: { id: true, moduleId: true, order: true, createdAt: true } }),

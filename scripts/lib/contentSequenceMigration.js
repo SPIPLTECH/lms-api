@@ -340,12 +340,24 @@ function planContentSequenceMigration(snapshot, { newId }) {
     );
 
     const all = [...sortedContent.map((row) => ({ row, kind: "content" })), ...sortedContainers.map((row) => ({ row, kind: "container" }))];
-    const orders = all.map((entry) => entry.row.order);
+    // Wrappers created by this run have no position yet. They must not make
+    // an already-distinct sequence look like a collision: that sent every
+    // such parent down the merge-by-date path and moved items the instructor
+    // had placed (a "Prerequisite" subtopic numbered 1 dropped below videos
+    // added before it). So distinctness is judged on the existing rows only,
+    // and the new wrappers go after them — where the old app listed a level's
+    // quizzes.
+    const isNewWrapper = (entry) => entry.kind === "content" && createdIds.has(entry.row.id);
+    const existing = all.filter((entry) => !isNewWrapper(entry));
+    const orders = existing.map((entry) => entry.row.order);
     const distinct = orders.every((o) => Number.isInteger(o)) && new Set(orders).size === orders.length;
 
     let merged;
     if (distinct) {
-      merged = [...all].sort((a, b) => a.row.order - b.row.order);
+      const newWrappers = all
+        .filter(isNewWrapper)
+        .sort((a, b) => time(a.row.createdAt) - time(b.row.createdAt) || String(a.row.id).localeCompare(String(b.row.id)));
+      merged = [...existing.sort((a, b) => a.row.order - b.row.order), ...newWrappers];
     } else {
       const contentTimes = monotoneTimes(sortedContent);
       const containerTimes = monotoneTimes(sortedContainers);
