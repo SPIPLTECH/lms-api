@@ -5,57 +5,42 @@ const assignmentService = require("../src/modules/assignments/assignment.service
 const prisma = require("../src/config/database");
 
 // The student Assignments page is the lasting record of every assignment and
-// its grade, so getAssignments must list lesson-composer (Content) assignments
-// alongside Assignment rows, each carrying its grade and feedback.
-test("getAssignments lists both kinds with grades and feedback", async (t) => {
-  const originals = {
-    assignmentFindMany: prisma.assignment.findMany,
-    contentFindMany: prisma.content.findMany,
-  };
+// its grade. Every assignment is an Assignment row at some level of the course,
+// so getAssignments reads them in one query and resolves each one's course and
+// lesson from whichever level it hangs off.
+test("getAssignments lists every level's assignments with grades and feedback", async (t) => {
+  const original = prisma.assignment.findMany;
   t.after(() => {
-    prisma.assignment.findMany = originals.assignmentFindMany;
-    prisma.content.findMany = originals.contentFindMany;
+    prisma.assignment.findMany = original;
   });
 
   const course = { id: "c1", title: "Course" };
-  let contentArgs = null;
+  const lesson = { id: "l1", module: { id: "m1", title: "Module 1", course } };
+  let args = null;
 
-  prisma.assignment.findMany = async () => [
-    {
-      id: "a1",
-      title: "Essay",
-      description: "Write it",
-      dueDate: new Date(),
-      createdAt: new Date(),
-      course,
-      submissions: [{ status: "Graded", grade: "A", feedback: "Great", submittedAt: new Date() }],
-    },
-  ];
-  prisma.content.findMany = async (args) => {
-    contentArgs = args;
+  prisma.assignment.findMany = async (a) => {
+    args = a;
     return [
       {
-        id: "ct1",
-        title: "First Assignment",
-        htmlContent: "brief",
+        id: "a1",
+        title: "Essay",
+        description: "Write it",
+        dueDate: new Date(),
         createdAt: new Date(),
-        lessonId: null,
+        course,
+        content: { id: "ct1" },
+        submissions: [{ status: "Graded", grade: "A", feedback: "Great", submittedAt: new Date() }],
+      },
+      {
+        id: "a2",
+        title: "Topic task",
+        dueDate: new Date(),
+        createdAt: new Date(),
         course: null,
         module: null,
         lesson: null,
-        topic: { lessonId: "l1", lesson: { module: { course } } },
-        submissions: [{ status: "Graded", grade: "8/10", feedback: "Good", submittedAt: new Date() }],
-      },
-      {
-        id: "ct2",
-        title: null,
-        htmlContent: null,
-        createdAt: new Date(),
-        lessonId: "l2",
-        course: null,
-        module: null,
-        lesson: { module: { course } },
-        topic: null,
+        topic: { lessonId: "l1", lesson },
+        content: null,
         submissions: [],
       },
     ];
@@ -63,25 +48,22 @@ test("getAssignments lists both kinds with grades and feedback", async (t) => {
 
   const list = await assignmentService.getAssignments("s1");
 
-  assert.strictEqual(contentArgs.where.type, "ASSIGNMENT");
-  assert.strictEqual(contentArgs.include.submissions.where.studentId, "s1");
+  assert.strictEqual(args.where.isPublished, true);
+  assert.strictEqual(args.include.submissions.where.studentId, "s1");
 
   const byId = Object.fromEntries(list.map((a) => [a.id, a]));
-  assert.strictEqual(list.length, 3);
+  assert.strictEqual(list.length, 2);
 
-  assert.strictEqual(byId.a1.kind, "assignment");
+  assert.strictEqual(byId.a1.status, "Graded");
   assert.strictEqual(byId.a1.grade, "A");
   assert.strictEqual(byId.a1.feedback, "Great");
+  assert.deepStrictEqual(byId.a1.course, course);
+  assert.strictEqual(byId.a1.contentId, "ct1");
 
-  assert.strictEqual(byId.ct1.kind, "content");
-  assert.strictEqual(byId.ct1.status, "Graded");
-  assert.strictEqual(byId.ct1.grade, "8/10");
-  assert.strictEqual(byId.ct1.feedback, "Good");
-  assert.deepStrictEqual(byId.ct1.course, course);
-  assert.strictEqual(byId.ct1.lessonId, "l1");
-
-  assert.strictEqual(byId.ct2.status, "Not Submitted");
-  assert.strictEqual(byId.ct2.grade, null);
-  assert.strictEqual(byId.ct2.title, "Assignment");
-  assert.strictEqual(byId.ct2.lessonId, "l2");
+  assert.strictEqual(byId.a2.status, "Not Submitted");
+  assert.strictEqual(byId.a2.grade, null);
+  assert.deepStrictEqual(byId.a2.course, course, "course resolved through topic -> lesson -> module");
+  assert.strictEqual(byId.a2.moduleTitle, "Module 1");
+  assert.strictEqual(byId.a2.lessonId, "l1");
+  assert.strictEqual(byId.a2.contentId, null);
 });

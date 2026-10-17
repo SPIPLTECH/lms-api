@@ -128,17 +128,16 @@ function validateContentDataInvariants(type, quizId, assignmentId) {
 /**
  * Checks that a Quiz may be placed in the learning sequence of `courseId`:
  * it exists, belongs to that course, is not a standalone kind (a QUALIFYING
- * test, a batch assessment) and is not already wrapped by another row.
+ * test) and is not already wrapped by another row.
  */
 async function assertQuizLinkable(quizId, courseId, client, exceptContentId = null) {
   const quiz = await client.quiz.findUnique({
     where: { id: quizId },
-    select: { id: true, title: true, courseId: true, quizTag: true, batchId: true, content: { select: { id: true } } },
+    select: { id: true, title: true, courseId: true, quizTag: true, content: { select: { id: true } } },
   });
   if (!quiz) throw httpError(404, "Quiz not found.");
   if (courseId && quiz.courseId !== courseId) throw httpError(400, "The quiz belongs to a different course.");
   if (quiz.quizTag === "QUALIFYING") throw httpError(400, "A qualifying test is not a learning-sequence item.");
-  if (quiz.batchId) throw httpError(400, "A batch assessment is not a learning-sequence item.");
   if (quiz.content && quiz.content.id !== exceptContentId) {
     throw httpError(409, "This quiz is already placed in the learning sequence.");
   }

@@ -19,7 +19,6 @@ const getQuizzes = async (req, res, next) => {
       req.query.courseId,
       req.user?.role,
       req.user?.id,
-      req.query.batchId,
       studentId
     );
 
@@ -44,7 +43,7 @@ const getQuizById = async (req, res, next) => {
       studentId = student?.id ?? null;
       // A sequence quiz opens only once the student has reached it (and only
       // for a student enrolled in its course). Standalone quizzes — qualifying
-      // tests, batch assessments, practice quizzes — are not gated here.
+      // tests, practice quizzes — are not gated here.
       if (studentId) {
         await require("../progress/progress.service").assertSequenceItemAccessible(studentId, {
           quizId: req.params.quizId,

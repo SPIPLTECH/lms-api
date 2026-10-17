@@ -12,7 +12,7 @@ const {
  * Every learning item is a Content row. A Quiz or an Assignment takes part in
  * the sequence — and in progress — through the Content row that wraps it
  * (Content(type=QUIZ, quizId) / Content(type=ASSIGNMENT, assignmentId)).
- * Unwrapped quizzes (QUALIFYING tests, batch-scoped assessments, student
+ * Unwrapped quizzes (QUALIFYING tests, student
  * practice quizzes) are not course items and are never counted here.
  *
  * Container chain: Course -> Module -> Lesson -> Topic -> SubTopic -> Concept.

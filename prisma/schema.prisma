@@ -30,20 +30,16 @@ model User {
   otpExpiresAt            DateTime?
   adminProfile            AdminProfile?
   announcements           Announcement[]
-  Conversation            Conversation[]
-  ConversationParticipant ConversationParticipant[]
   courses                 Course[]
   discussions             Discussion[]
   discussionReplies       DiscussionReply[]
   lessonNotes             InstructorLessonNote[]
-  Message                 Message[]
   notifications           Notification[]
   createdQuestions        Question[]
   studentProfile          StudentProfile?
   teacherProfile          TeacherProfile?
   teachingGoals           TeachingGoal[]
   courseImportJobs        CourseImportJob[]
-  paymentOrders           PaymentOrder[]
   aiConversations         AiConversation[]
 
   @@index([role])
@@ -99,17 +95,11 @@ model StudentProfile {
   bookmarks             Bookmark[]
   achievements          StudentAchievement[]
   assignmentSubmissions AssignmentSubmission[]
-  contentSubmissions    ContentSubmission[]
-  batches               Batch[]                @relation("BatchToStudentProfile")
   lessonQueries         LessonQuery[]
-  videoAnalytics        VideoAnalytics[]
   studentState          StudentState[]
   conceptMasteries      ConceptMastery[]
   knowledgeGaps         KnowledgeGap[]
   learningEvents        LearningEvent[]
-  activityState         StudentActivityState?
-  courseStates          StudentCourseState[]
-  entryAssessments      EntryAssessment[]
   contentProgresses     ContentProgress[]
   topicProgresses       TopicProgress[]
   subTopicProgresses    SubTopicProgress[]
@@ -172,38 +162,17 @@ model Course {
   contents               Content[]
   quizzes                Quiz[]
   reviews                Review[]
-  liveClasses            LiveClass[]
   assignments            Assignment[]
   exams                  Exam[]
-  batches                Batch[]          @relation("BatchToCourse")
 
-  batchesByCourseId   Batch[]              @relation("Batch_courseIdToCourse")
-  batchSessions       BatchSession[]
   studentStates       StudentState[]
   learningEvents      LearningEvent[]
-  videoAnalytics      VideoAnalytics[]
   announcements       Announcement[]
   discussions         Discussion[]
-  entryAssessments    EntryAssessment[]
-  studentCourseStates StudentCourseState[]
-  store               Store?
   questions           Question[]
-  paymentOrders       PaymentOrder[]
   aiConversations     AiConversation[]
 
   @@index([creatorId])
-}
-
-model Store {
-  id            String   @id @default(cuid())
-  price         Float    @default(0)
-  discountPrice Float?
-  currency      String   @default("INR")
-  isFree        Boolean  @default(false)
-  courseId      String   @unique
-  course        Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
 }
 
 model Module {
@@ -242,7 +211,6 @@ model Lesson {
   queries         LessonQuery[]
 
   stickyNotes    StickyNote[]
-  videoAnalytics VideoAnalytics[]
   quizzes        Quiz[]
   assignments    Assignment[]
   progresses     LessonProgress[]
@@ -352,7 +320,6 @@ model Content {
   subTopic      SubTopic?           @relation(fields: [subTopicId], references: [id], onDelete: Cascade)
   concept       Concept?            @relation(fields: [conceptId], references: [id], onDelete: Cascade)
   progresses    ContentProgress[]
-  submissions   ContentSubmission[]
   lessonQueries LessonQuery[]
 
   @@unique([courseId, order])
@@ -584,27 +551,6 @@ model AssignmentProgress {
   @@index([assignmentId])
 }
 
-model PaymentOrder {
-  id                String        @id @default(cuid())
-  userId            String
-  courseId          String
-  razorpayOrderId   String        @unique
-  razorpayPaymentId String?
-  razorpaySignature String?
-  amount            Int
-  currency          String        @default("INR")
-  status            PaymentStatus @default(PENDING)
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
-
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([courseId])
-  @@index([status])
-}
-
 model Quiz {
   id               String           @id @default(cuid())
   /// @deprecated Not read or written. A quiz's position in the learning
@@ -624,7 +570,6 @@ model Quiz {
   isPublished      Boolean          @default(true)
   status           String?          @default("ACTIVE")
   courseId         String
-  batchId          String?
   moduleId         String?
   lessonId         String?
   topicId          String?
@@ -634,7 +579,6 @@ model Quiz {
   updatedAt        DateTime         @updatedAt
   questions        Question[]
   course           Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  batch            Batch?           @relation(fields: [batchId], references: [id], onDelete: SetNull)
   module           Module?          @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   lesson           Lesson?          @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   topic            Topic?           @relation(fields: [topicId], references: [id], onDelete: Cascade)
@@ -652,7 +596,6 @@ model Quiz {
   quizQuestions    QuizQuestion[]
   content          Content?
 
-  @@index([batchId])
   @@index([moduleId])
   @@index([topicId])
   @@index([subTopicId])
@@ -876,72 +819,6 @@ model Certificate {
   @@unique([studentId, courseId])
 }
 
-model Conversation {
-  id           String                    @id @default(cuid())
-  type         ConversationType
-  name         String?
-  image        String?
-  batchId      String?
-  createdById  String
-  createdAt    DateTime                  @default(now())
-  updatedAt    DateTime                  @updatedAt
-  User         User                      @relation(fields: [createdById], references: [id])
-  participants ConversationParticipant[]
-  Message      Message[]
-
-  @@index([createdById])
-  @@index([updatedAt])
-  @@index([batchId])
-}
-
-model ConversationParticipant {
-  id             String       @id @default(cuid())
-  conversationId String
-  userId         String
-  joinedAt       DateTime     @default(now())
-  lastReadAt     DateTime?
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([conversationId, userId])
-  @@index([userId])
-}
-
-model Message {
-  id                 String              @id @default(cuid())
-  conversationId     String
-  senderId           String
-  content            String?
-  isEdited           Boolean             @default(false)
-  editedAt           DateTime?
-  isDeleted          Boolean             @default(false)
-  deletedAt          DateTime?
-  isStarred          Boolean             @default(false)
-  expiresAt          DateTime?
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
-  conversation       Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender             User                @relation(fields: [senderId], references: [id])
-  messageAttachments MessageAttachment[]
-
-  @@index([conversationId, createdAt])
-  @@index([senderId])
-}
-
-model MessageAttachment {
-  id        String         @id @default(cuid())
-  messageId String
-  fileName  String
-  fileUrl   String
-  mimeType  String
-  size      Int
-  type      AttachmentType
-  createdAt DateTime       @default(now())
-  Message   Message        @relation(fields: [messageId], references: [id], onDelete: Cascade)
-
-  @@index([messageId])
-}
-
 model Note {
   id        String         @id @default(cuid())
   title     String
@@ -969,32 +846,6 @@ model Bookmark {
   student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@index([studentId])
-}
-
-model LiveClass {
-  id             String          @id @default(cuid())
-  title          String
-  topic          String?
-  courseId       String
-  instructorId   String
-  scheduledAt    DateTime
-  duration       Int?
-  meetingUrl     String?
-  status         LiveClassStatus @default(SCHEDULED)
-  startDate      DateTime?
-  dueDate        DateTime?
-  availableFrom  DateTime?
-  availableUntil DateTime?
-  startTime      String?
-  endTime        String?
-  meetingLink    String?
-  isPublished    Boolean         @default(true)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  course         Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
-
-  @@index([courseId])
-  @@index([scheduledAt])
 }
 
 model Achievement {
@@ -1095,55 +946,6 @@ model AssignmentSubmission {
   @@index([studentId])
 }
 
-/// @deprecated Read-only history. Lesson-composer assignment blocks are real
-/// Assignments now (Content(type=ASSIGNMENT, assignmentId)), and every row of
-/// this table was migrated into AssignmentSubmission by
-/// scripts/migrateContentSequence.js. Nothing writes it; kept for audit until
-/// it is dropped together with the deprecated columns.
-model ContentSubmission {
-  id          String   @id @default(cuid())
-  contentId   String
-  studentId   String
-  status      String   @default("Submitted")
-  grade       String?
-  feedback    String?
-  submittedAt DateTime @default(now())
-  // A PDF, a written answer, or both — at least one is enforced on submit.
-  fileUrl     String?
-  fileName    String?
-  fileSize    Int?
-  fileType    String?
-  textAnswer  String?
-
-  content Content        @relation(fields: [contentId], references: [id], onDelete: Cascade)
-  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, contentId])
-  @@index([contentId])
-}
-
-model CalendarEvent {
-  id             String   @id @default(cuid())
-  title          String
-  type           String
-  date           String
-  startTime      String?
-  endTime        String?
-  description    String?
-  instructorId   String?
-  instructorName String?
-  link           String?
-  maxMarks       Int?
-  courseId       String?
-  courseName     String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  @@index([courseId])
-  @@index([instructorId])
-  @@index([date])
-}
-
 model Exam {
   id             String    @id @default(cuid())
   title          String
@@ -1162,61 +964,6 @@ model Exam {
   courseId       String
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
-  course         Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
-
-  @@index([courseId])
-}
-
-model Batch {
-  id                            String           @id @default(cuid())
-  name                          String
-  startDate                     DateTime
-  dueDate                       DateTime?
-  availableFrom                 DateTime?
-  availableUntil                DateTime?
-  startTime                     String?
-  endTime                       String?
-  meetingLink                   String?
-  status                        String?          @default("ACTIVE")
-  isPublished                   Boolean          @default(true)
-  createdAt                     DateTime         @default(now())
-  updatedAt                     DateTime         @updatedAt
-  // Legacy single-course pointer from before batches spanned multiple
-  // courses (see `courses` below, the actual many-to-many relation every
-  // batch.service.js function reads/writes today). Nothing in the codebase
-  // sets or reads this column any more — kept nullable, not required, so it
-  // no longer blocks every batch creation with a missing-required-field
-  // error the way the old non-null `courseId` did.
-  courseId                      String?
-  announcements                 Announcement[]
-  Course_Batch_courseIdToCourse Course?          @relation("Batch_courseIdToCourse", fields: [courseId], references: [id], onDelete: SetNull)
-  sessions                      BatchSession[]
-  courses                       Course[]         @relation("BatchToCourse")
-  students                      StudentProfile[] @relation("BatchToStudentProfile")
-  quizzes                       Quiz[]
-
-  @@index([courseId])
-}
-
-model BatchSession {
-  id             String    @id @default(cuid())
-  title          String
-  description    String?
-  startDate      DateTime
-  dueDate        DateTime?
-  availableFrom  DateTime?
-  availableUntil DateTime?
-  examDate       DateTime?
-  startTime      String?
-  endTime        String?
-  meetingLink    String?
-  status         String?   @default("SCHEDULED")
-  isPublished    Boolean   @default(true)
-  courseId       String
-  batchId        String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  batch          Batch?    @relation(fields: [batchId], references: [id], onDelete: Cascade)
   course         Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
   @@index([courseId])
@@ -1282,39 +1029,18 @@ model KnowledgeGap {
   @@index([studentId, kc, status])
 }
 
-model VideoAnalytics {
-  id        String         @id @default(cuid())
-  studentId String
-  lessonId  String
-  courseId  String
-  watchTime Int            @default(0)
-  completed Boolean        @default(false)
-  lastPing  DateTime       @default(now())
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
-  course    Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  lesson    Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
-  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, lessonId])
-  @@index([courseId])
-}
-
 model Announcement {
   id           String   @id @default(cuid())
   title        String
   message      String
   courseId     String
   instructorId String
-  batchId      String?
   createdAt    DateTime @default(now())
-  batch        Batch?   @relation(fields: [batchId], references: [id])
   course       Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
   instructor   User     @relation(fields: [instructorId], references: [id], onDelete: Cascade)
 
   @@index([courseId])
   @@index([instructorId])
-  @@index([batchId])
 }
 
 model TeachingGoal {
@@ -1425,12 +1151,6 @@ enum CourseStatus {
   ARCHIVED
 }
 
-enum PaymentStatus {
-  PENDING
-  CAPTURED
-  FAILED
-}
-
 enum CourseVisibility {
   PUBLIC
   PRIVATE
@@ -1464,26 +1184,6 @@ enum UserStatus {
   INACTIVE
   SUSPENDED
   BLOCKED
-}
-
-enum AttachmentType {
-  IMAGE
-  VIDEO
-  DOCUMENT
-  AUDIO
-  OTHER
-}
-
-enum ConversationType {
-  DIRECT
-  GROUP
-}
-
-enum LiveClassStatus {
-  SCHEDULED
-  LIVE
-  COMPLETED
-  CANCELLED
 }
 
 enum AchievementType {
@@ -1653,62 +1353,6 @@ model LearningEvent {
   @@index([createdAt])
 }
 
-model StudentActivityState {
-  id        String @id @default(cuid())
-  studentId String @unique
-
-  totalEventsCount   Int @default(0)
-  totalSessionsCount Int @default(0)
-
-  lastEventType     EventType?
-  lastEventCategory EventCategory?
-  lastSessionId     String?
-  lastCourseId      String?
-  lastModuleId      String?
-  lastLessonId      String?
-  lastActiveAt      DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([lastActiveAt])
-}
-
-enum LearningMode {
-  SMART_REVISION
-  STANDARD_LEARNING
-  DEEP_LEARNING
-}
-
-model StudentCourseState {
-  id        String @id @default(cuid())
-  studentId String
-  courseId  String
-
-  knowledgeLevel       EntryKnowledgeLevel @default(INTERMEDIATE)
-  entryAssessmentScore Float               @default(0)
-  confidenceScore      Float               @default(0)
-
-  conceptMastery Json
-  strongConcepts Json
-  weakConcepts   Json
-
-  originalTotalMinutes     Int @default(0)
-  personalizedTotalMinutes Int @default(0)
-  timeSavedMinutes         Int @default(0)
-
-  initializedAt DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  course  Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, courseId])
-  @@index([studentId])
-}
-
 model ConceptMastery {
   id        String @id @default(cuid())
   studentId String
@@ -1734,56 +1378,6 @@ model ConceptMastery {
   @@unique([studentId, concept])
   @@index([studentId, status])
   @@index([nextReassessmentAt])
-}
-
-enum EntryAssessmentStatus {
-  PENDING
-  GENERATING
-  READY
-  SUBMITTED
-  EVALUATED
-  FAILED
-}
-
-enum EntryKnowledgeLevel {
-  BEGINNER
-  INTERMEDIATE
-  ADVANCED
-}
-
-model EntryAssessment {
-  id        String @id @default(cuid())
-  studentId String
-  courseId  String
-
-  status           EntryAssessmentStatus @default(PENDING)
-  model            String?
-  questions        Json?
-  syllabusSnapshot Json?
-  failureReason    String?
-
-  answers Json?
-
-  overallScore    Float?
-  knowledgeLevel  EntryKnowledgeLevel?
-  confidenceScore Float?
-  conceptScores   Json?
-  strongConcepts  Json?
-  weakConcepts    Json?
-
-  generatedAt DateTime?
-  submittedAt DateTime?
-  evaluatedAt DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  course  Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, courseId])
-  @@index([studentId])
-  @@index([courseId])
 }
 
 model CourseImportJob {

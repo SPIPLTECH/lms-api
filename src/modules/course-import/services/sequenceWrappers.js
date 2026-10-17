@@ -10,7 +10,7 @@ const { singleParentPlacement } = require("../../contents/contentOrder.util");
  * place each quiz/assignment themselves — through this one helper, so every
  * import path follows the same rule:
  *
- *   - a QUALIFYING or batch-scoped quiz is standalone: no Content row;
+ *   - a QUALIFYING quiz is standalone: no Content row;
  *   - every other quiz, and every assignment, gets exactly one Content row at
  *     its most specific parent;
  *   - the row takes the item's own requested `order` when that position is
@@ -50,7 +50,7 @@ function buildSequenceWrapperRows({ contentRows = [], quizRows = [], assignmentR
 
   const items = [
     ...quizRows
-      .filter((quiz) => quiz.quizTag !== "QUALIFYING" && !quiz.batchId)
+      .filter((quiz) => quiz.quizTag !== "QUALIFYING")
       .map((row) => ({ row, type: "QUIZ", link: { quizId: row.id } })),
     ...assignmentRows.map((row) => ({ row, type: "ASSIGNMENT", link: { assignmentId: row.id } })),
   ];
@@ -106,7 +106,7 @@ const CONTAINER_PARENT_FIELD = {
  * importer listed it. Rewrites `order` on the content and container rows and
  * returns the Content rows that place the quizzes/assignments (insert them
  * AFTER the quizzes and assignments). `order` is removed from the
- * quiz/assignment rows. QUALIFYING and batch-scoped quizzes stay standalone.
+ * quiz/assignment rows. QUALIFYING quizzes stay standalone.
  *
  * @param {object} args
  * @param {Array<{ kind: string, rows: object[] }>} args.containers e.g. [{ kind: "module", rows: moduleRows }]
@@ -133,7 +133,7 @@ function sequenceImportedCourse({ containers = [], contentRows = [], quizRows = 
   }
   const items = [
     ...quizRows
-      .filter((quiz) => quiz.quizTag !== "QUALIFYING" && !quiz.batchId)
+      .filter((quiz) => quiz.quizTag !== "QUALIFYING")
       .map((row) => ({ row, type: "QUIZ", link: { quizId: row.id } })),
     ...assignmentRows.map((row) => ({ row, type: "ASSIGNMENT", link: { assignmentId: row.id } })),
   ];

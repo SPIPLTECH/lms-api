@@ -101,7 +101,7 @@ async function assertContentsAccessible(studentId, courseId, contentIds) {
 /**
  * The same gate, addressed by the Quiz or Assignment a student is opening or
  * submitting. A quiz/assignment with no Content wrapper is not a sequence item
- * (a QUALIFYING test, a batch assessment, a practice quiz) and is not gated
+ * (a QUALIFYING test, a practice quiz) and is not gated
  * here — those have their own rules.
  */
 async function assertSequenceItemAccessible(studentId, { quizId = null, assignmentId = null }) {
@@ -597,7 +597,7 @@ async function markVisited(studentId, params, visited = true, requestingUser = n
 
   // A Quiz/Assignment in the learning sequence is visited through its Content
   // row — ContentProgress is the sequence-level progress of every item.
-  // Unwrapped ones (qualifying tests, batch assessments) keep their own rows.
+  // Unwrapped ones (qualifying tests, practice quizzes) keep their own rows.
   let progressHandler = handler;
   let progressEntityId = entityId;
   if (entityType === 'QUIZ' || entityType === 'ASSIGNMENT') {

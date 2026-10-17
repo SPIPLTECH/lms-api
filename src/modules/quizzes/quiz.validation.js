@@ -8,7 +8,6 @@ const QUIZ_TAGS = ["SELF_TEST", "FINAL", "QUALIFYING"];
 const createQuizSchema = Joi.object({
   title: Joi.string().required(),
   description: Joi.string().optional().allow(null, ""),
-  batchId: Joi.string().optional().allow(null, ""),
   courseId: Joi.string().required(),
   moduleId: Joi.string().optional().allow(null, ""),
   lessonId: Joi.string().optional().allow(null, ""),
@@ -29,7 +28,7 @@ const createQuizSchema = Joi.object({
   order: Joi.number().integer().min(0).optional(),
   // false = a standalone quiz the caller manages itself (no place in the
   // learning sequence), e.g. the lesson composer's one-question blocks.
-  // QUALIFYING and batch-scoped quizzes are always standalone.
+  // QUALIFYING quizzes are always standalone.
   inSequence: Joi.boolean().optional(),
   questions: Joi.array().optional(),
 });

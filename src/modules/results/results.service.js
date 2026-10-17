@@ -31,16 +31,6 @@ const resolveCourseIds = async (callingUser, courseId) => {
   return courses.map((c) => c.id);
 };
 
-/** Student profile ids enrolled in a batch, when the caller filtered by batch. */
-const resolveBatchStudentIds = async (batchId) => {
-  if (!batchId) return null;
-  const batch = await prisma.batch.findUnique({
-    where: { id: batchId },
-    select: { students: { select: { id: true } } }
-  });
-  return batch ? batch.students.map((s) => s.id) : [];
-};
-
 const dateRangeWhere = (startDate, endDate) => {
   if (!startDate && !endDate) return undefined;
   const range = {};
@@ -58,13 +48,11 @@ const dateRangeWhere = (startDate, endDate) => {
 const QUIZ_TAGS = ["FINAL", "SELF_TEST", "QUALIFYING"];
 
 const getResults = async (callingUser, filters = {}) => {
-  const { courseId, batchId, quizId, assignmentId, studentId, startDate, endDate } = filters;
+  const { courseId, quizId, assignmentId, studentId, startDate, endDate } = filters;
   const quizTag = QUIZ_TAGS.includes(filters.quizTag) ? filters.quizTag : undefined;
 
   const courseIds = await resolveCourseIds(callingUser, courseId);
-  const batchStudentIds = await resolveBatchStudentIds(batchId);
-
-  if (courseIds.length === 0 || batchStudentIds?.length === 0) {
+  if (courseIds.length === 0) {
     return emptyResult();
   }
 
@@ -80,7 +68,6 @@ const getResults = async (callingUser, filters = {}) => {
   const submissionWhere = {
     quiz: quizWhere,
     ...(studentId ? { studentId } : {}),
-    ...(batchStudentIds ? { studentId: { in: batchStudentIds } } : {}),
     ...(submittedAtRange ? { submittedAt: submittedAtRange } : {})
   };
 
@@ -115,7 +102,6 @@ const getResults = async (callingUser, filters = {}) => {
   // Scope for the enrolled-student denominator behind completionRate.
   const enrollmentWhere = {
     courseId: { in: courseIds },
-    ...(batchStudentIds ? { studentId: { in: batchStudentIds } } : {})
   };
   const enrolledCount = await prisma.enrollment.count({ where: enrollmentWhere });
 
@@ -139,7 +125,6 @@ const getResults = async (callingUser, filters = {}) => {
       },
       grade: null,
       ...(studentId ? { studentId } : {}),
-      ...(batchStudentIds ? { studentId: { in: batchStudentIds } } : {})
     }
   });
 
@@ -224,7 +209,7 @@ const getResults = async (callingUser, filters = {}) => {
   // authorized to see.
   const { questionWise, topicWise } = await buildQuestionAndTopicAnalysis(
     [...new Set(submissions.map((s) => s.quiz?.id).filter(Boolean))],
-    studentId ? [studentId] : batchStudentIds || null
+    studentId ? [studentId] : null
   );
 
   return {

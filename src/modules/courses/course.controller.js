@@ -295,7 +295,6 @@ const sendAnnouncement = async (req, res, next) => {
       req.params.courseId,
       { title, message, actorId: req.user.id },
       null,
-      null,
       req.user.id
     );
     res.json({

@@ -36,10 +36,6 @@ const server = http.createServer(app);
 // Initialize Socket.io
 initializeSocket(server);
 
-// Initialize Message Cleanup Cron Job
-const { initMessageCleanupCron } = require("./src/modules/messages/messageCleanup.service");
-initMessageCleanupCron();
-
 // The 12 AI agent modules' bootstrap() calls (student-state, assessment,
 // recommendation, motivation, teacher-insights, analytics, career,
 // learning-path, placement, admin-intelligence, mentor) were removed from

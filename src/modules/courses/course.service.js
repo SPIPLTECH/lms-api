@@ -23,7 +23,6 @@ const buildCourseStatsMap = async (courseIds) => {
         questionsCount: 0,
         avgRating: 0,
         certificatesIssuedCount: 0,
-        upcomingLiveClassesCount: 0,
         pendingSubmissionsCount: 0,
         pendingDoubtsCount: 0,
         completionRate: 0,
@@ -41,14 +40,11 @@ const buildCourseStatsMap = async (courseIds) => {
 
   if (courseIds.length === 0) return statsMap;
 
-  const now = new Date();
-
   const [
     modules,
     quizQuestions,
     reviewAverages,
     certificateCounts,
-    upcomingLiveClasses,
     pendingSubmissions,
     pendingDoubts,
     enrollments,
@@ -75,15 +71,6 @@ const buildCourseStatsMap = async (courseIds) => {
     prisma.certificate.groupBy({
       by: ["courseId"],
       where: { courseId: { in: courseIds } },
-      _count: { id: true }
-    }),
-    prisma.liveClass.groupBy({
-      by: ["courseId"],
-      where: {
-        courseId: { in: courseIds },
-        scheduledAt: { gte: now },
-        status: { in: ["SCHEDULED", "LIVE"] }
-      },
       _count: { id: true }
     }),
     prisma.assignmentSubmission.findMany({
@@ -154,11 +141,6 @@ const buildCourseStatsMap = async (courseIds) => {
   for (const row of certificateCounts) {
     const stats = statsMap.get(row.courseId);
     if (stats) stats.certificatesIssuedCount = row._count.id;
-  }
-
-  for (const row of upcomingLiveClasses) {
-    const stats = statsMap.get(row.courseId);
-    if (stats) stats.upcomingLiveClassesCount = row._count.id;
   }
 
   for (const submission of pendingSubmissions) {
@@ -347,7 +329,6 @@ const getCourses = async (
         adminProfile: true,
       },
     },
-    store: true,
     _count: {
       select: {
         enrollments: true,
@@ -551,7 +532,6 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
           adminProfile: true
         }
       },
-      store: true,
       _count: {
         select: {
           enrollments: true,
@@ -902,7 +882,6 @@ const publishCourse = async (courseId, userId, userRole) => {
         link: `/courses/${courseId}`,
         actorId: userId
       },
-      null,
       eventIdPrefix,
       userId
     );
@@ -1032,10 +1011,8 @@ const deleteCourse = async (courseId, userId, userRole) => {
           enrollments: true,
           reviews: true,
           certificates: true,
-          liveClasses: true,
           assignments: true,
-          exams: true,
-          batches: true
+          exams: true
         }
       }
     }
@@ -1063,7 +1040,6 @@ const deleteCourse = async (courseId, userId, userRole) => {
     progressCount,
     lessonQueriesCount,
     stickyNotesCount,
-    batchesCount,
     studentStatesCount
   ] = await Promise.all([
     prisma.quizSubmission.count({ where: { quiz: { courseId } } }),
@@ -1071,7 +1047,6 @@ const deleteCourse = async (courseId, userId, userRole) => {
     prisma.lessonProgress.count({ where: { lesson: { module: { courseId } } } }),
     prisma.lessonQuery.count({ where: { lesson: { module: { courseId } } } }),
     prisma.stickyNote.count({ where: { lesson: { module: { courseId } } } }),
-    prisma.batch.count({ where: { courseId } }),
     prisma.studentState.count({ where: { courseId } })
   ]);
 
@@ -1084,7 +1059,6 @@ const deleteCourse = async (courseId, userId, userRole) => {
     progressCount > 0 ||
     lessonQueriesCount > 0 ||
     stickyNotesCount > 0 ||
-    batchesCount > 0 ||
     studentStatesCount > 0;
 
   if (hasStudentData) {

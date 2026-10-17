@@ -40,7 +40,6 @@ test("getStudents — per-course progress matches stored Enrollment.progressPerc
       },
       enrollments: [enrollment("c1", 0), enrollment("c2", 100), enrollment("c3", 0)],
       assignmentSubmissions: [],
-      contentSubmissions: [],
       certificates: [],
     },
   ];

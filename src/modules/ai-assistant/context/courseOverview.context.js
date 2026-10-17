@@ -35,7 +35,6 @@ const buildCourseOverviewContext = async (courseId) => {
       status: true,
       certificatesEnabled: true,
       creator: { select: { name: true } },
-      store: { select: { price: true, discountPrice: true, isFree: true, currency: true } },
       _count: { select: { modules: true, enrollments: true, quizzes: true, assignments: true, reviews: true } },
       modules: {
         where: { isPublished: true },

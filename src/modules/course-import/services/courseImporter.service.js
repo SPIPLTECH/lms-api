@@ -645,7 +645,6 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
         moduleId: levelIds.moduleId || null,
         lessonId: levelIds.lessonId || null,
         topicId: levelIds.topicId || null,
-        batchId: null,
       };
       batch.quizRows.push(quizRow);
 

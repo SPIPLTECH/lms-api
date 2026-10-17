@@ -324,7 +324,6 @@ const getQuizzes = async (
   courseId,
   role,
   userId,
-  batchId,
   studentId
 ) => {
   const where = {};
@@ -340,10 +339,6 @@ const getQuizzes = async (
     // resolved by the controller but never passed through), so a student
     // calling GET /quizzes with no courseId got every quiz in the system.
     where.course = { enrollments: { some: { studentId } } };
-  }
-
-  if (batchId) {
-    where.batchId = batchId;
   }
 
   const quizzes = await prisma.quiz.findMany({
@@ -470,35 +465,11 @@ const getQuizById = async (
 };
 
 /**
- * A batch-scoped quiz is created batch-first: the instructor picks a batch,
- * then one of that batch's linked courses, then optionally a module inside
- * that course — enforced here (not just in the UI) so a mismatched
- * batchId/courseId/moduleId combination can never be written via a direct
- * API call either. `batchId` is optional (see schema.prisma) for quizzes
- * created straight from the Course Composer, which aren't tied to any
- * batch — that path skips batch-linkage validation entirely, but still gets
- * the module/course consistency check below.
+ * A quiz's module must belong to its course — enforced here (not just in
+ * the UI) so a mismatched courseId/moduleId combination can never be
+ * written via a direct API call either.
  */
-const validateQuizScope = async ({ batchId, courseId, moduleId, lessonId, topicId, subTopicId, conceptId }) => {
-  if (batchId) {
-    const batch = await prisma.batch.findUnique({
-      where: { id: batchId },
-      select: { courses: { select: { id: true } } }
-    });
-
-    if (!batch) {
-      const error = new Error("Batch not found");
-      error.statusCode = 404;
-      throw error;
-    }
-
-    if (!batch.courses.some((c) => c.id === courseId)) {
-      const error = new Error("This course is not linked to the selected batch");
-      error.statusCode = 400;
-      throw error;
-    }
-  }
-
+const validateQuizScope = async ({ courseId, moduleId, lessonId, topicId, subTopicId, conceptId }) => {
   if (moduleId) {
     const module = await prisma.module.findUnique({
       where: { id: moduleId },
@@ -663,12 +634,11 @@ const applyTagAttemptRule = (effectiveTag, quizData, existingAttempts) => {
  * its Content(type=QUIZ) row; a standalone one has no Content row:
  *   - QUALIFYING: the test that lets a student SKIP a lesson/topic, reached
  *     through the skip flow, never by working through the course;
- *   - batch-scoped: an assessment for one batch, not course material;
  *   - `inSequence: false`: a quiz the caller manages itself (the lesson
  *     composer's one-question blocks back their question with one).
  */
 const isSequenceQuiz = (quiz, { inSequence } = {}) =>
-  quiz.quizTag !== QUALIFYING_TAG && !quiz.batchId && inSequence !== false;
+  quiz.quizTag !== QUALIFYING_TAG && inSequence !== false;
 
 /**
  * Places a quiz in its most specific parent's sequence by creating its
@@ -793,7 +763,6 @@ const createQuiz = async (
           link: `/courses/${quiz.courseId}/quizzes`,
           actorId: userId
         },
-        null,
         `quiz_published_${quiz.id}`,
         userId
       );
@@ -1736,82 +1705,6 @@ const getMyQuizSubmissions = async (studentId) => {
     );
 };
 
-/**
- * Instructor view of "which quizzes did this batch get, and who attempted
- * them" — the whole point of scoping quizzes by batch instead of just by
- * course. Pools submissions across the batch's current student roster only,
- * same join pattern as batch.service.js's getBatchDetailDashboard.
- */
-const getBatchQuizzes = async (batchId) => {
-  const batch = await prisma.batch.findUnique({
-    where: { id: batchId },
-    select: {
-      students: {
-        select: { id: true, user: { select: { id: true, name: true, email: true } } }
-      }
-    }
-  });
-
-  if (!batch) {
-    const error = new Error("Batch not found");
-    error.statusCode = 404;
-    throw error;
-  }
-
-  const students = batch.students;
-  const studentIds = students.map((s) => s.id);
-
-  const quizzes = await prisma.quiz.findMany({
-    where: { batchId },
-    include: { _count: { select: { quizQuestions: true } } },
-    orderBy: { createdAt: "desc" }
-  });
-
-  const quizIds = quizzes.map((q) => q.id);
-
-  const submissions =
-    studentIds.length > 0 && quizIds.length > 0
-      ? await prisma.quizSubmission.findMany({
-          where: { quizId: { in: quizIds }, studentId: { in: studentIds } },
-          select: {
-            quizId: true,
-            studentId: true,
-            score: true,
-            percentage: true,
-            passed: true,
-            submittedAt: true
-          }
-        })
-      : [];
-
-  const submissionByQuizAndStudent = new Map(
-    submissions.map((s) => [`${s.quizId}:${s.studentId}`, s])
-  );
-
-  return quizzes.map((quiz) => {
-    const studentResults = students.map((s) => {
-      const submission = submissionByQuizAndStudent.get(`${quiz.id}:${s.id}`);
-      return {
-        studentId: s.id,
-        name: s.user.name,
-        email: s.user.email,
-        attempted: Boolean(submission),
-        score: submission?.score ?? null,
-        percentage: submission?.percentage ?? null,
-        passed: submission?.passed ?? null,
-        submittedAt: submission?.submittedAt ?? null
-      };
-    });
-
-    return {
-      ...quiz,
-      totalStudents: students.length,
-      attemptedCount: studentResults.filter((s) => s.attempted).length,
-      students: studentResults
-    };
-  });
-};
-
 const SELF_ASSESSMENT_QUIZ_TITLE = "Self-Generated Practice Quiz";
 
 /**
@@ -1883,7 +1776,6 @@ module.exports = {
   submitQuiz,
   getQuizResult,
   getMyQuizSubmissions,
-  getBatchQuizzes,
   generateSelfAssessmentQuiz,
   flushPendingMisconceptionClassifications,
   flushPendingSubmissionSideEffects,

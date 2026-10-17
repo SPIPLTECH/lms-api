@@ -107,13 +107,6 @@ function treeStats(hierarchy) {
 const formatDate = (value) =>
   new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
-const contentCourseId = (c) =>
-  c?.courseId ||
-  c?.module?.courseId ||
-  c?.lesson?.module?.courseId ||
-  c?.topic?.lesson?.module?.courseId ||
-  null;
-
 const getStudents = async (user) => {
   const whereClause = {
     user: {
@@ -164,21 +157,6 @@ const getStudents = async (user) => {
         include: {
           assignment: {
             select: { id: true, title: true, dueDate: true, courseId: true },
-          },
-        },
-      },
-      // Lesson-composer assignment submissions (Content rows of type ASSIGNMENT).
-      contentSubmissions: {
-        include: {
-          content: {
-            select: {
-              id: true,
-              title: true,
-              courseId: true,
-              module: { select: { courseId: true } },
-              lesson: { select: { module: { select: { courseId: true } } } },
-              topic: { select: { lesson: { select: { module: { select: { courseId: true } } } } } },
-            },
           },
         },
       },
@@ -326,17 +304,6 @@ const getStudents = async (user) => {
           maxScore: null,
           date: formatDate(as.submittedAt),
           at: as.submittedAt,
-        })),
-      ...student.contentSubmissions
-        .filter((cs) => inScope(contentCourseId(cs.content)))
-        .map((cs) => ({
-          id: cs.id,
-          title: cs.content?.title || "Assignment",
-          status: cs.status || "Submitted",
-          score: cs.grade || null,
-          maxScore: null,
-          date: formatDate(cs.submittedAt),
-          at: cs.submittedAt,
         })),
     ]
       .sort((a, b) => new Date(b.at) - new Date(a.at))

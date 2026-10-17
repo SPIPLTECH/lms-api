@@ -876,7 +876,6 @@ const importPhysicalPackage = async (canonicalJson, instructorId) => {
             moduleId,
             lessonId,
             topicId,
-            batchId: null,
           });
 
           (quizDef.questions || []).forEach((questionDef, index) => {

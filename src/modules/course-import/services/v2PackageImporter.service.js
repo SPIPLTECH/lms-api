@@ -286,8 +286,7 @@ async function importV2Manifest(canonicalJson, instructorId) {
         courseId: courseRecord.id,
         moduleId,
         lessonId,
-        topicId,
-        batchId: null
+        topicId
       });
 
       (quizDef.questions || []).forEach((qDef, qIdx) => {

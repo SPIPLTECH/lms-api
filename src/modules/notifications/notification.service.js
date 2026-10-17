@@ -97,27 +97,18 @@ const clearAll = async (userId) => {
   });
 };
 
-const notifyEnrolledStudents = async (courseId, notificationData, batchId = null, eventIdPrefix = null, actorId = null) => {
+const notifyEnrolledStudents = async (courseId, notificationData, eventIdPrefix = null, actorId = null) => {
   try {
     const effectiveActorId = actorId || notificationData?.actorId || null;
 
-    // When a batchId is given, only notify that batch's roster instead of
-    // every student enrolled in the course.
-    const rawUserIds = batchId
-      ? (
-          await prisma.batch.findUnique({
-            where: { id: batchId },
-            select: { students: { select: { userId: true } } },
-          })
-        )?.students.map((s) => s.userId) || []
-      : (
-          await prisma.enrollment.findMany({
-            where: { courseId },
-            include: { student: { select: { userId: true } } },
-          })
-        )
-          .map((e) => e.student?.userId)
-          .filter(Boolean);
+    const rawUserIds = (
+      await prisma.enrollment.findMany({
+        where: { courseId },
+        include: { student: { select: { userId: true } } },
+      })
+    )
+      .map((e) => e.student?.userId)
+      .filter(Boolean);
 
     const userIds = rawUserIds.filter((id) => !effectiveActorId || String(id) !== String(effectiveActorId));
 

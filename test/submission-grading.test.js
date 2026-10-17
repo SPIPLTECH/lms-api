@@ -2,19 +2,13 @@ const test = require("node:test");
 const assert = require("node:assert");
 
 const assignmentService = require("../src/modules/assignments/assignment.service");
-const contentService = require("../src/modules/contents/content.service");
 const { gradeSubmissionSchema } = require("../src/modules/assignments/assignment.validation");
 const prisma = require("../src/config/database");
 
-// Both submission kinds (Assignment rows and lesson-composer Content
-// assignments) grade the same way: scoped to their parent, status -> Graded.
+// Every assignment is an Assignment row now (Content rows of type ASSIGNMENT
+// only place it in the sequence), so this is the one grading path:
+// scoped to its parent, status -> Graded.
 const cases = [
-  {
-    name: "gradeContentSubmission",
-    delegate: () => prisma.contentSubmission,
-    parentField: "contentId",
-    grade: (...args) => contentService.gradeContentSubmission(...args),
-  },
   {
     name: "gradeAssignmentSubmission",
     delegate: () => prisma.assignmentSubmission,

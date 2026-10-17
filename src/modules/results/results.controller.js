@@ -3,10 +3,9 @@ const quizAnalyticsService = require("./quizAnalytics.service");
 
 const getResults = async (req, res, next) => {
   try {
-    const { courseId, batchId, quizId, assignmentId, examId, studentId, startDate, endDate, quizTag } = req.query;
+    const { courseId, quizId, assignmentId, examId, studentId, startDate, endDate, quizTag } = req.query;
     const results = await resultsService.getResults(req.user, {
       courseId,
-      batchId,
       quizId,
       assignmentId,
       examId,

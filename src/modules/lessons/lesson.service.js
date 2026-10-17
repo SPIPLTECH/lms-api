@@ -115,7 +115,6 @@ const createLesson = async (
           link: `/courses/${moduleRecord.courseId}`,
           actorId: actorUserId
         },
-        null,
         `lesson_published_${lesson.id}`,
         actorUserId
       ).catch(err => console.error("Error sending lesson notification:", err.message));
@@ -169,7 +168,6 @@ const updateLesson = async (
           link: `/courses/${moduleRecord.courseId}`,
           actorId: actorUserId
         },
-        null,
         `lesson_published_${lesson.id}`,
         actorUserId
       ).catch(err => console.error("Error sending lesson notification:", err.message));
