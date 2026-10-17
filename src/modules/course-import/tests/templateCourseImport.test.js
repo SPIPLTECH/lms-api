@@ -31,6 +31,13 @@ function captureImport(t) {
 
 const parentOf = (row) => ["courseId", "moduleId", "lessonId", "topicId"].filter((key) => row[key]);
 
+// Quizzes and assignments are placed in the learning sequence by a Content row
+// of type QUIZ / ASSIGNMENT (see sequenceWrappers.js); everything else is what
+// the course author wrote as content.
+const isWrapper = (row) => row.type === "QUIZ" || row.type === "ASSIGNMENT";
+const readings = (rows) => rows.content.filter((c) => !isWrapper(c));
+const wrapperOf = (rows, item) => rows.content.filter((c) => c.quizId === item.id || c.assignmentId === item.id);
+
 test("the reference template imports every level where it is nested", async (t) => {
   const rows = captureImport(t);
   const canonical = parseCourseJson(clone(template)).canonical;
@@ -48,7 +55,8 @@ test("the reference template imports every level where it is nested", async (t) 
   assert.equal(rows.module.length, 2);
   assert.equal(rows.lesson.length, 2);
   assert.equal(rows.topic.length, 3);
-  assert.equal(rows.content.length, 9);
+  assert.equal(readings(rows).length, 9);
+  assert.equal(rows.content.filter(isWrapper).length, 16, "one sequence row per quiz and per assignment");
   assert.equal(rows.quiz.length, 8);
   assert.equal(rows.question.length, 13);
   assert.equal(rows.quizQuestion.length, 13);
@@ -56,8 +64,15 @@ test("the reference template imports every level where it is nested", async (t) 
 
   // Content and assignments hang off exactly one parent, at the level they were written.
   for (const row of [...rows.content, ...rows.assignment]) assert.equal(parentOf(row).length, 1, JSON.stringify(row));
+  // Each quiz/assignment's sequence row sits at the item's most specific parent
+  // (quiz rows also carry courseId whatever their level).
+  for (const item of [...rows.quiz, ...rows.assignment]) {
+    const wrappers = wrapperOf(rows, item);
+    assert.equal(wrappers.length, 1, item.title);
+    assert.deepEqual(parentOf(wrappers[0]), parentOf(item).slice(-1), item.title);
+  }
   assert.deepEqual(
-    rows.content.map((c) => [c.title, parentOf(c)[0]]),
+    readings(rows).map((c) => [c.title, parentOf(c)[0]]),
     [
       ["What is Physics?", "courseId"],
       ["Why Learn Physics?", "courseId"],
@@ -83,9 +98,11 @@ test("the reference template imports every level where it is nested", async (t) 
   assert.deepEqual([levelOf(quiz("Units and Measurements - Module Quiz")), quiz("Units and Measurements - Module Quiz").quizTag], ["module", "FINAL"]);
   assert.deepEqual([levelOf(quiz("Introduction to Physics - Final Course Quiz")), quiz("Introduction to Physics - Final Course Quiz").quizTag], ["course", "FINAL"]);
 
-  // Orders and publish flags are kept as written.
-  assert.deepEqual(rows.module.map((m) => m.order), [1, 2]);
-  assert.deepEqual(rows.topic.map((tp) => [tp.title, tp.order, tp.isPublished]), [["SI Base Units", 1, false], ["Measurement Errors", 2, false], ["Distance", 1, false]]);
+  // Containers share their parent's sequence, after the parent's own content
+  // (sequenceImportedCourse); publish flags are kept as written.
+  assert.deepEqual(rows.module.map((m) => m.order), [3, 4]);
+  assert.deepEqual(rows.lesson.map((l) => l.order), [2, 2]);
+  assert.deepEqual(rows.topic.map((tp) => [tp.title, tp.order, tp.isPublished]), [["SI Base Units", 2, false], ["Measurement Errors", 3, false], ["Distance", 2, false]]);
 });
 
 test("raw template JSON imports directly, and a sparse course creates only what it contains", async (t) => {
@@ -107,8 +124,9 @@ test("raw template JSON imports directly, and a sparse course creates only what 
   assert.equal(rows.lesson.length, 1, "no lesson is invented for the content-only module");
   assert.equal(rows.topic.length, 0, "no \"General\" topic is invented for the topic-less lesson");
   assert.equal(rows.quiz.length, 0);
-  assert.deepEqual(rows.content.map((c) => [c.type, parentOf(c)[0], c.order]), [["HTML", "courseId", 1], ["VIDEO", "moduleId", 1]]);
-  assert.equal(rows.content[1].videoUrl, "https://videos.example.com/a.mp4");
+  assert.deepEqual(readings(rows).map((c) => [c.type, parentOf(c)[0], c.order]), [["HTML", "courseId", 1], ["VIDEO", "moduleId", 1]]);
+  assert.deepEqual(rows.content.filter(isWrapper).map((c) => [c.type, parentOf(c)[0], c.assignmentId]), [["ASSIGNMENT", "lessonId", rows.assignment[0].id]]);
+  assert.equal(readings(rows)[1].videoUrl, "https://videos.example.com/a.mp4");
   assert.deepEqual(parentOf(rows.assignment[0]), ["lessonId"]);
   assert.equal(rows.assignment[0].isPublished, true);
 });
@@ -141,13 +159,19 @@ test("an import the LMS cannot store is refused with the reasons, before anythin
   assert.equal(rows.course, null);
 });
 
-test("imported quizzes sit after their level's content, where the course map lists them", async (t) => {
+test("imported quizzes and assignments sit after their level's content and child containers", async (t) => {
   const rows = captureImport(t);
   await importV2Manifest(parseCourseJson(clone(template)).canonical, "instructor-1");
 
-  const courseContentOrders = rows.content.filter((c) => c.courseId).map((c) => c.order);
+  // Course level: 2 content items, then the 2 modules, then the quiz and the assignment.
   const courseQuiz = rows.quiz.find((q) => !q.moduleId && !q.lessonId && !q.topicId);
-  assert.deepEqual(courseContentOrders, [1, 2]);
-  assert.equal(courseQuiz.order, 3);
-  assert.ok(rows.quiz.every((q) => Number.isInteger(q.order)), "no imported quiz is left without an order");
+  const courseAssignment = rows.assignment.find((a) => a.courseId);
+  assert.deepEqual(readings(rows).filter((c) => c.courseId).map((c) => c.order), [1, 2]);
+  assert.deepEqual(rows.module.map((m) => m.order), [3, 4]);
+  assert.equal(wrapperOf(rows, courseQuiz)[0].order, 5);
+  assert.equal(wrapperOf(rows, courseAssignment)[0].order, 6);
+
+  // The sequence row carries the order; the quiz/assignment rows no longer do.
+  assert.ok(rows.content.every((c) => Number.isInteger(c.order)), "no sequence row is left without an order");
+  assert.ok([...rows.quiz, ...rows.assignment].every((item) => item.order === undefined));
 });
