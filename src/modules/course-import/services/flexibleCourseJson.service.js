@@ -256,18 +256,55 @@ function normalizeAssignment({ value: assignment, path }, ctx) {
   }
 
   if (!isNonEmptyString(assignment.title)) report.errors.push(`${path}.title is required.`);
-  if (!isPresent(assignment.dueDate)) {
-    report.errors.push(`${path}.dueDate is required — the LMS needs a due date for every assignment (ISO 8601, e.g. "2026-11-15T23:59:00.000Z").`);
+
+  // Assignment.dueDate is optional (Composer assignments never had one), and
+  // the draft Composer's form clears a date to "" — both mean "no date".
+  const normalized = { ...assignment };
+  for (const key of ["dueDate", "startDate", "availableFrom", "availableUntil"]) {
+    if (normalized[key] === "") delete normalized[key];
+    checkDate(normalized, key, path, report);
   }
-  for (const key of ["dueDate", "startDate", "availableFrom", "availableUntil"]) checkDate(assignment, key, path, report);
+  if (!isPresent(normalized.dueDate)) {
+    report.warnings.push(`${path} ("${assignment.title || "untitled"}") has no dueDate; it is imported without a due date.`);
+  }
   for (const key of ["description", "assessmentType"]) checkString(assignment, key, path, report);
   for (const key of ["marks", "estimatedTime", "totalQuestions", "resources"]) checkNumber(assignment, key, path, report, { integer: true, min: 0 });
   checkBoolean(assignment, "isPublished", path, report);
 
-  const normalized = { ...assignment };
   ctx.paths.set(normalized, path);
   return normalized;
 }
+
+/**
+ * A content item typed ASSIGNMENT is an assignment written in the content
+ * list (the old Composer block shape). Content(type=ASSIGNMENT) must point at
+ * an Assignment row, so it is imported as a real assignment at the same level.
+ */
+function contentItemToAssignment({ value: item, path }) {
+  return {
+    path,
+    value: {
+      title: item.title,
+      description: item.description ?? (isNonEmptyString(item.htmlContent) ? item.htmlContent : undefined),
+      dueDate: item.dueDate ?? item.data?.dueDate,
+      marks: item.marks ?? item.data?.marks,
+      // Same attachment shape the content-sequence migration gives a block's file.
+      attachments:
+        item.attachments ??
+        (isNonEmptyString(item.fileUrl)
+          ? [{
+              url: item.fileUrl,
+              name: item.data?.originalFileName || decodeURIComponent(item.fileUrl.split("?")[0].split("/").pop() || "") || "Attachment",
+              type: null,
+            }]
+          : undefined),
+      isPublished: item.isPublished,
+    },
+  };
+}
+
+const isAssignmentContentItem = ({ value }) =>
+  isPlainObject(value) && String(value.type ?? value.contentType ?? "").trim().toUpperCase() === "ASSIGNMENT";
 
 /** `content` (template) and `contents` (V2) are two names for one list. */
 function readContentEntries(node, path, report) {
@@ -302,14 +339,19 @@ function readAssessmentEntries(node, path, singular, plural, report) {
 /** Reads one level's content, quizzes, assignments and child entities. */
 function normalizeLevelLists(node, level, path, ctx) {
   const { report } = ctx;
-  const { entries: contentEntries } = readContentEntries(node, path, report);
+  const { entries: allContentEntries } = readContentEntries(node, path, report);
+  const contentEntries = allContentEntries.filter((entry) => !isAssignmentContentItem(entry));
+  const assignmentContentEntries = allContentEntries.filter(isAssignmentContentItem).map(contentItemToAssignment);
+  for (const { path: itemPath } of assignmentContentEntries) {
+    report.warnings.push(`${itemPath} is an ASSIGNMENT content item; it is imported as an assignment at the same level.`);
+  }
 
   const lists = {
     contents: normalizeOrderedList(contentEntries, (entry) => normalizeContent(entry, ctx)),
     quizzes: readAssessmentEntries(node, path, "quiz", "quizzes", report)
       .map((entry) => normalizeQuiz(entry, level, ctx))
       .filter(Boolean),
-    assignments: readAssessmentEntries(node, path, "assignment", "assignments", report)
+    assignments: [...readAssessmentEntries(node, path, "assignment", "assignments", report), ...assignmentContentEntries]
       .map((entry) => normalizeAssignment(entry, ctx))
       .filter(Boolean),
   };

@@ -564,6 +564,10 @@ const applyAiEntity = async ({ scope, generatedData, context = {}, instructorId 
       let type = (rawType || "HTML").toUpperCase();
       if (type === "TEXT_BLOCK" || type === "MARKDOWN" || type === "TEXT") type = "HTML";
       if (type === "CODE_BLOCK" || type === "SNIPPET") type = "CODE";
+      // QUIZ/ASSIGNMENT Content rows must link a Quiz/Assignment row, which a
+      // plain content block has none of (and the database rejects without) —
+      // keep the generated text as an HTML block instead of failing the apply.
+      if (type === "QUIZ" || type === "ASSIGNMENT") type = "HTML";
       return type;
     };
 

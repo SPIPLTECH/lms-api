@@ -672,6 +672,14 @@ STRUCTURE — decide it from the instructor's request
 - Do NOT add topics, quizzes or assignments unless the request asks for them, or asks for a complete/comprehensive course with assessments.
 - When the request gives counts (e.g. "3 modules, each with 2 lessons"), match them exactly.
 
+EXPLICIT LESSON CONTENT REQUIREMENTS (MANDATORY WHEN REQUESTED)
+- Treat explicit instructor requirements as constraints, not suggestions. The optional-element rules above apply only when the instructor has not requested an element.
+- If the instructor requests four content items in every lesson, every lesson MUST have exactly four fully written content entries. Do not count quizzes or assignments as content items.
+- If the instructor requests an MCQ quiz in every lesson, every lesson MUST have a quiz with the requested number of questions. If no question count is specified, create five MCQs. Each MCQ must have four options, exactly one correct answer matching one option, and an explanation.
+- If the instructor requests an assignment in every lesson, every lesson MUST have an assignment with a meaningful title, concrete task instructions, marks, assessmentType "EXERCISE", estimatedTime, and a valid ISO 8601 dueDate.
+- If the instructor requests an assessment after the second content item, represent the lesson using two topics to preserve sequence: Topic 1 contains content items 1 and 2 plus the requested quiz and assignment; Topic 2 contains content items 3 and 4. Do not place all four content items directly on the lesson in this case. Use the supported topic-level quiz/assignment fields and correct ancestor references.
+- Before returning JSON, check every lesson against all requested counts and required resources. Never silently omit a requested quiz, assignment, topic, or content item. Keep the hierarchy and reference IDs consistent.
+
 CONVENTIONS
 - "course": "title" (required), "description", "category", "level" ("Beginner" | "Intermediate" | "Advanced"), "language", "tags", "estimatedLearningHours". "status" is always "DRAFT".
 - Do NOT write "order" fields. Order is automatic: items appear in the order you list them, so list them in teaching order.
@@ -771,6 +779,26 @@ const slugify = (text) =>
  * without a usable due date get one. Every change that affects what the
  * instructor sees is reported back as a warning.
  */
+/**
+ * Models often key an MCQ by its option letter ("B") instead of the option's
+ * text. When an answer is a lone letter that matches no option itself, map it
+ * to the option at that position, so the question is kept instead of dropped.
+ */
+function resolveLetterAnswers(question) {
+  const options = Array.isArray(question.options) ? question.options.map((o) => String(o ?? "").trim()) : [];
+  if (options.length === 0) return;
+  const matchesOption = (value) => options.some((o) => o.toLowerCase() === String(value).trim().toLowerCase());
+  const fromLetter = (value) => {
+    if (typeof value !== "string" || matchesOption(value)) return value;
+    const letter = value.trim().replace(/^\(?([A-Za-z])[).:]?$/, "$1").toUpperCase();
+    if (!/^[A-Z]$/.test(letter)) return value;
+    const option = options[letter.charCodeAt(0) - 65];
+    return option !== undefined ? option : value;
+  };
+  if (Array.isArray(question.correctAnswer)) question.correctAnswer = question.correctAnswer.map(fromLetter);
+  else question.correctAnswer = fromLetter(question.correctAnswer);
+}
+
 function repairGeneratedCourse(course, { context = {}, now = new Date() } = {}) {
   const warnings = [];
   const { metadata } = course;
@@ -811,6 +839,7 @@ function repairGeneratedCourse(course, { context = {}, now = new Date() } = {}) 
       if (quiz.quizTag === "SELF_TEST") delete quiz.timeLimit;
 
       quiz.questions = quiz.questions.filter((question) => {
+        resolveLetterAnswers(question);
         const problems = getQuestionProblems(question);
         if (problems.length === 0) return true;
         warnings.push(`Removed question "${String(question.question || "").slice(0, 60)}" from quiz "${quiz.title}": ${problems[0]}.`);
