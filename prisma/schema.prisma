@@ -41,8 +41,32 @@ model User {
   teachingGoals           TeachingGoal[]
   courseImportJobs        CourseImportJob[]
   aiConversations         AiConversation[]
+  evaluatorAccess         EvaluatorAccess?
 
   @@index([role])
+}
+
+// Temporary evaluator / guest-tester accounts (src/modules/evaluators). The
+// user itself is an ordinary STUDENT; this row is what makes it an evaluator.
+// Access is fixed at registration — startsAt + 48h — and is never reset.
+// Feedback completion is set only by the server after verifying a submission
+// on the independent feedback site (or by an admin). Dropping this table
+// removes the feature without touching any other model.
+model EvaluatorAccess {
+  id                   String    @id @default(cuid())
+  userId               String    @unique
+  startsAt             DateTime
+  expiresAt            DateTime
+  feedbackCompletedAt  DateTime?
+  // The feedback site's submission id; unique so one submission unlocks one account.
+  feedbackSubmissionId String?   @unique
+  // "FEEDBACK_SITE" or "ADMIN:<userId>"
+  feedbackVerifiedBy   String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
 }
 
 model StudentProfile {

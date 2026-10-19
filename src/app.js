@@ -42,6 +42,7 @@ const fileRoutes = require("./modules/files/file.routes");
 const courseImportRoutes = require("./modules/course-import/routes");
 const aiAssistantRoutes = require("./modules/ai-assistant/aiAssistant.routes");
 const progressRoutes = require("./modules/progress/progress.routes");
+const evaluatorRoutes = require("./modules/evaluators/evaluator.routes");
 const app = express();
 app.disable('etag');
 
@@ -150,6 +151,8 @@ app.use("/ai-assistant", aiAssistantRoutes);
 app.use("/course-import", courseImportRoutes);
 app.use("/api/ai", courseImportRoutes);
 app.use("/progress", progressRoutes);
+// Temporary evaluator accounts — registration, access status, feedback check.
+app.use("/evaluators", evaluatorRoutes);
 app.use(
   "/learner-model",
   require("./modules/learner-model/learnerModel.routes")

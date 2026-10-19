@@ -1,5 +1,12 @@
 const jwt = require("jsonwebtoken");
 const { isSessionCurrent, SessionCheckUnavailable } = require("../utils/sessionVersion");
+const { evaluatorBlock } = require("../utils/evaluatorAccess");
+
+const serviceUnavailable = (res) =>
+  res.status(503).json({
+    success: false,
+    message: "Service temporarily unavailable. Please try again.",
+  });
 
 const verifyToken = async (req, res, next) => {
   try {
@@ -50,6 +57,18 @@ const verifyToken = async (req, res, next) => {
       role: decoded.role,
     };
 
+    // Evaluator accounts: learning access needs verified feedback while the
+    // 48-hour period runs and ends with it — checked here, against the
+    // database, so an older token that is still valid changes nothing. The
+    // session itself stays valid (the client needs it to show why).
+    let block;
+    try {
+      block = await evaluatorBlock(decoded.id, req.originalUrl);
+    } catch {
+      return serviceUnavailable(res);
+    }
+    if (block) return res.status(block.status).json(block.body);
+
     next();
   } catch (error) {
     if (req.path === "/logout" || req.originalUrl?.includes("/logout")) {
@@ -60,10 +79,7 @@ const verifyToken = async (req, res, next) => {
     // Not a 401: that would send the client through refresh and sign it out
     // over a database blip.
     if (error instanceof SessionCheckUnavailable) {
-      return res.status(503).json({
-        success: false,
-        message: "Service temporarily unavailable. Please try again.",
-      });
+      return serviceUnavailable(res);
     }
 
     if (error.name === "TokenExpiredError") {
@@ -102,6 +118,13 @@ const optionalToken = async (req, res, next) => {
 
     // A signed-out session browses as a guest, same as an invalid token.
     if (!(await isSessionCurrent(decoded))) {
+      req.user = { role: "GUEST" };
+      return next();
+    }
+
+    // A blocked evaluator gets only what a guest gets (any error lands in the
+    // catch below, which does the same).
+    if (await evaluatorBlock(decoded.id, req.originalUrl)) {
       req.user = { role: "GUEST" };
       return next();
     }

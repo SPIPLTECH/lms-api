@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const prisma = require("../../config/database");
 const { sendEmail } = require("../../utils/mail");
 const { passwordFingerprint, forgetSession } = require("../../utils/sessionVersion");
+const { evaluatorSummaryForUser } = require("../evaluators/evaluator.service");
 /**
  * Generate Access Token
  *
@@ -186,7 +187,9 @@ const login = async (
   role: user.role,
   studentProfile: user.studentProfile,
   teacherProfile: user.teacherProfile,
-  adminProfile: user.adminProfile
+  adminProfile: user.adminProfile,
+  // Evaluator accounts only (null otherwise): access period and feedback status.
+  evaluator: await evaluatorSummaryForUser(user.id)
 }
     }
   
@@ -506,7 +509,7 @@ const getProfile = async (userId) => {
     throw new Error("User not found");
   }
 
-  return user;
+  return { ...user, evaluator: await evaluatorSummaryForUser(user.id) };
 };
 
 module.exports = {

@@ -29,6 +29,9 @@
  *   lesson must not shut a student out of material they were already in).
  *   A lesson/topic the student qualified out of counts as complete (the
  *   roll-up marks its items complete).
+ *
+ *   `unlockAll` (evaluator accounts, see utils/evaluatorAccess) opens every
+ *   step; completion, the current step and resume are tracked as usual.
  */
 
 const { completionHint } = require("./itemCompletion");
@@ -138,11 +141,12 @@ function mergeIntoDocument(step, raw, bodies) {
  * Builds the course's learning sequence.
  *
  * @param {object} hierarchy roll-up hierarchy (computeCourseProgress includeTree)
- * @param {{ bodies?: Map<string, object> }} [options] Content body columns by
- *   id, for document merging and for the steps the student may open.
+ * @param {{ bodies?: Map<string, object>, unlockAll?: boolean }} [options]
+ *   `bodies`: Content body columns by id, for document merging and for the
+ *   steps the student may open. `unlockAll`: no step is locked.
  * @returns {{ steps: object[], tree: object, currentIndex: number, resumeIndex: number }}
  */
-function buildLearningSequence(hierarchy, { bodies = null } = {}) {
+function buildLearningSequence(hierarchy, { bodies = null, unlockAll = false } = {}) {
   const raws = [];
   const containerSpans = []; // [{ treeNode, firstRaw, lastRaw }]
 
@@ -197,7 +201,7 @@ function buildLearningSequence(hierarchy, { bodies = null } = {}) {
   // Locks: linear by completion; visited steps never re-lock.
   let firstIncomplete = -1;
   for (const step of steps) {
-    step.locked = firstIncomplete !== -1 && !step.visited;
+    step.locked = !unlockAll && firstIncomplete !== -1 && !step.visited;
     step.blockedByIndex = step.locked ? firstIncomplete : null;
     if (!step.completed && firstIncomplete === -1) firstIncomplete = step.index;
     delete step._mergeable;
