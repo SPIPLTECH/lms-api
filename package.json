@@ -39,6 +39,7 @@
     "morgan": "^1.11.0",
     "multer": "^2.2.0",
     "node-cron": "^4.6.0",
+    "openai": "^7.33.0",
     "pdf-parse": "^2.4.5",
     "prisma": "^6.19.0",
     "razorpay": "^2.9.8",
