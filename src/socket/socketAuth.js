@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const prisma = require("../config/database");
+const { isSessionCurrent } = require("../utils/sessionVersion");
 
 const socketAuth = async (socket, next) => {
     try {
@@ -14,6 +15,10 @@ const socketAuth = async (socket, next) => {
             process.env.JWT_ACCESS_SECRET ||
             process.env.JWT_SECRET
         );
+
+        if (!(await isSessionCurrent(decoded))) {
+            return next(new Error("Session expired."));
+        }
 
         const user = await prisma.user.findUnique({
             where: {

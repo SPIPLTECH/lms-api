@@ -231,9 +231,14 @@ const changePassword = async (
         newPassword
       );
 
+    // Other sessions are now signed out; the new tokens keep this one in.
     res.json({
       success: true,
-      message: result.message
+      message: result.message,
+      data: {
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken
+      }
     });
   } catch (error) {
     next(error);

@@ -3,15 +3,21 @@ const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const prisma = require("../../config/database");
 const { sendEmail } = require("../../utils/mail");
+const { passwordFingerprint, forgetSession } = require("../../utils/sessionVersion");
 /**
  * Generate Access Token
+ *
+ * `pv` ties the token to the current password (see utils/sessionVersion), so
+ * a password change signs out every other session. `user` must include
+ * `password`.
  */
 const generateAccessToken = (user) => {
   return jwt.sign(
     {
       id: user.id,
       email: user.email,
-      role: user.role
+      role: user.role,
+      pv: passwordFingerprint(user.password)
     },
     process.env.JWT_ACCESS_SECRET,
     {
@@ -27,7 +33,8 @@ const generateAccessToken = (user) => {
 const generateRefreshToken = (user) => {
   return jwt.sign(
     {
-      id: user.id
+      id: user.id,
+      pv: passwordFingerprint(user.password)
     },
     process.env.JWT_REFRESH_SECRET,
     {
@@ -273,16 +280,20 @@ const resetPassword =
         10
       );
 
+    // The new hash invalidates every token already issued; clearing the stored
+    // refresh token stops the other sessions from refreshing their way back.
     await prisma.user.update({
       where: {
         id: user.id
       },
       data: {
         password: hashedPassword,
+        refreshToken: null,
         otp: null,
         otpExpiresAt: null
       }
     });
+    forgetSession(user.id);
 
     return {
       message:
@@ -312,7 +323,13 @@ const refreshToken = async (token) => {
       }
     });
 
-    if (!user || user.refreshToken !== token) {
+    // A refresh token minted before session versioning has no `pv`; it is
+    // still bounded by the stored-token match, which a password change rotates.
+    if (
+      !user ||
+      user.refreshToken !== token ||
+      (decoded.pv && decoded.pv !== passwordFingerprint(user.password))
+    ) {
       const error = new Error("Invalid refresh token");
       error.statusCode = 401;
       throw error;
@@ -395,16 +412,27 @@ const changePassword = async (
       10
     );
 
+  // Every other session's tokens carry the old password's fingerprint and stop
+  // verifying; this session gets a fresh pair (and the only valid refresh
+  // token) so it stays signed in.
+  const updatedUser = { ...user, password: hashedPassword };
+  const accessToken = generateAccessToken(updatedUser);
+  const refreshToken = generateRefreshToken(updatedUser);
+
   await prisma.user.update({
     where: { id: userId },
     data: {
-      password: hashedPassword
+      password: hashedPassword,
+      refreshToken
     }
   });
+  forgetSession(userId);
 
   return {
     message:
-      "Password changed successfully"
+      "Password changed successfully",
+    accessToken,
+    refreshToken
   };
 };
 const resendVerification = async (email) => {

@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
+const { isSessionCurrent, SessionCheckUnavailable } = require("../utils/sessionVersion");
 
-const verifyToken = (req, res, next) => {
+const verifyToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -29,6 +30,20 @@ const verifyToken = (req, res, next) => {
       process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET
     );
 
+    // Issued before the user's last password change (another browser's
+    // session, now signed out) or before session versioning existed. A 401
+    // sends the client through refresh, which only the current session passes.
+    if (!(await isSessionCurrent(decoded))) {
+      if (req.path === "/logout" || req.originalUrl?.includes("/logout")) {
+        req.user = { role: "GUEST" };
+        return next();
+      }
+      return res.status(401).json({
+        success: false,
+        message: "Session expired",
+      });
+    }
+
     req.user = {
       id: decoded.id,
       email: decoded.email,
@@ -40,6 +55,15 @@ const verifyToken = (req, res, next) => {
     if (req.path === "/logout" || req.originalUrl?.includes("/logout")) {
       req.user = { role: "GUEST" };
       return next();
+    }
+
+    // Not a 401: that would send the client through refresh and sign it out
+    // over a database blip.
+    if (error instanceof SessionCheckUnavailable) {
+      return res.status(503).json({
+        success: false,
+        message: "Service temporarily unavailable. Please try again.",
+      });
     }
 
     if (error.name === "TokenExpiredError") {
@@ -56,7 +80,7 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-const optionalToken = (req, res, next) => {
+const optionalToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -75,6 +99,12 @@ const optionalToken = (req, res, next) => {
       token,
       process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET
     );
+
+    // A signed-out session browses as a guest, same as an invalid token.
+    if (!(await isSessionCurrent(decoded))) {
+      req.user = { role: "GUEST" };
+      return next();
+    }
 
     req.user = {
       id: decoded.id,
