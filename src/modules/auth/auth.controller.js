@@ -155,6 +155,25 @@ const forgotPassword =
   };
 
 /**
+ * Verify Reset OTP — checks the code without consuming it, so the reset
+ * screen can unlock the new-password step.
+ */
+const verifyResetOtp = async (req, res, next) => {
+  try {
+    const { email, otp } = req.body;
+
+    const result = await authService.verifyResetOtp(email, otp);
+
+    res.json({
+      success: true,
+      message: result.message
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Reset Password
  */
 const resetPassword =
@@ -266,6 +285,7 @@ module.exports = {
   logout,
   profile,
   forgotPassword,
+  verifyResetOtp,
   resetPassword,
   refreshToken,
   changePassword,

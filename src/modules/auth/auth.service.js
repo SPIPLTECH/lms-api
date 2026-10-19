@@ -3,6 +3,21 @@ const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const prisma = require("../../config/database");
 const { sendEmail } = require("../../utils/mail");
+const { otpEmail } = require("../../utils/emailTemplates");
+
+const REGISTER_OTP_MINUTES = 10;
+const OTP_MINUTES = 5;
+
+const badRequest = (message) => {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+};
+
+const sendOtpEmail = async ({ to, name, otp, purpose, expiresInMinutes }) => {
+  const { subject, html } = otpEmail({ purpose, otp, expiresInMinutes, name });
+  await sendEmail(to, subject, html);
+};
 /**
  * Generate Access Token
  */
@@ -45,7 +60,7 @@ const register = async (data) => {
   const hashedPassword = await bcrypt.hash(data.password, 10);
 
   const otp = generateOTP();
-  const expiry = new Date(Date.now() + 10 * 60 * 1000);
+  const expiry = new Date(Date.now() + REGISTER_OTP_MINUTES * 60 * 1000);
 
   const user = await prisma.user.create({
     data: {
@@ -68,16 +83,13 @@ const register = async (data) => {
     }
   });
 
-  await sendEmail(
-    data.email,
-    "Verify Your Account",
-    `
-    <h2>Orange Tree LMS</h2>
-    <p>Your OTP is:</p>
-    <h1>${otp}</h1>
-    <p>Valid for 5 minutes</p>
-    `
-  );
+  await sendOtpEmail({
+    to: data.email,
+    name: data.name,
+    otp,
+    purpose: "verify",
+    expiresInMinutes: REGISTER_OTP_MINUTES
+  });
 
   return {
     message: "OTP sent to email"
@@ -212,26 +224,67 @@ const forgotPassword =
       where: { id: user.id },
       data: {
         otp : Newotp,
-        otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+        otpExpiresAt: new Date(Date.now() + OTP_MINUTES * 60 * 1000),
      
       }
     });
-    await sendEmail(
-     email,
-     "OTP for Update password of Your Account",
-  `
-    <h2>Orange Tree LMS</h2>
-    <p>Your OTP is:</p>
-    <h1>${Newotp}</h1>
-    <p>Valid for 5 minutes</p>
-  `
-     );
+    await sendOtpEmail({
+      to: email,
+      name: user.name,
+      otp: Newotp,
+      purpose: "reset",
+      expiresInMinutes: OTP_MINUTES
+    });
      return {
      message: "OTP sent to email"
     };
 
   
   };
+
+/**
+ * Load the user for a password reset and check the emailed OTP. Shared by
+ * verifyResetOtp (step 1, does not consume the OTP) and resetPassword (step 2).
+ */
+const findUserWithValidResetOtp = async (email, otp) => {
+  const user =
+    await prisma.user.findFirst({
+      where: {
+        email: email
+      }
+    });
+
+  if (!user) {
+    throw badRequest(
+      "Invalid User"
+    );
+  }
+
+  if (!user.otp || String(user.otp) !== String(otp)) {
+    throw badRequest(
+      "Invalid OTP"
+    );
+  }
+
+  if (!user.otpExpiresAt || new Date() > new Date(user.otpExpiresAt)) {
+    throw badRequest(
+      "OTP expired"
+    );
+  }
+
+  return user;
+};
+
+/**
+ * Verify Reset OTP
+ */
+const verifyResetOtp = async (email, otp) => {
+  await findUserWithValidResetOtp(email, otp);
+
+  return {
+    message: "OTP verified. You can now set a new password."
+  };
+};
 
 /**
  * Reset Password
@@ -243,27 +296,17 @@ const resetPassword =
     newPassword
   ) => {
     const user =
-      await prisma.user.findFirst({
-        where: {
-          email: email
-        }
-      });
+      await findUserWithValidResetOtp(email, otp);
 
-    if (!user) {
-      throw new Error(
-        "Invalid User"
+    const isSamePassword =
+      await bcrypt.compare(
+        newPassword,
+        user.password
       );
-    }
 
-    if (!user.otp || String(user.otp) !== String(otp)) {
-      throw new Error(
-        "Invalid OTP"
-      );
-    }
-
-    if (!user.otpExpiresAt || new Date() > new Date(user.otpExpiresAt)) {
-      throw new Error(
-        "OTP expired"
+    if (isSamePassword) {
+      throw badRequest(
+        "New password must be different from your previous password."
       );
     }
 
@@ -389,6 +432,18 @@ const changePassword = async (
     );
   }
 
+  const isSamePassword =
+    await bcrypt.compare(
+      newPassword,
+      user.password
+    );
+
+  if (isSamePassword) {
+    throw badRequest(
+      "New password must be different from your current password."
+    );
+  }
+
   const hashedPassword =
     await bcrypt.hash(
       newPassword,
@@ -422,7 +477,7 @@ const resendVerification = async (email) => {
 
   const otp = generateOTP();
   const otpExpiry = new Date(
-    Date.now() + 5 * 60 * 1000
+    Date.now() + OTP_MINUTES * 60 * 1000
   );
 
   await prisma.user.update({
@@ -433,16 +488,13 @@ const resendVerification = async (email) => {
     }
   });
 
-  await sendEmail(
-    email,
-    "Verify Your Orange Tree LMS Account",
-    `
-    <h2>Orange Tree LMS</h2>
-    <p>Your verification OTP:</p>
-    <h1>${otp}</h1>
-    <p>Valid for 5 minutes</p>
-    `
-  );
+  await sendOtpEmail({
+    to: email,
+    name: user.name,
+    otp,
+    purpose: "verify",
+    expiresInMinutes: OTP_MINUTES
+  });
 
   return {
     message:
@@ -486,6 +538,7 @@ module.exports = {
   login,
   logout,
   forgotPassword,
+  verifyResetOtp,
   resetPassword,
   refreshToken,
   changePassword,

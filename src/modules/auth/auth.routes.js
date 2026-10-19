@@ -15,6 +15,7 @@ const {
   loginSchema,
   verifyOtpSchema,
   forgotPasswordSchema,
+  verifyResetOtpSchema,
   resetPasswordSchema,
   changePasswordSchema,
   resendVerificationSchema,
@@ -59,6 +60,13 @@ router.post(
 );
 
 router.post(
+  "/verify-reset-otp",
+  authRateLimiter,
+  validate(verifyResetOtpSchema),
+  authController.verifyResetOtp
+);
+
+router.post(
   "/change-password",
   verifyToken,
   validate(changePasswordSchema),
@@ -92,4 +100,4 @@ router.post(
   authController.logout
 );
 
-module.exports = router;
+module.exports = router;

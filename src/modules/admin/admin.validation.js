@@ -1,4 +1,5 @@
 const Joi = require("joi");
+const { passwordField } = require("../auth/password.policy");
 
 /* Create Admin Validation */
 const createAdminSchema = Joi.object({
@@ -11,10 +12,7 @@ const createAdminSchema = Joi.object({
     "any.required": "Valid email is required"
   }),
 
-  password: Joi.string().min(6).required().messages({
-    "string.min": "Password must be at least 6 characters",
-    "any.required": "Password is required"
-  }),
+  password: passwordField("Password"),
 
   phoneNumber: Joi.string().optional().allow(null, ""),
   address: Joi.string().optional().allow(null, ""),
