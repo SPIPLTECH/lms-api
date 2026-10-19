@@ -161,7 +161,6 @@ const updateMyProfile = async (userId, data) => {
     const profileUpdate = {};
     if (data.education !== undefined) profileUpdate.education = data.education;
     if (data.institution !== undefined) profileUpdate.collegeName = data.institution;
-    if (data.graduationYear !== undefined) profileUpdate.graduationYear = data.graduationYear;
     if (data.gender !== undefined) profileUpdate.gender = data.gender;
     if (data.dateOfBirth !== undefined) {
       profileUpdate.dateOfBirth = data.dateOfBirth ? new Date(data.dateOfBirth) : null;

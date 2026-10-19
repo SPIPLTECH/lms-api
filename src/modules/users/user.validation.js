@@ -12,7 +12,13 @@ const updateUserSchema = Joi.object({
   // Student profile fields (StudentProfile)
   education: Joi.string().max(255).optional().allow(null, ""),
   institution: Joi.string().max(255).optional().allow(null, ""),
-  graduationYear: Joi.string().max(50).optional().allow(null, ""),
+  // Stored as Int, so the profile form sends back the number it loaded; accept a
+  // number or a numeric string (user.service parses it).
+  graduationYear: Joi.alternatives()
+    .try(Joi.number().integer().min(1900).max(2100), Joi.string().pattern(/^\d{4}$/))
+    .optional()
+    .allow(null, "")
+    .messages({ "alternatives.match": "Graduation year must be a 4-digit year" }),
   gender: Joi.string().max(50).optional().allow(null, ""),
   dateOfBirth: Joi.date().optional().allow(null, ""),
   guardianName: Joi.string().max(150).optional().allow(null, ""),
