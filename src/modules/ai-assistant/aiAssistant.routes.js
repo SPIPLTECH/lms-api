@@ -12,6 +12,7 @@ const {
 } = require("../../middleware/rateLimit.middleware");
 
 const controller = require("./aiAssistant.controller");
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 const {
   guestMessageSchema,
   conversationMessageSchema,
@@ -38,6 +39,7 @@ const {
 router.post(
   "/guest/messages/stream",
   optionalToken,
+  requireContentAccess,
   aiAssistantGuestRateLimiter,
   validate(guestMessageSchema, "body"),
   controller.streamGuestMessage
@@ -63,12 +65,14 @@ router.get("/conversations", controller.listConversations);
 
 router.get(
   "/conversations/:conversationId/messages",
+  requireContentAccess,
   validate(conversationIdParamSchema, "params"),
   controller.getConversationMessages
 );
 
 router.post(
   "/conversations/:conversationId/messages/stream",
+  requireContentAccess,
   aiAssistantUserRateLimiter,
   validate(conversationIdParamSchema, "params"),
   validate(conversationMessageSchema, "body"),

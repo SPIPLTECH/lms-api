@@ -7,6 +7,7 @@ const checkRole = require('../../middleware/role.middleware');
 const validate = require('../../middleware/joiValidation.middleware');
 const verifyCourseOwnership = require('../../middleware/courseOwnership.middleware');
 const { completeContentSchema, completeLessonSchema, markVisitedSchema } = require('./progress.validation');
+const requireContentAccess = require('../../middleware/contentAccess.middleware');
 
 router.use(verifyToken);
 
@@ -21,18 +22,21 @@ router.get(
 
 router.post(
   '/content-complete',
+  requireContentAccess,
   validate(completeContentSchema),
   progressController.markContentComplete
 );
 
 router.post(
   '/complete',
+  requireContentAccess,
   validate(completeLessonSchema),
   progressController.markLessonComplete
 );
 
 router.post(
   '/visit',
+  requireContentAccess,
   validate(markVisitedSchema),
   progressController.markVisited
 );
@@ -41,11 +45,11 @@ router.post(
 // nested path — the path is a view over one course, not a sub-resource of it,
 // and keeping it flat leaves /progress/:something free of ambiguity. Declared
 // before /courses/:courseId only for readability; the two don't collide.
-router.get('/learning-path', progressController.getLearningPath);
+router.get('/learning-path', requireContentAccess, progressController.getLearningPath);
 
 // The unified learning sequence (Content, Quiz and Assignment steps in one
 // order) the player, the Course Map and resume all read.
-router.get('/learning-sequence', progressController.getLearningSequence);
+router.get('/learning-sequence', requireContentAccess, progressController.getLearningSequence);
 
 router.get('/courses/:courseId', progressController.getCourseProgress);
 

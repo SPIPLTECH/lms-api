@@ -1,6 +1,14 @@
 const jwt = require("jsonwebtoken");
 const prisma = require("../config/database");
+const sessionService = require("../modules/sessions/session.service");
 
+/**
+ * Socket handshakes pass the same gate as REST requests: a signed access
+ * token naming an ACTIVE, unexpired session, presented from the device the
+ * session is bound to (`auth.deviceKey`), for an ACTIVE account. The socket
+ * joins `session_<id>` so ending the session closes it
+ * (session.service → socket/index.js disconnectSessions).
+ */
 const socketAuth = async (socket, next) => {
     try {
         const token = socket.handshake.auth?.token;
@@ -14,6 +22,16 @@ const socketAuth = async (socket, next) => {
             process.env.JWT_ACCESS_SECRET ||
             process.env.JWT_SECRET
         );
+
+        if (!decoded.sid) {
+            return next(new Error("Invalid token."));
+        }
+
+        await sessionService.validateAccess({
+            sessionId: decoded.sid,
+            userId: decoded.id,
+            deviceKey: socket.handshake.auth?.deviceKey,
+        });
 
         const user = await prisma.user.findUnique({
             where: {
@@ -39,6 +57,7 @@ const socketAuth = async (socket, next) => {
         }
 
         socket.user = user;
+        socket.sessionId = decoded.sid;
 
         next();
     } catch (error) {

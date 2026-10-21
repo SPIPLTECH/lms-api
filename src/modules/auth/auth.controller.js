@@ -1,4 +1,35 @@
+const jwt = require("jsonwebtoken");
+
 const authService = require("./auth.service");
+
+/** What every sign-in needs to know about the calling browser. */
+const signInContext = (req) => ({
+  deviceKey: req.get("x-device-key") || null,
+  // Proof of possession of this browser's current session, if it has one;
+  // lets the same device re-authenticate without a 409 (see session.service).
+  currentRefreshToken: req.body?.currentRefreshToken || null,
+  userAgent: req.get("user-agent") || null
+});
+
+/**
+ * The session id named by the Bearer token, if its signature is ours. Expiry
+ * is ignored on purpose: logging out with an expired access token must still
+ * end the session it belongs to.
+ */
+const sessionIdFromBearer = (req) => {
+  const header = req.headers.authorization || "";
+  if (!header.startsWith("Bearer ")) return null;
+  try {
+    const decoded = jwt.verify(
+      header.slice(7),
+      process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET,
+      { ignoreExpiration: true }
+    );
+    return decoded?.sid || null;
+  } catch {
+    return null;
+  }
+};
 
 /**
  * Register
@@ -60,7 +91,8 @@ const login = async (
     const result =
       await authService.login(
         email,
-        password
+        password,
+        signInContext(req)
       );
 
     res.json({
@@ -75,25 +107,46 @@ const login = async (
 };
 
 /**
+ * Google sign-in. The body carries only Google's ID token (`credential`);
+ * identity comes from verifying it, never from client-supplied profile data.
+ */
+const googleLogin = async (req, res, next) => {
+  try {
+    const result = await authService.loginWithGoogle(
+      req.body.credential,
+      signInContext(req)
+    );
+
+    res.json({
+      success: true,
+      message: "Login successful",
+      data: result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Logout
  */
-const logout = async (req, res) => {
+const logout = async (req, res, next) => {
   try {
-    const userId = req.user?.id;
     const refreshToken = req.body?.refreshToken;
 
-    await authService.logout(userId, refreshToken);
+    await authService.logout({
+      sessionId: sessionIdFromBearer(req),
+      refreshToken
+    });
 
     return res.status(200).json({
       success: true,
       message: "Logged out successfully"
     });
   } catch (error) {
-    console.error("Logout error in controller:", error);
-    return res.status(200).json({
-      success: true,
-      message: "Logged out successfully"
-    });
+    // 503 LOGOUT_FAILED: the session may still be active, so the client must
+    // not report a successful sign-out.
+    next(error);
   }
 };
 
@@ -221,7 +274,8 @@ const refreshToken =
 
       const result =
         await authService.refreshToken(
-          refreshToken
+          refreshToken,
+          req.get("x-device-key") || null
         );
 
       res.json({
@@ -282,6 +336,7 @@ const resendVerification = async (
 module.exports = {
   register,
   login,
+  googleLogin,
   logout,
   profile,
   forgotPassword,

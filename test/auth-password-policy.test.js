@@ -12,6 +12,7 @@ mail.sendEmail = async (to, subject, html) => {
 };
 
 const authService = require("../src/modules/auth/auth.service");
+const sessionService = require("../src/modules/sessions/session.service");
 const {
   registerSchema,
   resetPasswordSchema,
@@ -159,17 +160,27 @@ test("resetPassword rejects reusing the previous password", async () => {
   }
 });
 
-test("resetPassword stores a new password and clears the OTP", async () => {
+test("resetPassword stores a new password, clears the OTP and ends the account's session", async () => {
   const user = await resetUser(STRONG);
   const stub = stubUser(user);
+  // Since F-04 a reset also revokes the account's sessions; stubbed so this
+  // test stays database-free.
+  const originalRevoke = sessionService.revokeUserSessions;
+  const revoked = [];
+  sessionService.revokeUserSessions = async (userId, reason) => {
+    revoked.push([userId, reason]);
+    return [];
+  };
   try {
     await authService.resetPassword("123456", user.email, OTHER_STRONG);
     assert.equal(stub.updates.length, 1);
     const { data } = stub.updates[0];
     assert.equal(data.otp, null);
     assert.ok(await bcrypt.compare(OTHER_STRONG, data.password));
+    assert.deepEqual(revoked, [[user.id, "PASSWORD_RESET"]]);
   } finally {
     stub.restore();
+    sessionService.revokeUserSessions = originalRevoke;
   }
 });
 

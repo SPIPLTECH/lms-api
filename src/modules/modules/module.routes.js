@@ -26,11 +26,13 @@ const {
 const checkRole = require(
   "../../middleware/role.middleware"
 );
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 
 router.get(
   "/",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   controller.getModules
 );
 
@@ -38,6 +40,7 @@ router.get(
   "/:moduleId",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   controller.getModuleById
 );
 

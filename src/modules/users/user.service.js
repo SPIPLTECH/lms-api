@@ -1,4 +1,5 @@
 const prisma = require("../../config/database");
+const sessionService = require("../sessions/session.service");
 
 const getUsers = async () => {
   return await prisma.user.findMany({
@@ -52,15 +53,9 @@ const updateUser = async (userId, data) => {
   });
 };
 
+// A non-ACTIVE status also revokes the user's session and playback lease.
 const updateUserStatus = async (userId, status) => {
-  return await prisma.user.update({
-    where: {
-      id: userId
-    },
-    data: {
-      status
-    }
-  });
+  return await sessionService.setAccountStatus(userId, status);
 };
 
 const updateUserRole = async (userId, role) => {
@@ -111,6 +106,12 @@ const updateUserRole = async (userId, role) => {
         userId
       }
     });
+  }
+
+  // Access tokens carry the role, so a session signed in under the old role
+  // would keep its old permissions until the token expired. End it.
+  if (user.role !== role) {
+    await sessionService.revokeUserSessions(userId, sessionService.END_REASONS.ROLE_CHANGED);
   }
 
   return updatedUser;

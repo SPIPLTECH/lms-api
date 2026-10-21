@@ -16,11 +16,13 @@ const {
   updateSubTopicSchema,
   reorderSubTopicsSchema,
 } = require("./subTopic.validation");
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 
 router.get(
   "/",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   subTopicController.getSubTopics
 );
 
@@ -38,6 +40,7 @@ router.get(
   "/:subTopicId",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   subTopicController.getSubTopicById
 );
 

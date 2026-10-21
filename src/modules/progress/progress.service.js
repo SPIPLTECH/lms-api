@@ -77,18 +77,26 @@ async function computeStudentSequence(studentId, courseId, { persist = false, al
  * through here, so a student who skips the player (a typed URL, a direct API
  * call) is refused exactly as the player would refuse them.
  *
- * A Content row that is not a step (unpublished, or not in this course's
- * published tree) is not this check's concern — the caller's own
- * existence/enrollment checks still apply.
+ * A Content row that is not a step is refused when any container above it
+ * (module, lesson, topic, subtopic, concept) is unpublished: the sequence
+ * only holds published containers, so "not a step" used to mean "allowed",
+ * and an enrolled student holding an old link could still open — or play —
+ * an item whose lesson had been unpublished. Rows outside the sequence for
+ * other reasons (a qualifying quiz's wrapper) keep their own rules.
  */
 async function assertContentsAccessible(studentId, courseId, contentIds) {
   const ids = [...new Set((contentIds || []).filter(Boolean))];
   if (!courseId || ids.length === 0) return;
 
   const { sequence } = await computeStudentSequence(studentId, courseId);
+  const notInSequence = [];
   for (const id of ids) {
     const step = findStepForContent(sequence, id);
-    if (!step?.locked) continue;
+    if (!step) {
+      notInSequence.push(id);
+      continue;
+    }
+    if (!step.locked) continue;
     const blocker = sequence.steps[step.blockedByIndex];
     throw forbidden(
       blocker
@@ -96,6 +104,43 @@ async function assertContentsAccessible(studentId, courseId, contentIds) {
         : 'Finish the earlier items in this course before opening this item.'
     );
   }
+
+  if (notInSequence.length > 0 && (await findUnpublishedContentIds(notInSequence)).length > 0) {
+    throw forbidden('This item is not available.');
+  }
+}
+
+// Each container level with the levels above it, as far as `isPublished`.
+const MODULE_PUB = { select: { isPublished: true } };
+const LESSON_PUB = { select: { isPublished: true, module: MODULE_PUB } };
+const TOPIC_PUB = { select: { isPublished: true, lesson: LESSON_PUB } };
+const SUBTOPIC_PUB = { select: { isPublished: true, topic: TOPIC_PUB } };
+const CONCEPT_PUB = { select: { isPublished: true, subTopic: SUBTOPIC_PUB } };
+
+/** True when the node, or any container object nested in it, is unpublished. */
+function hasUnpublishedContainer(node) {
+  if (!node || typeof node !== 'object') return false;
+  if (node.isPublished === false) return true;
+  return Object.values(node).some((child) => child && typeof child === 'object' && hasUnpublishedContainer(child));
+}
+
+/**
+ * The ids, among `contentIds`, of Content rows sitting under an unpublished
+ * container at any level. Course-level rows have no container to check.
+ */
+async function findUnpublishedContentIds(contentIds, client = prisma) {
+  const rows = await client.content.findMany({
+    where: { id: { in: contentIds } },
+    select: {
+      id: true,
+      module: MODULE_PUB,
+      lesson: LESSON_PUB,
+      topic: TOPIC_PUB,
+      subTopic: SUBTOPIC_PUB,
+      concept: CONCEPT_PUB
+    }
+  });
+  return rows.filter(({ id, ...containers }) => hasUnpublishedContainer(containers)).map((row) => row.id);
 }
 
 /**
@@ -874,6 +919,7 @@ async function getInstructorCourseProgress(courseId) {
 module.exports = {
   assertCourseProgressAccess,
   assertContentsAccessible,
+  findUnpublishedContentIds,
   assertSequenceItemAccessible,
   computeStudentSequence,
   completeContent,

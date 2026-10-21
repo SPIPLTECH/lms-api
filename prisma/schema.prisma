@@ -41,6 +41,11 @@ model User {
   teachingGoals           TeachingGoal[]
   courseImportJobs        CourseImportJob[]
   aiConversations         AiConversation[]
+  identities              UserIdentity[]
+  devices                 Device[]
+  authSessions            AuthSession[]
+  playbackLeases          PlaybackLease[]
+  auditEvents             AuditEvent[]
 
   @@index([role])
 }
@@ -321,6 +326,7 @@ model Content {
   concept       Concept?            @relation(fields: [conceptId], references: [id], onDelete: Cascade)
   progresses    ContentProgress[]
   lessonQueries LessonQuery[]
+  playbackLeases PlaybackLease[]
 
   @@unique([courseId, order])
   @@unique([moduleId, order])
@@ -1478,4 +1484,148 @@ model AiMessage {
   conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdAt])
+}
+
+// =====================================================================
+// Sign-in identities, one active session per device, device binding and
+// the single active playback lease (STUDENT accounts only).
+//
+// Applied with scripts/add-auth-sessions-playback.sql (prisma db execute),
+// which also creates the partial unique indexes Prisma cannot express;
+// scripts/auth-sessions-per-device.sql then replaced the per-user session
+// index with the per-device one (multi-device sign-in):
+//   "AuthSession_one_active_per_device" ON "AuthSession"("userId", "deviceId") WHERE status = 'ACTIVE'
+//   "PlaybackLease_one_active_per_user" ON "PlaybackLease"("userId")             WHERE status = 'ACTIVE'
+// A plain @@unique([userId, status]) would also cap the historical rows, so
+// those two invariants live in SQL only. Expired rows are moved out of
+// ACTIVE by the services, inside the same transaction that claims a new one.
+// =====================================================================
+
+enum AuthSessionStatus {
+  ACTIVE
+  LOGGED_OUT
+  REVOKED
+  EXPIRED
+}
+
+enum PlaybackLeaseStatus {
+  ACTIVE
+  STOPPED
+  EXPIRED
+  REVOKED
+}
+
+// An external sign-in identity linked to an LMS user. `issuer` + `subject`
+// is the stable key (Google's `sub`); `email` is only what the provider
+// reported when the link was made and is never used to find the user again.
+model UserIdentity {
+  id         String   @id @default(cuid())
+  userId     String
+  provider   String
+  issuer     String
+  subject    String
+  email      String?
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([issuer, subject])
+  @@unique([userId, provider])
+}
+
+// A browser install, identified by a random server-issued key the client
+// stores and sends back. A slot identifier, not proof of hardware identity:
+// clearing browser data produces a new device. Only the key's SHA-256 is
+// stored, and it is unique per user so one browser can serve several users.
+model Device {
+  id            String    @id @default(cuid())
+  userId        String
+  deviceKeyHash String
+  label         String?
+  userAgent     String?
+  firstSeenAt   DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+  revokedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions       AuthSession[]
+  playbackLeases PlaybackLease[]
+
+  @@unique([userId, deviceKeyHash])
+  @@index([userId, revokedAt])
+}
+
+// One sign-in. `tokenHash` is the SHA-256 of the opaque refresh credential;
+// access JWTs carry the session id (`sid`) and are checked against this row
+// on every protected request. `expiresAt` is the idle deadline (pushed
+// forward by activity, never past `absoluteExpiry`).
+model AuthSession {
+  id             String            @id @default(cuid())
+  userId         String
+  deviceId       String
+  tokenHash      String            @unique
+  authMethod     String
+  status         AuthSessionStatus @default(ACTIVE)
+  createdAt      DateTime          @default(now())
+  lastSeenAt     DateTime          @default(now())
+  expiresAt      DateTime
+  absoluteExpiry DateTime
+  endedAt        DateTime?
+  endReason      String?
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device         Device          @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  playbackLeases PlaybackLease[]
+
+  @@index([userId, status, expiresAt])
+  @@index([deviceId, status])
+}
+
+// Playback permission for one account, held by one session/device at a time.
+// Renewed by heartbeats; reclaimable once `expiresAt` has passed.
+model PlaybackLease {
+  id            String              @id @default(cuid())
+  userId        String
+  sessionId     String
+  deviceId      String
+  contentId     String
+  status        PlaybackLeaseStatus @default(ACTIVE)
+  startedAt     DateTime            @default(now())
+  lastHeartbeat DateTime            @default(now())
+  expiresAt     DateTime
+  stoppedAt     DateTime?
+  stopReason    String?
+
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session AuthSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  device  Device      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  content Content     @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, expiresAt])
+  @@index([sessionId, status])
+  @@index([contentId])
+}
+
+// Security audit trail: sign-in success/failure, second-device rejection,
+// logout, revocation, playback start/conflict/stop/expiry. `userId` is null
+// for failures that never resolved to an account. Holds no tokens, no IPs and
+// no email addresses.
+model AuditEvent {
+  id         String   @id @default(cuid())
+  userId     String?
+  sessionId  String?
+  deviceId   String?
+  contentId  String?
+  eventType  String
+  reasonCode String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([eventType, createdAt])
 }

@@ -7,6 +7,7 @@ const checkRole = require("../../middleware/role.middleware");
 const verifyAssignmentOwnership = require("../../middleware/assignmentOwnership.middleware");
 const verifyAssignmentParentOwnership = require("../../middleware/assignmentParentOwnership.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 const {
   createAssignmentSchema,
   updateAssignmentSchema,
@@ -25,6 +26,7 @@ router.get(
     "/:assignmentId",
     verifyToken,
     checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]),
+    requireContentAccess,
     controller.getAssignmentById
 );
 
@@ -78,6 +80,7 @@ router.post(
     "/:assignmentId/submit",
     verifyToken,
     checkRole(["STUDENT"]),
+    requireContentAccess,
     validate(submitAssignmentSchema),
     controller.submitAssignment
 );

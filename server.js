@@ -10,6 +10,7 @@ const app = require("./src/app");
 const {
     initializeSocket,
 } = require("./src/socket");
+const { startSessionCleanupJob } = require("./src/jobs/sessionCleanup.job");
 
 
 const PORT = process.env.PORT || 5000;
@@ -35,6 +36,10 @@ const server = http.createServer(app);
 
 // Initialize Socket.io
 initializeSocket(server);
+
+// Expire stale sessions and playback leases on a schedule (request paths
+// expire them too; this keeps the tables honest and closes stale sockets).
+startSessionCleanupJob();
 
 // The 12 AI agent modules' bootstrap() calls (student-state, assessment,
 // recommendation, motivation, teacher-insights, analytics, career,

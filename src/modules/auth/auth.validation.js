@@ -44,6 +44,19 @@ const loginSchema = Joi.object({
   password: Joi.string().min(1).max(128).required().messages({
     "any.required": "Password is required.",
   }),
+
+  // This browser's current refresh credential, sent only to prove it already
+  // holds the account's session (same-device re-authentication).
+  currentRefreshToken: Joi.string().max(256).optional().allow(null, ""),
+});
+
+// Google sign-in: only Google's ID token. Profile fields are not accepted —
+// identity comes from verifying the token on the server.
+const googleLoginSchema = Joi.object({
+  credential: Joi.string().min(1).max(8192).required().messages({
+    "any.required": "Google credential is required.",
+  }),
+  currentRefreshToken: Joi.string().max(256).optional().allow(null, ""),
 });
 
 const verifyOtpSchema = Joi.object({
@@ -123,6 +136,7 @@ const resendVerificationSchema = Joi.object({
 module.exports = {
   registerSchema,
   loginSchema,
+  googleLoginSchema,
   verifyOtpSchema,
   forgotPasswordSchema,
   verifyResetOtpSchema,

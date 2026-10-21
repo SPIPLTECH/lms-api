@@ -1,5 +1,6 @@
 const prisma = require("../../config/database");
 const bcrypt = require("bcrypt");
+const sessionService = require("../sessions/session.service");
 
 /* Dashboard */
 const getDashboardStats = async () => {
@@ -94,11 +95,9 @@ const updateUser = async (id, data) => {
 };
 
 
+// A non-ACTIVE status also revokes the user's session and playback lease.
 const updateUserStatus = async (id, status) => {
-  return await prisma.user.update({
-    where: { id },
-    data: { status }
-  });
+  return await sessionService.setAccountStatus(id, status);
 };
 
 const deleteUser = async (id) => {

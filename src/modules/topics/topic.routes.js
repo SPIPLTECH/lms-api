@@ -16,11 +16,13 @@ const {
   updateTopicSchema,
   reorderTopicsSchema,
 } = require("./topic.validation");
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 
 router.get(
   "/",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   topicController.getTopics
 );
 
@@ -28,6 +30,7 @@ router.get(
   "/:topicId",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   topicController.getTopicById
 );
 

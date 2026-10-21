@@ -6,6 +6,7 @@ const checkRole = require("../../middleware/role.middleware");
 const verifyQuizOwnership = require("../../middleware/quizOwnership.middleware");
 const verifyCourseOwnership = require("../../middleware/courseOwnership.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 const {
   createQuizSchema,
   updateQuizSchema,
@@ -24,6 +25,7 @@ router.get(
   "/",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   controller.getQuizzes
 );
 
@@ -37,12 +39,13 @@ router.get(
   controller.getMyQuizSubmissions
 );
 
-router.get("/:quizId/result", verifyToken, controller.getQuizResult);
+router.get("/:quizId/result", verifyToken, requireContentAccess, controller.getQuizResult);
 
 router.get(
   "/:quizId",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   controller.getQuizById
 );
 
@@ -75,6 +78,7 @@ router.delete(
 router.post(
   "/:quizId/submit",
   verifyToken,
+  requireContentAccess,
   validate(submitQuizSchema),
   controller.submitQuiz
 );

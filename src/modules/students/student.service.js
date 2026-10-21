@@ -344,13 +344,28 @@ const getStudents = async (user) => {
   });
 };
 
+// The account fields a student profile view may show. Never the password
+// hash, reset code or any token column.
+const STUDENT_USER_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  phoneNumber: true,
+  avatar: true,
+  role: true,
+  status: true,
+  isVerified: true,
+  createdAt: true,
+  updatedAt: true
+};
+
 const getStudentById = async (studentId) => {
   return await prisma.studentProfile.findUnique({
     where: {
       id: studentId
     },
     include: {
-      user: true,
+      user: { select: STUDENT_USER_SELECT },
       enrollments: true,
       certificates: true
     }
