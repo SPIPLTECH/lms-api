@@ -5,9 +5,10 @@ const prisma = require("../config/database");
  *
  * An evaluator is an ordinary user with an EvaluatorAccess row. Access is
  * fixed at registration: expiresAt = startsAt + 48h, both written once by the
- * server and never reset. While the period is active the evaluator must first
- * have verified external feedback; after it ends, learning access is closed
- * whatever the feedback status.
+ * server and never reset. During the period the evaluator has full learning
+ * access (feedback is asked for, not required); when it ends, learning access
+ * closes and the evaluator is asked for the external feedback if it is not
+ * yet verified.
  *
  * verifyToken calls this on every authenticated request, so the row is cached
  * briefly. Only the row is cached — the decision is recomputed against the
@@ -19,13 +20,11 @@ const prisma = require("../config/database");
 const EVALUATOR_ACCESS_MS = 48 * 60 * 60 * 1000;
 
 const EVALUATOR_STATES = {
-  FEEDBACK_REQUIRED: "FEEDBACK_REQUIRED",
   ACTIVE: "ACTIVE",
   EXPIRED: "EXPIRED",
 };
 
 const BLOCK_CODES = {
-  FEEDBACK_REQUIRED: "EVALUATOR_FEEDBACK_REQUIRED",
   EXPIRED: "EVALUATOR_ACCESS_EXPIRED",
 };
 
@@ -34,18 +33,13 @@ const expiryFor = (startsAt) => new Date(new Date(startsAt).getTime() + EVALUATO
 /** The access decision for one EvaluatorAccess row at time `now`. */
 const evaluatorState = (access, now = Date.now()) => {
   const feedbackCompleted = Boolean(access.feedbackCompletedAt);
-  if (now >= new Date(access.expiresAt).getTime()) {
-    return { state: EVALUATOR_STATES.EXPIRED, feedbackCompleted };
-  }
-  return {
-    state: feedbackCompleted ? EVALUATOR_STATES.ACTIVE : EVALUATOR_STATES.FEEDBACK_REQUIRED,
-    feedbackCompleted,
-  };
+  const expired = now >= new Date(access.expiresAt).getTime();
+  return { state: expired ? EVALUATOR_STATES.EXPIRED : EVALUATOR_STATES.ACTIVE, feedbackCompleted };
 };
 
-// Reachable while blocked: sign-in/out, the profile that tells the client
+// Reachable after expiry: sign-in/out, the profile that tells the client
 // which screen to show, and the evaluator endpoints themselves (status and
-// the feedback check). Everything else that needs a session is learning
+// the feedback check, which stays open after the deadline). Everything else that needs a session is learning
 // access and is refused.
 const ALWAYS_ALLOWED_PREFIXES = ["/auth/", "/evaluators/"];
 
@@ -98,15 +92,12 @@ const evaluatorBlock = async (userId, originalUrl) => {
   const { state, feedbackCompleted } = evaluatorState(access);
   if (state === EVALUATOR_STATES.ACTIVE) return null;
 
-  const expired = state === EVALUATOR_STATES.EXPIRED;
   return {
     status: 403,
     body: {
       success: false,
-      code: expired ? BLOCK_CODES.EXPIRED : BLOCK_CODES.FEEDBACK_REQUIRED,
-      message: expired
-        ? "Your evaluator testing period has ended."
-        : "Please complete the evaluation feedback form to continue.",
+      code: BLOCK_CODES.EXPIRED,
+      message: "Your evaluator testing period has ended.",
       data: { state, feedbackCompleted, expiresAt: access.expiresAt },
     },
   };

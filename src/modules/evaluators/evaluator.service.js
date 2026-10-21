@@ -169,14 +169,15 @@ const markFeedbackComplete = async (userId, { submissionId = null, completedAt, 
 
 /**
  * Asks the feedback site whether this evaluator has submitted. Only a
- * submission found there — same email as the account, inside the access
- * period — counts; nothing the client sends does.
+ * submission found there — same email as the account, made since
+ * registration — counts; nothing the client sends does. Feedback is mostly
+ * given once the 2 days are over, so the check stays open after expiry
+ * (it never reopens learning access).
  */
 const checkFeedback = async (userId) => {
   const access = await readAccessOrThrow(userId);
-  const { state } = evaluatorState(access);
-  if (access.feedbackCompletedAt || state === "EXPIRED") {
-    return { ...evaluatorSummary(access), found: Boolean(access.feedbackCompletedAt) };
+  if (access.feedbackCompletedAt) {
+    return { ...evaluatorSummary(access), found: true };
   }
 
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
@@ -186,7 +187,7 @@ const checkFeedback = async (userId) => {
     submission = await feedbackSite.findSubmission({
       email: user.email,
       from: access.startsAt,
-      to: access.expiresAt,
+      to: new Date(),
     });
   } catch (error) {
     if (!(error instanceof feedbackSite.FeedbackSiteUnavailable)) throw error;

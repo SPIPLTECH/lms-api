@@ -31,8 +31,8 @@ router.get("/registration", controller.registrationInfo);
 router.post("/register", authRateLimiter, validate(registerEvaluatorSchema), controller.register);
 
 /**
- * The signed-in evaluator. verifyToken lets /evaluators/* through for a
- * blocked evaluator (see utils/evaluatorAccess), so these keep working
+ * The signed-in evaluator. verifyToken lets /evaluators/* through for an
+ * expired evaluator (see utils/evaluatorAccess), so these keep working
  * while learning access is closed.
  */
 router.get("/me/status", verifyToken, controller.status);

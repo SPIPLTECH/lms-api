@@ -165,7 +165,7 @@ test("expiry is exactly 48 hours after the start", () => {
   assert.equal(expiryFor(start).toISOString(), "2026-10-21T10:00:00.000Z");
 });
 
-test("the four evaluator cases, with the deadline itself counting as expired", () => {
+test("active for 48 hours with or without feedback; the deadline itself counts as expired", () => {
   const start = new Date("2026-10-19T10:00:00.000Z");
   const expiresAt = expiryFor(start);
   const open = { startsAt: start, expiresAt, feedbackCompletedAt: null };
@@ -173,13 +173,13 @@ test("the four evaluator cases, with the deadline itself counting as expired", (
   const justBefore = expiresAt.getTime() - 1;
   const atDeadline = expiresAt.getTime();
 
-  assert.deepEqual(evaluatorState(open, justBefore), { state: "FEEDBACK_REQUIRED", feedbackCompleted: false });
+  assert.deepEqual(evaluatorState(open, justBefore), { state: "ACTIVE", feedbackCompleted: false });
   assert.deepEqual(evaluatorState(done, justBefore), { state: "ACTIVE", feedbackCompleted: true });
   assert.deepEqual(evaluatorState(open, atDeadline), { state: "EXPIRED", feedbackCompleted: false });
   assert.deepEqual(evaluatorState(done, atDeadline), { state: "EXPIRED", feedbackCompleted: true });
 });
 
-test("only sign-in/out and the evaluator endpoints stay reachable while blocked", () => {
+test("only sign-in/out and the evaluator endpoints stay reachable after expiry", () => {
   assert.equal(isAlwaysAllowedPath("/auth/profile"), true);
   assert.equal(isAlwaysAllowedPath("/auth/logout"), true);
   assert.equal(isAlwaysAllowedPath("/evaluators/me/status?x=1"), true);
@@ -189,24 +189,12 @@ test("only sign-in/out and the evaluator endpoints stay reachable while blocked"
 });
 
 // ------------------------------------------------------- API enforcement
-test("feedback incomplete, period active: learning APIs refused, status and auth allowed", async () => {
-  const { token } = makeUser();
-
-  const blocked = await runVerify(verifyToken, token, "/enrollments/my");
-  assert.equal(blocked.nextCalled, false);
-  assert.equal(blocked.res.statusCode, 403);
-  assert.equal(blocked.res.body.code, "EVALUATOR_FEEDBACK_REQUIRED");
-
-  for (const url of ["/auth/profile", "/evaluators/me/status", "/auth/logout"]) {
-    const allowed = await runVerify(verifyToken, token, url);
-    assert.equal(allowed.nextCalled, true, url);
+test("within 48 hours: full access straight after registration, feedback or not", async () => {
+  for (const feedbackCompletedAt of [null, new Date()]) {
+    const { token } = makeUser({ feedbackCompletedAt });
+    const result = await runVerify(verifyToken, token, "/enrollments/my");
+    assert.equal(result.nextCalled, true);
   }
-});
-
-test("feedback verified, period active: full access", async () => {
-  const { token } = makeUser({ feedbackCompletedAt: new Date() });
-  const result = await runVerify(verifyToken, token, "/enrollments/my");
-  assert.equal(result.nextCalled, true);
 });
 
 test("period over: refused with or without feedback, even with a still-valid token", async () => {
@@ -218,11 +206,16 @@ test("period over: refused with or without feedback, even with a still-valid tok
     assert.equal(result.res.statusCode, 403);
     assert.equal(result.res.body.code, "EVALUATOR_ACCESS_EXPIRED");
     assert.equal(result.res.body.data.feedbackCompleted, Boolean(feedbackCompletedAt));
+
+    for (const url of ["/auth/profile", "/evaluators/me/status", "/evaluators/me/feedback-check", "/auth/logout"]) {
+      const allowed = await runVerify(verifyToken, token, url);
+      assert.equal(allowed.nextCalled, true, url);
+    }
   }
 });
 
-test("a blocked evaluator browses public endpoints only as a guest", async () => {
-  const { token } = makeUser();
+test("an expired evaluator browses public endpoints only as a guest", async () => {
+  const { token } = makeUser({ startsAt: new Date(Date.now() - 49 * HOUR) });
   const result = await runVerify(optionalToken, token, "/courses/c1");
   assert.equal(result.nextCalled, true);
   assert.deepEqual(result.req.user, { role: "GUEST" });
@@ -373,14 +366,14 @@ test("no submission found: nothing is recorded", async () => {
   await withFeedbackSite(() => [], async () => {
     const result = await evaluatorService.checkFeedback(id);
     assert.equal(result.found, false);
-    assert.equal(result.state, "FEEDBACK_REQUIRED");
+    assert.equal(result.state, "ACTIVE");
   });
   assert.equal(db.access.get(id).feedbackCompletedAt, null);
 });
 
-test("a verified submission unlocks access without extending it, and repeat checks are idempotent", async () => {
+test("a verified submission is recorded without extending the period, and repeat checks are idempotent", async () => {
   configure();
-  const { id, token } = makeUser();
+  const { id, token } = makeUser({ startsAt: new Date(Date.now() - 2 * HOUR) });
   const email = db.users.get(id).email;
   const original = { ...db.access.get(id) };
   const submittedAt = new Date(original.startsAt.getTime() + HOUR).toISOString();
@@ -404,18 +397,37 @@ test("a verified submission unlocks access without extending it, and repeat chec
   });
 
   const access = await runVerify(verifyToken, token, "/enrollments/my");
-  assert.equal(access.nextCalled, true, "the middleware sees the new status at once");
+  assert.equal(access.nextCalled, true);
 });
 
-test("after the deadline the feedback site is not consulted", async () => {
+test("after the deadline, feedback can still be verified but learning access stays closed", async () => {
+  configure();
+  const { id, token } = makeUser({ startsAt: new Date(Date.now() - 49 * HOUR) });
+  const email = db.users.get(id).email;
+  // Submitted after the 2 days ended — the usual case now.
+  const submittedAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+
+  await withFeedbackSite(() => [{ id: "sub-late", student: { email }, submittedAt }], async () => {
+    const result = await evaluatorService.checkFeedback(id);
+    assert.equal(result.found, true);
+    assert.equal(result.state, "EXPIRED");
+    assert.equal(result.feedbackCompleted, true);
+  });
+  assert.equal(db.access.get(id).feedbackSubmissionId, "sub-late");
+
+  const after = await runVerify(verifyToken, token, "/enrollments/my");
+  assert.equal(after.res.body.code, "EVALUATOR_ACCESS_EXPIRED", "feedback never reopens access");
+});
+
+test("a submission made before registration does not count", async () => {
   configure();
   const { id } = makeUser({ startsAt: new Date(Date.now() - 49 * HOUR) });
-  await withFeedbackSite(() => { throw new Error("must not be called"); }, async (calls) => {
-    const result = await evaluatorService.checkFeedback(id);
-    assert.equal(result.state, "EXPIRED");
-    assert.equal(result.found, false);
-    assert.equal(calls.list, 0);
+  const email = db.users.get(id).email;
+  const before = new Date(Date.now() - 50 * HOUR).toISOString();
+  await withFeedbackSite(() => [{ id: "sub-old", student: { email }, submittedAt: before }], async () => {
+    assert.equal((await evaluatorService.checkFeedback(id)).found, false);
   });
+  assert.equal(db.access.get(id).feedbackCompletedAt, null);
 });
 
 test("an unreachable or unconfigured feedback site is a 503, never a completion", async () => {

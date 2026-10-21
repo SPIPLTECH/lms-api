@@ -57,10 +57,10 @@ const verifyToken = async (req, res, next) => {
       role: decoded.role,
     };
 
-    // Evaluator accounts: learning access needs verified feedback while the
-    // 48-hour period runs and ends with it — checked here, against the
-    // database, so an older token that is still valid changes nothing. The
-    // session itself stays valid (the client needs it to show why).
+    // Evaluator accounts: learning access ends with the 48-hour period —
+    // checked here, against the database, so an older token that is still
+    // valid changes nothing. The session itself stays valid (the client needs
+    // it to show why, and to collect the feedback).
     let block;
     try {
       block = await evaluatorBlock(decoded.id, req.originalUrl);
@@ -122,7 +122,7 @@ const optionalToken = async (req, res, next) => {
       return next();
     }
 
-    // A blocked evaluator gets only what a guest gets (any error lands in the
+    // An expired evaluator gets only what a guest gets (any error lands in the
     // catch below, which does the same).
     if (await evaluatorBlock(decoded.id, req.originalUrl)) {
       req.user = { role: "GUEST" };

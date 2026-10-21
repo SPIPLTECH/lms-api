@@ -12,7 +12,7 @@ const config = require("./evaluator.config");
  *        item: { id, role, student: { fullName, email, mobile, college }, submittedAt, ... }
  *
  * So completion is verified server-to-server: a submission whose email is the
- * evaluator's account email, submitted inside the evaluator's access period.
+ * evaluator's account email, submitted since the evaluator registered.
  * Only reads are made. The site is on Render's free tier and can take most
  * of a minute to wake, hence the long timeout.
  */
