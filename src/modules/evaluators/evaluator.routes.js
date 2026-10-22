@@ -6,7 +6,12 @@ const checkRole = require("../../middleware/role.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
 const { authRateLimiter } = require("../../middleware/rateLimit.middleware");
 const controller = require("./evaluator.controller");
-const { registerEvaluatorSchema, confirmFeedbackSchema } = require("./evaluator.validation");
+const {
+  registerEvaluatorSchema,
+  sendEmailCodeSchema,
+  verifyEmailCodeSchema,
+  confirmFeedbackSchema,
+} = require("./evaluator.validation");
 
 const router = express.Router();
 
@@ -23,10 +28,44 @@ const feedbackCheckRateLimiter = rateLimit({
   },
 });
 
+// Each send emails someone; keep one client from spamming inboxes.
+const emailCodeSendRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many codes requested. Please wait a few minutes and try again.",
+  },
+});
+
+// Guessing is also capped per code (see emailVerification MAX_ATTEMPTS).
+const emailCodeVerifyRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many attempts. Please wait a few minutes and try again.",
+  },
+});
+
 /**
- * Public
+ * Public. Registration is verify-first: send a code, verify it, then create
+ * the account with the token the verification returned.
  */
 router.get("/registration", controller.registrationInfo);
+
+router.post("/email-code", emailCodeSendRateLimiter, validate(sendEmailCodeSchema), controller.sendEmailCode);
+
+router.post(
+  "/email-code/verify",
+  emailCodeVerifyRateLimiter,
+  validate(verifyEmailCodeSchema),
+  controller.verifyEmailCode
+);
 
 router.post("/register", authRateLimiter, validate(registerEvaluatorSchema), controller.register);
 

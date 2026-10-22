@@ -4,14 +4,30 @@ const registrationInfo = (req, res) => {
   res.json({ success: true, data: evaluatorService.registrationInfo() });
 };
 
+const sendEmailCode = async (req, res, next) => {
+  try {
+    const data = await evaluatorService.sendEmailCode(req.body.email);
+    res.json({ success: true, message: `We sent a 6-digit code to ${data.email}.`, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const verifyEmailCode = async (req, res, next) => {
+  try {
+    const data = evaluatorService.verifyEmailCode(req.body);
+    res.json({ success: true, message: "Email verified.", data });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const register = async (req, res, next) => {
   try {
     const result = await evaluatorService.registerEvaluator(req.body);
     res.status(201).json({
       success: true,
-      message: result.emailSent
-        ? "Evaluator account created. Check your email for the verification code."
-        : "Evaluator account created, but the verification email could not be sent. Use Resend on the next screen.",
+      message: "Evaluator account created. You can log in now.",
       data: result,
     });
   } catch (error) {
@@ -65,4 +81,4 @@ const adminConfirmFeedback = async (req, res, next) => {
   }
 };
 
-module.exports = { registrationInfo, register, status, checkFeedback, adminConfirmFeedback };
+module.exports = { registrationInfo, sendEmailCode, verifyEmailCode, register, status, checkFeedback, adminConfirmFeedback };

@@ -1,5 +1,4 @@
 const bcrypt = require("bcrypt");
-const crypto = require("crypto");
 const prisma = require("../../config/database");
 const ApiError = require("../../utils/ApiError");
 const { sendEmail } = require("../../utils/mail");
@@ -12,8 +11,7 @@ const {
 } = require("../../utils/evaluatorAccess");
 const config = require("./evaluator.config");
 const feedbackSite = require("./feedbackSite.client");
-
-const OTP_VALID_MS = 10 * 60 * 1000;
+const emailVerification = require("./emailVerification");
 
 /** What the client is told about an evaluator account (null for everyone else). */
 const evaluatorSummary = (access, now = Date.now()) => {
@@ -47,13 +45,7 @@ const registrationInfo = () => ({
   accessHours: EVALUATOR_ACCESS_MS / (60 * 60 * 1000),
 });
 
-/**
- * Creates the account, its StudentProfile, its EvaluatorAccess row and the
- * C-CAT enrollments in one transaction: either all of it exists or none of
- * it does. The verification email is sent after commit, as /auth/register
- * does; if it fails the account still stands and the OTP can be resent.
- */
-const registerEvaluator = async (data) => {
+const assertRegistrationOpen = () => {
   if (!config.registrationEnabled()) {
     throw new ApiError(404, "Evaluator registration is not open.", "EVALUATOR_REGISTRATION_CLOSED");
   }
@@ -61,9 +53,56 @@ const registerEvaluator = async (data) => {
   if (courseIds.length === 0 || !config.feedbackUrl()) {
     throw new ApiError(503, "Evaluator registration is not configured yet.", "EVALUATOR_NOT_CONFIGURED");
   }
+  return courseIds;
+};
+
+const assertEmailFree = async (email) => {
+  const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+  if (existing) throw new ApiError(409, "Email already registered.", "EMAIL_TAKEN");
+};
+
+/**
+ * Step 1 of registration: email a 6-digit code. Nothing is stored — the
+ * returned `challenge` is what verifyEmailCode checks the code against.
+ */
+const sendEmailCode = async (email) => {
+  assertRegistrationOpen();
+  await assertEmailFree(email);
+
+  const { otp, challenge, expiresAt } = emailVerification.issueCode(email);
+  try {
+    await sendEmail(
+      email,
+      "Your Orange Tree LMS Evaluator Verification Code",
+      `
+      <h2>Orange Tree LMS</h2>
+      <p>Your verification code is:</p>
+      <h1>${otp}</h1>
+      <p>Valid for ${emailVerification.OTP_VALID_MS / 60000} minutes. If you did not ask for this, ignore this email.</p>
+      `
+    );
+  } catch (error) {
+    console.warn("Evaluator verification email failed:", error?.message);
+    throw new ApiError(502, "We couldn't send the verification email. Please try again.", "EMAIL_SEND_FAILED");
+  }
+  return { email, challenge, expiresAt };
+};
+
+/** Step 2: check the code; the token it returns is required by step 3. */
+const verifyEmailCode = ({ email, otp, challenge }) => emailVerification.verifyCode(email, otp, challenge);
+
+/**
+ * Step 3: creates the account, its StudentProfile, its EvaluatorAccess row and
+ * the C-CAT enrollments in one transaction: either all of it exists or none
+ * of it does. Only for an email proven by step 2, so the account is created
+ * already verified and nothing is ever stored for an unverified email.
+ */
+const registerEvaluator = async (data) => {
+  const courseIds = assertRegistrationOpen();
+  emailVerification.assertVerified(data.email, data.emailVerificationToken);
+  await assertEmailFree(data.email);
 
   const hashedPassword = await bcrypt.hash(data.password, 10);
-  const otp = crypto.randomInt(100000, 1000000).toString();
   const startsAt = new Date();
   const expiresAt = expiryFor(startsAt);
 
@@ -89,8 +128,7 @@ const registerEvaluator = async (data) => {
           phoneNumber: data.phoneNumber || null,
           password: hashedPassword,
           role: "STUDENT", // server-assigned, like /auth/register
-          otp,
-          otpExpiresAt: new Date(startsAt.getTime() + OTP_VALID_MS),
+          isVerified: true,
           studentProfile: { create: { phone: data.phoneNumber || null } },
           evaluatorAccess: { create: { startsAt, expiresAt } },
         },
@@ -113,24 +151,7 @@ const registerEvaluator = async (data) => {
     { maxWait: 10000, timeout: 20000 }
   );
 
-  let emailSent = true;
-  try {
-    await sendEmail(
-      user.email,
-      "Verify Your Orange Tree LMS Evaluator Account",
-      `
-      <h2>Orange Tree LMS</h2>
-      <p>Your OTP is:</p>
-      <h1>${otp}</h1>
-      <p>Valid for 10 minutes</p>
-      <p>Your evaluator access lasts 2 days from registration and ends on ${expiresAt.toUTCString()}.</p>
-      `
-    );
-  } catch {
-    emailSent = false;
-  }
-
-  return { email: user.email, expiresAt, emailSent };
+  return { email: user.email, expiresAt };
 };
 
 const readAccessOrThrow = async (userId) => {
@@ -232,6 +253,8 @@ module.exports = {
   evaluatorSummary,
   evaluatorSummaryForUser,
   registrationInfo,
+  sendEmailCode,
+  verifyEmailCode,
   registerEvaluator,
   getStatus,
   checkFeedback,
