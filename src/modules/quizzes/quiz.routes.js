@@ -32,10 +32,12 @@ router.get(
 // The signed-in student's own quiz attempt history, one entry per quiz —
 // feeds the student Submissions page. Defined before GET /:quizId so the
 // literal segment isn't captured as a quiz id.
+// Gated: exposes which quizzes the student has attempted (course content).
 router.get(
   "/my-submissions",
   verifyToken,
   checkRole(["STUDENT"]),
+  requireContentAccess,
   controller.getMyQuizSubmissions
 );
 
@@ -83,10 +85,13 @@ router.post(
   controller.submitQuiz
 );
 
+// Self-generated assessment quiz: uses course concepts to produce questions —
+// exposes course content; gated while another device holds the playback lease.
 router.post(
   "/self-generate",
   verifyToken,
   checkRole(["STUDENT"]),
+  requireContentAccess,
   validate(generateSelfAssessmentQuizSchema),
   controller.generateSelfAssessmentQuiz
 );

@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const { evaluatorBlock } = require("../utils/evaluatorAccess");
 
 const sessionService = require("../modules/sessions/session.service");
 const { authError, sendAuthError } = require("../utils/authErrors");
@@ -11,11 +12,17 @@ const { authError, sendAuthError } = require("../utils/authErrors");
  * row is checked on EVERY request: ACTIVE, inside its idle and absolute
  * deadlines, presented from the device it is bound to (X-Device-Key), and
  * belonging to an ACTIVE account. A token stays valid only while its session
- * does — logout, expiry, revocation and suspension take effect immediately.
+ * does — logout, expiry, revocation, suspension and a password change or
+ * reset (which end the account's other sessions) take effect immediately.
  *
  * 401 responses carry a stable `code` so the client can tell a refreshable
  * access-token expiry (ACCESS_TOKEN_EXPIRED) from a dead session
  * (SESSION_EXPIRED / SESSION_INVALID), which no refresh can revive.
+ *
+ * Evaluator accounts (src/modules/evaluators) are then checked: once their
+ * 48-hour period ends, learning routes answer 403 EVALUATOR_ACCESS_EXPIRED;
+ * the session itself stays valid so the client can say why and collect the
+ * feedback (utils/evaluatorAccess).
  */
 
 const ACCESS_SECRET = () => process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET;
@@ -25,6 +32,14 @@ const bearerToken = (req) => {
   if (!header || !header.startsWith("Bearer ")) return null;
   return header.split(" ")[1] || null;
 };
+
+// Not a 401: that would send the client through refresh and sign it out over
+// a database blip.
+const serviceUnavailable = (res) =>
+  res.status(503).json({
+    success: false,
+    message: "Service temporarily unavailable. Please try again.",
+  });
 
 /** Resolves the request's session into req.user, or throws an auth ApiError. */
 const authenticate = async (req, token) => {
@@ -68,13 +83,26 @@ const verifyToken = async (req, res, next) => {
     if (isAuthFailure(error)) return sendAuthError(req, res, error);
     return next(error);
   }
+
+  // Evaluator accounts: learning access ends with the 48-hour period —
+  // checked against the database, so an older token that is still valid
+  // changes nothing.
+  let block;
+  try {
+    block = await evaluatorBlock(req.user.id, req.originalUrl);
+  } catch {
+    return serviceUnavailable(res);
+  }
+  if (block) return res.status(block.status).json(block.body);
+
   return next();
 };
 
 /**
  * For routes that serve guests too. No token, or any token that does not
  * resolve to a valid session, is treated as GUEST — never as the user the
- * token claims to be.
+ * token claims to be. An evaluator whose period has ended also browses as a
+ * GUEST.
  *
  * A failure to check the session (database unavailable) also falls back to
  * GUEST: the least privilege, so it is safe, and public pages keep working
@@ -88,7 +116,8 @@ const optionalToken = async (req, res, next) => {
   }
 
   try {
-    req.user = await authenticate(req, token);
+    const user = await authenticate(req, token);
+    req.user = (await evaluatorBlock(user.id, req.originalUrl)) ? { role: "GUEST" } : user;
   } catch (error) {
     if (!isAuthFailure(error)) {
       console.warn("[auth] session check failed on a public route; serving as guest:", error?.message);

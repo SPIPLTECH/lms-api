@@ -59,6 +59,9 @@ const restoreAll = () => {
     object[key] = value;
   }
 };
+// Nobody here is an evaluator account (utils/evaluatorAccess, which verifyToken
+// consults on every request). Set once for the file: tests call restoreAll().
+prisma.evaluatorAccess.findUnique = async () => null;
 test.afterEach(restoreAll);
 
 let server;

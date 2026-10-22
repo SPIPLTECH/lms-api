@@ -48,7 +48,9 @@ const playbackRoutes = require("./modules/playback/playback.routes");
 const requestId = require("./middleware/requestId.middleware");
 const protectVideoSources = require("./middleware/mediaProtection.middleware");
 const stripResponseSecrets = require("./middleware/responseSecrets.middleware");
+const uploadsHandler = require("./middleware/uploads.middleware");
 const { redactLoggedUrl } = require("./utils/logRedaction");
+const evaluatorRoutes = require("./modules/evaluators/evaluator.routes");
 const app = express();
 app.disable('etag');
 
@@ -104,7 +106,11 @@ app.use(express.json({
   },
 }));
 app.use(express.urlencoded({ extended: true, limit: "100mb" }));
-app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
+// /uploads serves files (course content like PDFs, documents, audio, and public
+// assets like avatars and thumbnails). uploadsHandler allows public assets through
+// while strictly requiring authentication and enforcing the per-student playback-lease
+// rule on course content files.
+app.use("/uploads", uploadsHandler);
 
 // Students and guests never receive a VIDEO item's source in any JSON
 // response; they get it from POST /playback/start once they hold the lease.
@@ -176,6 +182,8 @@ app.use("/progress", progressRoutes);
 app.use("/sessions", sessionRoutes);
 app.use("/devices", deviceRoutes);
 app.use("/playback", playbackRoutes);
+// Temporary evaluator accounts — registration, access status, feedback check.
+app.use("/evaluators", evaluatorRoutes);
 app.use(
   "/learner-model",
   require("./modules/learner-model/learnerModel.routes")

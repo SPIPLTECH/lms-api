@@ -140,3 +140,26 @@ test("output that cannot be repaired into a valid course is rejected with the va
     }
   );
 });
+
+test("an MCQ keyed by option letter is mapped to that option, not dropped", async () => {
+  const options = ["Paris", "Rome", "Madrid", "Berlin"];
+  respondWith({
+    course: { title: "Capitals" },
+    quiz: {
+      title: "Capitals check",
+      questions: [
+        { question: "Capital of Italy?", questionType: "MCQ_SINGLE", options, correctAnswer: "B" },
+        { question: "Capital of Spain?", questionType: "MCQ_SINGLE", options, correctAnswer: "(c)" },
+        { question: "Capitals in Europe?", questionType: "MCQ_MULTI", options, correctAnswer: ["A", "D"] },
+      ],
+    },
+  });
+
+  const { canonical, warnings } = await generateCourse({ prompt: "A quiz on capitals", now: NOW });
+
+  assert.deepEqual(
+    canonical.quizzes[0].questions.map((q) => q.correctAnswer),
+    ["Rome", "Madrid", ["Paris", "Berlin"]]
+  );
+  assert.equal(warnings.some((w) => w.startsWith("Removed question")), false);
+});

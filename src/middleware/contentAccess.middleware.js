@@ -16,7 +16,7 @@ const { authError } = require("../utils/authErrors");
  * `skip(req)` exempts a request shape that carries no course content (e.g.
  * GET /courses/:id?include=meta).
  */
-const contentAccess = ({ skip = null } = {}) => async (req, res, next) => {
+const contentAccess = ({ skip = null } = {}) => async function requireContentAccess(req, res, next) {
   try {
     if (!req.user || !requiresPlaybackLease(req.user.role)) return next();
     if (skip && skip(req)) return next();

@@ -15,10 +15,13 @@ const {
   gradeSubmissionSchema,
 } = require("./assignment.validation");
 
+// Assignment list is course content for students — gated while another device
+// holds the playback lease.
 router.get(
     "/",
     verifyToken,
     checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]),
+    requireContentAccess,
     controller.getAssignments
 );
 

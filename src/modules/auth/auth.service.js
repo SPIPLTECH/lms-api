@@ -8,6 +8,7 @@ const { authError } = require("../../utils/authErrors");
 const sessionService = require("../sessions/session.service");
 const { verifyGoogleIdToken } = require("./googleToken.service");
 const { AUDIT_EVENTS, recordAuditEvent } = require("../audit/audit.service");
+const { evaluatorSummaryForUser } = require("../evaluators/evaluator.service");
 
 const REGISTER_OTP_MINUTES = 10;
 const OTP_MINUTES = 5;
@@ -26,7 +27,8 @@ const sendOtpEmail = async ({ to, name, otp, purpose, expiresInMinutes }) => {
  * Generate Access Token
  *
  * `sid` names the AuthSession this token belongs to; verifyToken checks that
- * row on every request, so the token is only as valid as its session.
+ * row on every request, so the token is only as valid as its session (a
+ * password change or reset ends the account's other sessions).
  */
 const generateAccessToken = (user, sessionId) => {
   return jwt.sign(
@@ -49,7 +51,7 @@ const generateAccessToken = (user, sessionId) => {
  * the session's opaque token (stored hashed); `deviceKey` is present only
  * when this sign-in issued the browser a new one.
  */
-const buildSignInResult = (user, { session, refreshToken, deviceKey }) => ({
+const buildSignInResult = async (user, { session, refreshToken, deviceKey }) => ({
   accessToken: generateAccessToken(user, session.id),
   refreshToken,
   ...(deviceKey ? { deviceKey } : {}),
@@ -65,7 +67,9 @@ const buildSignInResult = (user, { session, refreshToken, deviceKey }) => ({
     role: user.role,
     studentProfile: user.studentProfile,
     teacherProfile: user.teacherProfile,
-    adminProfile: user.adminProfile
+    adminProfile: user.adminProfile,
+    // Evaluator accounts only (null otherwise): access period and feedback status.
+    evaluator: await evaluatorSummaryForUser(user.id)
   }
 });
 
@@ -447,12 +451,15 @@ const resetPassword =
         10
       );
 
+    // The legacy refresh-token column is no longer read; clear it with the
+    // new password.
     await prisma.user.update({
       where: {
         id: user.id
       },
       data: {
         password: hashedPassword,
+        refreshToken: null,
         otp: null,
         otpExpiresAt: null
       }
@@ -514,10 +521,16 @@ const logout = async ({ sessionId = null, refreshToken: token = null } = {}) => 
     message: "Logged out successfully"
   };
 };
+/**
+ * Change Password (signed in). Every OTHER session of the account is signed
+ * out, with its playback lease; the session making the change (`sessionId`)
+ * stays signed in with its current credentials, so no new tokens are issued.
+ */
 const changePassword = async (
   userId,
   currentPassword,
-  newPassword
+  newPassword,
+  { sessionId = null } = {}
 ) => {
   const user =
     await prisma.user.findUnique({
@@ -561,13 +574,21 @@ const changePassword = async (
   await prisma.user.update({
     where: { id: userId },
     data: {
-      password: hashedPassword
+      password: hashedPassword,
+      refreshToken: null
     }
   });
 
+  const ended = await sessionService.revokeOtherSessions(
+    userId,
+    sessionId,
+    sessionService.END_REASONS.PASSWORD_CHANGED
+  );
+
   return {
     message:
-      "Password changed successfully"
+      "Password changed successfully",
+    otherSessionsSignedOut: ended.length
   };
 };
 const resendVerification = async (email) => {
@@ -638,7 +659,7 @@ const getProfile = async (userId) => {
     throw new Error("User not found");
   }
 
-  return user;
+  return { ...user, evaluator: await evaluatorSummaryForUser(user.id) };
 };
 
 module.exports = {

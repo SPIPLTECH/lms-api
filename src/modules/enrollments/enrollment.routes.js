@@ -13,6 +13,7 @@ const verifyEnrollmentOwnership = require(
 );
 const validate = require("../../middleware/joiValidation.middleware");
 const { createEnrollmentSchema } = require("./enrollment.validation");
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 
 router.get(
   "/",
@@ -41,6 +42,7 @@ router.patch(
   "/:courseId/access",
   verifyToken,
   checkEnrollmentAccess,
+  requireContentAccess,
   controller.trackCourseAccess
 );
 

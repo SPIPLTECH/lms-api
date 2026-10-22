@@ -3,6 +3,7 @@ const { recomputeCourseProgress, ensureProgressInitialized } = require('../../ut
 const { buildLearningPath, resolveNextItem } = require('../../utils/learningPath');
 const { buildLearningSequence, findStepForContent } = require('../../utils/learningSequence');
 const { getCourseQualifyingQuizzes } = require('../../utils/qualification');
+const { isEvaluatorStudent } = require('../../utils/evaluatorAccess');
 const { isAssessmentContent } = require('../contents/contentOrder.util');
 const {
   COURSE_ID_INCLUDE,
@@ -63,11 +64,15 @@ async function loadSequenceBodies(hierarchy, { allBodies }) {
  * source of completion) turned into ordered, lock-stamped steps.
  *
  * `persist: false` for access checks, which must not write progress rows.
+ * Evaluator accounts get every step open (no complete-to-unlock order).
  */
 async function computeStudentSequence(studentId, courseId, { persist = false, allBodies = false } = {}) {
-  const rollup = await recomputeCourseProgress(studentId, courseId, null, { includeTree: true, persist });
+  const [rollup, unlockAll] = await Promise.all([
+    recomputeCourseProgress(studentId, courseId, null, { includeTree: true, persist }),
+    isEvaluatorStudent(studentId)
+  ]);
   const bodies = await loadSequenceBodies(rollup.hierarchy, { allBodies });
-  return { rollup, sequence: buildLearningSequence(rollup.hierarchy, { bodies }) };
+  return { rollup, sequence: buildLearningSequence(rollup.hierarchy, { bodies, unlockAll }) };
 }
 
 /**

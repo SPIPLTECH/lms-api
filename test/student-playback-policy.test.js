@@ -249,6 +249,8 @@ function installFakeDb() {
     where.email ? [...db.users.values()].find((u) => u.email === where.email) || null : db.users.get(where.id) || null);
   stub(prisma.studentProfile, "findUnique", async ({ where }) => db.profiles.get(where.userId) || null);
   stub(prisma.content, "findUnique", async ({ where }) => db.contents.get(where.id) || null);
+  // No evaluator accounts here (utils/evaluatorAccess runs in verifyToken).
+  stub(prisma.evaluatorAccess, "findUnique", async () => null);
   stub(progressService, "assertCourseProgressAccess", async () => {});
   stub(progressService, "assertContentsAccessible", async () => {});
 }
@@ -816,6 +818,55 @@ const GATED_ROUTES = [
   ["POST", "/quizzes/q1/submit", {}],
   ["GET", "/assignments/a1"],
   ["POST", "/assignments/a1/submit", {}],
+  ["GET", "/assignments"],
+  ["GET", "/quizzes/my-submissions"],
+  ["POST", "/quizzes/self-generate", {}],
+  ["GET", "/questions"],
+  ["GET", "/questions/quiz/q1"],
+  ["GET", "/questions/question/qst1"],
+  ["GET", "/notes"],
+  ["GET", "/notes/n1"],
+  ["POST", "/notes", {}],
+  ["PUT", "/notes/n1", {}],
+  ["PATCH", "/notes/n1/star", {}],
+  ["DELETE", "/notes/n1"],
+  ["GET", "/bookmarks"],
+  ["POST", "/bookmarks", {}],
+  ["DELETE", "/bookmarks/b1"],
+  ["GET", "/sticky-notes"],
+  ["GET", "/sticky-notes/sn1"],
+  ["POST", "/sticky-notes", {}],
+  ["PUT", "/sticky-notes/sn1", {}],
+  ["PATCH", "/sticky-notes/sn1/pin", {}],
+  ["DELETE", "/sticky-notes/sn1"],
+  ["GET", "/lesson-queries/my-questions"],
+  ["POST", "/lesson-queries", {}],
+  ["GET", "/discussions"],
+  ["POST", "/discussions", {}],
+  ["POST", "/discussions/d1/replies", {}],
+  ["DELETE", "/discussions/d1"],
+  ["GET", "/progress/courses/course-1"],
+  ["GET", "/progress"],
+  ["PATCH", "/enrollments/course-1/access", {}],
+  ["GET", "/learner-model"],
+  ["GET", "/learner-model/next-action"],
+  ["GET", "/learner-model/recommendations"],
+  ["GET", "/learner-model/signals"],
+  ["POST", "/learner-model/initialize", {}],
+  ["POST", "/learner-model/evidence", {}],
+  ["POST", "/learner-model/misconception", {}],
+  ["POST", "/learner-model/decision", {}],
+  ["POST", "/adaptive-learning/respond", {}],
+  ["POST", "/adaptive-learning/respond/stream", {}],
+  ["POST", "/adaptive-learning/verification/generate", {}],
+  ["POST", "/adaptive-learning/verification/evaluate", {}],
+  ["POST", "/ai-assistant/conversations", {}],
+  ["GET", "/ai-assistant/conversations"],
+  ["PATCH", "/ai-assistant/conversations/c1", {}],
+  ["DELETE", "/ai-assistant/conversations/c1"],
+  ["GET", "/uploads/contents/lesson1.pdf"],
+  ["GET", "/uploads/attachments/rubric.docx"],
+  ["GET", "/students/state"],
   ["POST", "/students/state", {}],
   ["POST", "/ai-assistant/guest/messages/stream", {}],
   ["GET", "/ai-assistant/conversations/c1/messages"],
@@ -1021,4 +1072,144 @@ test("Option B 5/6. a page opened before A started playing is refused on its nex
     const status = await playbackService.getStatus(await requestUser(b));
     assert.deepStrictEqual([status.active, status.heldByThisDevice], [true, false]);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Merged from the ayan branch ("Sign out other sessions when the password
+// changes"), on the session system: changing the password while signed in
+// ends every OTHER session of the account (and its playback lease); the
+// device that made the change stays signed in with its current credentials.
+// ---------------------------------------------------------------------------
+
+test("change password: the other devices are signed out and lose their lease; this device stays signed in", async () => {
+  const student = addUser("student-pw", "STUDENT");
+  const contentId = addVideo();
+  const a = await signIn(student);
+  const b = await signIn(student);
+  const c = await signIn(student);
+  await playbackService.startPlayback(await requestUser(b), contentId);
+  const writes = [];
+  stub(prisma.user, "update", async (args) => {
+    writes.push(args);
+    Object.assign(db.users.get(args.where.id), args.data);
+    return db.users.get(args.where.id);
+  });
+
+  const NEW_PASSWORD = "N3w-Passw0rd!";
+  await withServer(async (base) => {
+    const r = await callAs(base, a)("POST", "/auth/change-password", { currentPassword: PASSWORD, newPassword: NEW_PASSWORD });
+    assert.strictEqual(r.status, 200, r.text);
+    assert.strictEqual(r.json.data.otherSessionsSignedOut, 2);
+    assert.ok(!/accessToken|refreshToken/.test(r.text), "no new credentials are issued");
+  });
+
+  await requestUser(a); // still signed in, same credentials
+  await expectCode(requestUser(b), "SESSION_INVALID");
+  await expectCode(requestUser(c), "SESSION_INVALID");
+  assert.strictEqual(activeLeases(student.id).length, 0, "the other device's video lease ended with its session");
+  assert.ok(db.authSession.filter((s) => s.endReason === "PASSWORD_CHANGED").length === 2);
+  assert.ok(db.auditEvent.some((e) => e.eventType === "SESSION_REVOKED" && e.reasonCode === "PASSWORD_CHANGED"));
+  assert.ok(await bcrypt.compare(NEW_PASSWORD, writes[0].data.password), "the new password is stored hashed");
+});
+
+test("change password: a wrong current password changes nothing and signs nobody out", async () => {
+  const student = addUser("student-pw2", "STUDENT");
+  const a = await signIn(student);
+  const b = await signIn(student);
+  stub(prisma.user, "update", async () => { throw new Error("must not write"); });
+  stub(console, "error", () => {});
+
+  await withServer(async (base) => {
+    const r = await callAs(base, a)("POST", "/auth/change-password", { currentPassword: "Wrong-Passw0rd!", newPassword: "N3w-Passw0rd!" });
+    assert.notStrictEqual(r.status, 200);
+  });
+  await requestUser(a);
+  await requestUser(b);
+});
+
+// ---------------------------------------------------------------------------
+// /uploads: course files on the API's disk follow the same rule, and the
+// session is accepted only as headers — never in the URL.
+// ---------------------------------------------------------------------------
+
+const fs = require("fs");
+const pathLib = require("path");
+const UPLOADS_DIR = pathLib.join(__dirname, "../uploads");
+const FILE_BYTES = "%PDF-1.4 test bytes";
+
+async function withUploadFile(sub, fn) {
+  const dir = pathLib.join(UPLOADS_DIR, sub);
+  fs.mkdirSync(dir, { recursive: true });
+  const name = `policy-test-${process.pid}-${Date.now()}.pdf`;
+  const file = pathLib.join(dir, name);
+  fs.writeFileSync(file, FILE_BYTES);
+  try {
+    return await fn(`/uploads/${sub}/${name}`);
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
+}
+
+const rawGet = async (base, path, headers = {}) => {
+  const response = await fetch(`${base}${path}`, { headers, signal: AbortSignal.timeout(5000) });
+  return { status: response.status, text: await response.text(), cacheControl: response.headers.get("cache-control") };
+};
+
+const sessionHeaders = (browser) => ({
+  authorization: `Bearer ${jwt.sign({ id: browser.id, email: `${browser.id}@example.com`, role: browser.role, sid: browser.sessionId }, process.env.JWT_ACCESS_SECRET, { expiresIn: "5m" })}`,
+  "x-device-key": browser.deviceKey,
+});
+
+test("uploads: a course file needs a session; A gets the bytes (no-store), B is refused while A plays, an instructor is not limited", async () => {
+  const { contentId, a, b } = await studentWithTwoDevices();
+  const instructor = await signIn(addUser("instructor-files", "INSTRUCTOR"));
+  await playbackService.startPlayback(await requestUser(a), contentId);
+
+  await withUploadFile("contents", (filePath) => withServer(async (base) => {
+    const anonymous = await rawGet(base, filePath);
+    assert.strictEqual(anonymous.status, 401);
+    assert.ok(!anonymous.text.includes("%PDF"), "no bytes without a session");
+
+    const holder = await rawGet(base, filePath, sessionHeaders(a));
+    assert.strictEqual(holder.status, 200);
+    assert.strictEqual(holder.text, FILE_BYTES);
+    assert.strictEqual(holder.cacheControl, "private, no-store");
+
+    const blocked = await rawGet(base, filePath, sessionHeaders(b));
+    assert.strictEqual(blocked.status, 409);
+    assert.strictEqual(JSON.parse(blocked.text).code, CONTENT_BLOCKED);
+    assert.ok(!blocked.text.includes("%PDF"), "no bytes for the blocked device");
+
+    const staff = await rawGet(base, filePath, sessionHeaders(instructor));
+    assert.strictEqual(staff.status, 200);
+    assert.strictEqual(staff.text, FILE_BYTES);
+  }));
+});
+
+test("uploads: credentials in the URL are not accepted (they would leak through logs and Referer)", async () => {
+  const { a } = await studentWithTwoDevices();
+  const headers = sessionHeaders(a);
+  const qs = `?token=${encodeURIComponent(headers.authorization.slice(7))}&deviceKey=${encodeURIComponent(a.deviceKey)}`;
+  await withUploadFile("attachments", (filePath) => withServer(async (base) => {
+    const viaQuery = await rawGet(base, `${filePath}${qs}`);
+    assert.strictEqual(viaQuery.status, 401);
+    assert.ok(!viaQuery.text.includes("%PDF"));
+    // The API's own routes do not take them either.
+    const apiViaQuery = await rawGet(base, `/contents/video-1${qs}`);
+    assert.strictEqual(apiViaQuery.status, 401);
+    assert.strictEqual(JSON.parse(apiViaQuery.text).code, "AUTH_REQUIRED");
+  }));
+});
+
+test("uploads: public images (avatars, thumbnails) need no session and are not gated", async () => {
+  const { contentId, a, b } = await studentWithTwoDevices();
+  await playbackService.startPlayback(await requestUser(a), contentId);
+  for (const sub of ["avatars", "thumbnails"]) {
+    await withUploadFile(sub, (filePath) => withServer(async (base) => {
+      const anonymous = await rawGet(base, filePath);
+      assert.strictEqual(anonymous.status, 200, sub);
+      const blockedDevice = await rawGet(base, filePath, sessionHeaders(b));
+      assert.strictEqual(blockedDevice.status, 200, `${sub} is not course content`);
+    }));
+  }
 });

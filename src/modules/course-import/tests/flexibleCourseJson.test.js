@@ -179,8 +179,40 @@ test("errors name the exact path in the user's own keys, and only for what is ac
     'modules[0].content[0].type "HOLOGRAM" is not a supported content type. Use one of: VIDEO, DOCUMENT, TEXT, LINK, PRESENTATION, IMAGE, PDF, FILE, EXTERNAL_LINK, HTML, CODE, ASSIGNMENT, CODING_EXERCISE, SCORM, INTERACTIVE_LAB, AUDIO, EMBED, SLIDE.',
     'modules[0].lessons[0].quiz.quizTag "MIDTERM" is not supported. Use one of: SELF_TEST, FINAL, LESSON_ASSESSMENT, MODULE_ASSESSMENT, COURSE_ASSESSMENT.',
     'modules[0].lessons[0].quiz.questions[0]: "correctAnswer" "C" does not match any option.',
-    'modules[0].lessons[0].assignment.dueDate is required — the LMS needs a due date for every assignment (ISO 8601, e.g. "2026-11-15T23:59:00.000Z").',
   ]);
+  // Assignment.dueDate is optional: a missing one is a warning, not an error.
+  assert.ok(result.warnings.includes('modules[0].lessons[0].assignment ("No due date") has no dueDate; it is imported without a due date.'));
+});
+
+test("an assignment's empty dueDate (the draft Composer's cleared field) means no due date", () => {
+  const result = parseCourseJson({
+    course: { title: "C" },
+    assignment: { title: "Cleared date", dueDate: "", startDate: "" },
+  });
+  assert.equal(result.isValid, true, result.errors.join("; "));
+  assert.equal(result.canonical.assignments[0].dueDate, undefined);
+});
+
+test("an ASSIGNMENT content item is imported as an assignment at its level, never as unlinked content", () => {
+  const result = parseCourseJson({
+    course: { title: "C" },
+    modules: [
+      {
+        title: "M",
+        content: [
+          { type: "HTML", title: "Reading", htmlContent: "<p>Read</p>" },
+          { type: "ASSIGNMENT", title: "Worksheet", htmlContent: "<p>Solve</p>", fileUrl: "https://x.test/files/sheet.pdf" },
+        ],
+      },
+    ],
+  });
+  assert.equal(result.isValid, true, result.errors.join("; "));
+  const mod = result.canonical.modules[0];
+  assert.deepEqual(mod.contents.map((c) => c.type), ["HTML"]);
+  assert.equal(mod.assignments.length, 1);
+  assert.equal(mod.assignments[0].title, "Worksheet");
+  assert.equal(mod.assignments[0].description, "<p>Solve</p>");
+  assert.deepEqual(mod.assignments[0].attachments, [{ url: "https://x.test/files/sheet.pdf", name: "sheet.pdf", type: null }]);
 });
 
 test("answer keys match options the way the grader compares them (trimmed, case-insensitive)", () => {

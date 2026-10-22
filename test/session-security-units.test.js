@@ -6,7 +6,13 @@
  *
  * The database-backed behaviour (atomic single session, second-device
  * rejection, lease races, expiry) is in session-playback.integration.test.js.
+ *
+ * DATABASE_URL is pointed at a closed local port BEFORE anything loads, so a
+ * missed stub fails fast instead of reaching a real (shared) database.
  */
+process.env.DATABASE_URL = "postgresql://mock:mock@127.0.0.1:1/never";
+delete process.env.TEST_DATABASE_URL;
+
 const test = require("node:test");
 const assert = require("node:assert");
 const crypto = require("crypto");
@@ -200,6 +206,10 @@ const runMiddleware = async (middleware, req) => {
   });
   return { res, nextCalled, nextError };
 };
+
+// Nobody here is an evaluator account: verifyToken also consults
+// utils/evaluatorAccess after the session check.
+require("../src/config/database").evaluatorAccess.findUnique = async () => null;
 
 const withValidateAccess = async (impl, fn) => {
   const original = sessionService.validateAccess;

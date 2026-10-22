@@ -7,6 +7,7 @@ const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
 const { importUpload } = require("../../middleware/upload.middleware");
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 const {
   createQuestionSchema,
   updateQuestionSchema,
@@ -27,7 +28,7 @@ const upload = multer({
 // =========================
 
 // GET /questions - Paginated search and filter repository questions
-router.get("/", verifyToken, controller.getQuestions);
+router.get("/", verifyToken, requireContentAccess, controller.getQuestions);
 
 // POST /questions/upload - Bulk file upload (Excel, CSV, JSON)
 router.post(
@@ -39,10 +40,10 @@ router.post(
 );
 
 // GET /questions/question/:questionId - Single question details & quiz usage
-router.get("/question/:questionId", verifyToken, controller.getQuestionById);
+router.get("/question/:questionId", verifyToken, requireContentAccess, controller.getQuestionById);
 
 // GET /questions/quiz/:quizId - Questions by Quiz ID
-router.get("/quiz/:quizId", verifyToken, controller.getQuestionsByQuizId);
+router.get("/quiz/:quizId", verifyToken, requireContentAccess, controller.getQuestionsByQuizId);
 
 // POST /questions - Manual single question creation
 router.post(
@@ -105,6 +106,6 @@ router.delete(
 );
 
 // Fallback GET /questions/:quizId
-router.get("/:quizId", verifyToken, controller.getQuestionsByQuizId);
+router.get("/:quizId", verifyToken, requireContentAccess, controller.getQuestionsByQuizId);
 
 module.exports = router;

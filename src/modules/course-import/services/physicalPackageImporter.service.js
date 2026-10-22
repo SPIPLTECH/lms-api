@@ -301,24 +301,19 @@ const readQuizFile = async (filePath, label, errors) => {
 
 const readAssignmentFile = (filePath, label, errors) => {
   const fallbackTitle = path.basename(filePath, path.extname(filePath));
-  const { data, body, hasBlock, malformed } = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
+  const { data: parsed, body, hasBlock, malformed } = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
+  // Frontmatter is optional: Assignment.dueDate is nullable, and the title
+  // falls back to the file name.
+  const data = hasBlock ? parsed : {};
 
-  if (!hasBlock) {
-    errors.push(`${label}: assignment is missing its --- frontmatter block (dueDate is required).`);
-    return null;
-  }
-  if (malformed) {
+  if (hasBlock && malformed) {
     errors.push(`${label}: assignment frontmatter is malformed; expected flat "key: value" lines.`);
     return null;
   }
 
   const dueRaw = String(data.dueDate || "").trim();
-  if (!dueRaw) {
-    errors.push(`${label}: assignment frontmatter must include dueDate.`);
-    return null;
-  }
-  const dueDate = new Date(dueRaw);
-  if (Number.isNaN(dueDate.getTime())) {
+  const dueDate = dueRaw ? new Date(dueRaw) : null;
+  if (dueDate && Number.isNaN(dueDate.getTime())) {
     errors.push(`${label}: dueDate "${dueRaw}" is not a valid date.`);
     return null;
   }
@@ -337,7 +332,7 @@ const readAssignmentFile = (filePath, label, errors) => {
   return {
     title: String(data.title || "").trim() || fallbackTitle,
     description: body.trim() || null,
-    dueDate: dueDate.toISOString(),
+    dueDate: dueDate ? dueDate.toISOString() : null,
     marks: numeric("marks"),
     estimatedTime: numeric("estimatedTime"),
     totalQuestions: numeric("totalQuestions"),
@@ -436,7 +431,11 @@ const readContentFolder = (dir, label, errors, registerAsset) => {
     }
 
     const declaredType = String(data.type || "").trim().toUpperCase();
-    if (declaredType && !VALID_CONTENT_TYPES.has(declaredType)) {
+    if (declaredType === "ASSIGNMENT") {
+      // Content(type=ASSIGNMENT) must point at an Assignment row, which only
+      // the assignment folders create.
+      errors.push(`${fileLabel}: assignments go in an "${DIR.TOPIC_ASSIGNMENT}" / "${DIR.DIRECT_ASSIGNMENT}" folder, not in content.`);
+    } else if (declaredType && !VALID_CONTENT_TYPES.has(declaredType)) {
       errors.push(`${fileLabel}: type "${data.type}" is not a supported content type.`);
     }
 
@@ -445,7 +444,7 @@ const readContentFolder = (dir, label, errors, registerAsset) => {
 
     definitions.push({
       kind: "text",
-      type: declaredType && VALID_CONTENT_TYPES.has(declaredType)
+      type: declaredType && declaredType !== "ASSIGNMENT" && VALID_CONTENT_TYPES.has(declaredType)
         ? declaredType
         : extension === ".txt" ? "TEXT" : "HTML",
       title: String(data.title || "").trim() || path.basename(file, extension),

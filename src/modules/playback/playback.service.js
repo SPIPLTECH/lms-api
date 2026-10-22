@@ -114,10 +114,19 @@ const claimOnce = ({ userId, sessionId, deviceId, contentId }, now) =>
  * issues the media descriptor.
  */
 async function startPlayback(user, contentId) {
-  const content = await prisma.content.findUnique({ where: { id: contentId }, include: COURSE_ID_INCLUDE });
+  let content = await prisma.content.findUnique({ where: { id: contentId }, include: COURSE_ID_INCLUDE });
+  if (!content) {
+    content = await prisma.content.findFirst({
+      where: {
+        OR: [
+          { quizId: contentId },
+          { assignmentId: contentId },
+        ],
+      },
+      include: COURSE_ID_INCLUDE,
+    });
+  }
   if (!content) throw authError("MEDIA_UNAVAILABLE", "Content not found.");
-  if (content.type !== "VIDEO") throw authError("CONTENT_NOT_PLAYABLE");
-  if (!sourceOf(content)) throw authError("MEDIA_UNAVAILABLE");
 
   await assertMayPlay(user, content);
 
@@ -126,7 +135,7 @@ async function startPlayback(user, contentId) {
   if (!requiresPlaybackLease(user.role)) {
     return {
       leaseId: null,
-      contentId,
+      contentId: content.id,
       expiresAt: null,
       heartbeatIntervalSeconds: null,
       leaseRequired: false,
@@ -134,8 +143,8 @@ async function startPlayback(user, contentId) {
     };
   }
 
-  const claim = { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, contentId };
-  const audit = { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, contentId };
+  const claim = { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, contentId: content.id };
+  const audit = { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, contentId: content.id };
 
   let result;
   for (let attempt = 0; ; attempt += 1) {
@@ -159,11 +168,13 @@ async function startPlayback(user, contentId) {
   }
   await recordAuditEvent({ ...audit, eventType: AUDIT_EVENTS.PLAYBACK_STARTED, metadata: result.switched ? { switched: true } : undefined });
 
-  const media = buildMediaDescriptor(content, result.lease, { maxAgeSeconds: MEDIA_URL_MAX_AGE_SECONDS });
+  const media = sourceOf(content)
+    ? buildMediaDescriptor(content, result.lease, { maxAgeSeconds: MEDIA_URL_MAX_AGE_SECONDS })
+    : null;
 
   return {
     leaseId: result.lease.id,
-    contentId,
+    contentId: content.id,
     expiresAt: result.lease.expiresAt,
     heartbeatIntervalSeconds: PLAYBACK_HEARTBEAT_SECONDS,
     leaseRequired: true,
@@ -317,7 +328,7 @@ async function authorizeMedia(token) {
         where: { id: claims.contentId },
         select: { id: true, type: true, videoUrl: true, fileUrl: true, externalUrl: true },
       });
-  if (!content || content.type !== "VIDEO") throw authError("MEDIA_UNAVAILABLE");
+  if (!content) throw authError("MEDIA_UNAVAILABLE");
 
   const source = classifySource(sourceOf(content));
   if (source.kind !== "local" && source.kind !== "blob") throw authError("MEDIA_UNAVAILABLE");

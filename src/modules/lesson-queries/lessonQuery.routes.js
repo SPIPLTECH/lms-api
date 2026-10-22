@@ -6,6 +6,7 @@ const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
 const verifyLessonOwnership = require("../../middleware/lessonOwnership.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 const {
   createLessonQuerySchema,
   replyLessonQuerySchema,
@@ -27,17 +28,22 @@ router.get(
   controller.getMyQueries
 );
 
+// Student reads their own questions — course-content exposure; gated while
+// another device of the same account holds the playback lease.
 router.get(
   "/my-questions",
   verifyToken,
   checkRole(["STUDENT"]),
+  requireContentAccess,
   controller.getMyQuestions
 );
 
+// Student submits a lesson query while on a lesson — course-content action.
 router.post(
   "/",
   verifyToken,
   checkRole(["STUDENT"]),
+  requireContentAccess,
   validate(createLessonQuerySchema),
   controller.createQuery
 );

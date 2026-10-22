@@ -55,13 +55,16 @@ router.post(
 router.use(verifyToken);
 router.use(checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]));
 
+// Creating and listing conversations exposes course context and conversation
+// history — gated while another device holds the playback lease.
 router.post(
   "/conversations",
+  requireContentAccess,
   validate(createConversationSchema, "body"),
   controller.createConversation
 );
 
-router.get("/conversations", controller.listConversations);
+router.get("/conversations", requireContentAccess, controller.listConversations);
 
 router.get(
   "/conversations/:conversationId/messages",
@@ -79,8 +82,11 @@ router.post(
   controller.streamConversationMessage
 );
 
+// Updating and deleting a conversation modifies course-learning state;
+// gated while another device holds the playback lease.
 router.patch(
   "/conversations/:conversationId",
+  requireContentAccess,
   validate(conversationIdParamSchema, "params"),
   validate(updateConversationSchema, "body"),
   controller.updateConversation
@@ -88,6 +94,7 @@ router.patch(
 
 router.delete(
   "/conversations/:conversationId",
+  requireContentAccess,
   validate(conversationIdParamSchema, "params"),
   controller.deleteConversation
 );

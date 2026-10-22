@@ -301,12 +301,18 @@ const changePassword = async (
       await authService.changePassword(
         req.user.id,
         currentPassword,
-        newPassword
+        newPassword,
+        { sessionId: req.user.sessionId }
       );
 
+    // The account's other sessions are now signed out; this one keeps its
+    // current credentials, so no new tokens are returned.
     res.json({
       success: true,
-      message: result.message
+      message: result.message,
+      data: {
+        otherSessionsSignedOut: result.otherSessionsSignedOut
+      }
     });
   } catch (error) {
     next(error);

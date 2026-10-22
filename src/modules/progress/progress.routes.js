@@ -51,8 +51,12 @@ router.get('/learning-path', requireContentAccess, progressController.getLearnin
 // order) the player, the Course Map and resume all read.
 router.get('/learning-sequence', requireContentAccess, progressController.getLearningSequence);
 
-router.get('/courses/:courseId', progressController.getCourseProgress);
+// Per-course progress summary — course content; gated while another device
+// holds the playback lease.
+router.get('/courses/:courseId', requireContentAccess, progressController.getCourseProgress);
 
-router.get('/', progressController.getOverallProgress);
+// Overall progress across all enrolled courses — exposes enrolled-course
+// content; gated while another device holds the playback lease.
+router.get('/', requireContentAccess, progressController.getOverallProgress);
 
 module.exports = router;

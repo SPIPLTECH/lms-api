@@ -10,6 +10,7 @@ router.get(
   "/",
   verifyToken,
   checkRole(["STUDENT"]),
+  requireContentAccess,
   studentStateController.getStudentState
 );
 

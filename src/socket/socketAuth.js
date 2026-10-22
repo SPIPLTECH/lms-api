@@ -23,6 +23,8 @@ const socketAuth = async (socket, next) => {
             process.env.JWT_SECRET
         );
 
+        // The session row is the authority (it also ends when the password
+        // changes or is reset — session.service revokes it).
         if (!decoded.sid) {
             return next(new Error("Invalid token."));
         }

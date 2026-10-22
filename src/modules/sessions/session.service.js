@@ -47,6 +47,7 @@ const END_REASONS = {
   ADMIN_REVOKE: "ADMIN_REVOKE",
   ACCOUNT_STATUS: "ACCOUNT_STATUS",
   PASSWORD_RESET: "PASSWORD_RESET",
+  PASSWORD_CHANGED: "PASSWORD_CHANGED",
   ROLE_CHANGED: "ROLE_CHANGED",
   REPLACED_ON_DEVICE: "REPLACED_ON_DEVICE",
 };
@@ -473,6 +474,23 @@ async function revokeUserSessions(userId, reason = END_REASONS.ACCOUNT_STATUS, c
 }
 
 /**
+ * Revokes every ACTIVE session of a user except `keepSessionId` (the caller's
+ * own), with its playback lease — used when the password is changed while
+ * signed in: the other devices are signed out, this one stays.
+ */
+async function revokeOtherSessions(userId, keepSessionId, reason = END_REASONS.PASSWORD_CHANGED) {
+  const where = keepSessionId ? { userId, id: { not: keepSessionId } } : { userId };
+  const ended = await prisma.$transaction((tx) =>
+    endSessionsWhere(where, { status: STATUS.REVOKED, reason, leaseStatus: "REVOKED" }, tx)
+  );
+  if (ended.length > 0) {
+    await recordAuditEvent({ userId, sessionId: keepSessionId, eventType: AUDIT_EVENTS.SESSION_REVOKED, reasonCode: reason, metadata: { sessions: ended.length } });
+    disconnectSessionSockets(ended);
+  }
+  return ended;
+}
+
+/**
  * Changes an account's status; any status other than ACTIVE revokes the
  * account's session and playback lease in the same transaction, so a
  * suspended/blocked/inactive user is out immediately, not at token expiry.
@@ -597,6 +615,7 @@ module.exports = {
   refreshSession,
   logout,
   revokeUserSessions,
+  revokeOtherSessions,
   setAccountStatus,
   adminRevokeSession,
   getCurrentSession,

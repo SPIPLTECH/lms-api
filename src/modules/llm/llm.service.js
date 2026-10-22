@@ -1,5 +1,6 @@
 const ollamaClient = require("./ollama.client");
 const geminiProvider = require("./geminiProvider");
+const openaiProvider = require("./openaiProvider");
 const llmConfig = require("./llm.config");
 
 const buildPromptWithContext = (prompt, context) => {
@@ -19,7 +20,22 @@ const nsToMs = (nanoseconds) =>
 // The provider-independent LLM Gateway. This is the only entry point the
 // rest of the application should ever call to reach an LLM.
 const generate = async ({ systemPrompt, prompt, context, think = false, size } = {}) => {
-  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) {
+  const selectedProvider = (process.env.LLM_PROVIDER || "").trim().toLowerCase();
+
+  // OpenAI is explicitly opt-in. If LLM_PROVIDER is not set, retain the
+  // existing Gemini-if-configured, otherwise-Ollama behavior.
+  if (selectedProvider === "openai") {
+    console.log("[LLM Gateway] Routing request to OpenAI Provider (openai SDK)...");
+    return openaiProvider.generate({ systemPrompt, prompt, context, size });
+  }
+
+  if (selectedProvider && !["gemini", "ollama"].includes(selectedProvider)) {
+    const err = new Error(`Unsupported LLM_PROVIDER: ${selectedProvider}`);
+    err.statusCode = 500;
+    throw err;
+  }
+
+  if (selectedProvider !== "ollama" && process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) {
     console.log("[LLM Gateway] Routing request to Gemini Provider (@google/genai)...");
     const geminiRes = await geminiProvider.generate({ systemPrompt, prompt, context, size });
     return {
