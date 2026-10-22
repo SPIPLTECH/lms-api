@@ -71,6 +71,17 @@ router.post(
   controller.importQuestionsFile
 );
 
+// POST /questions/import/preview - Parse an uploaded file and return its
+// questions for review in the composer's quiz editor. Writes nothing; the
+// chosen questions are saved with the quiz.
+router.post(
+  "/import/preview",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  importUpload.single("file"),
+  controller.previewImportFile
+);
+
 // POST /questions/:questionId/archive - Archive question
 router.post(
   "/:questionId/archive",

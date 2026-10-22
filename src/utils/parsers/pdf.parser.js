@@ -1,10 +1,21 @@
 const fs = require("fs");
-const pdf = require("pdf-parse");
+// pdf-parse v2 exports a PDFParse class (the v1 default-export function no
+// longer exists), the same API course-import's pdf.extractor uses.
+const { PDFParse } = require("pdf-parse");
+
+const pdfText = async (buffer) => {
+    const parser = new PDFParse({ data: new Uint8Array(buffer) });
+    try {
+        return { text: (await parser.getText()).text || "" };
+    } finally {
+        await parser.destroy();
+    }
+};
 const { normalizeQuestion } = require("../helpers/question.helper");
 
 const parsePDF = async (filePath) => {
     const buffer = fs.readFileSync(filePath);
-    const data = await pdf(buffer);
+    const data = await pdfText(buffer);
 
     const lines = data.text
         .split("\n")

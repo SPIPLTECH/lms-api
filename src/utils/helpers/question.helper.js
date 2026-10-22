@@ -93,12 +93,33 @@ const normalizeOptions = (row) => {
 // Full Option Text
 // =====================================
 
+// Compares answer text with option text the way people write answer keys:
+// ignoring case and repeated spaces.
+const answerKey = (value) => String(value).trim().replace(/\s+/g, " ").toLowerCase();
+
+const findOptionByText = (answerStr, options) => {
+    if (!Array.isArray(options)) return null;
+    const key = answerKey(answerStr);
+    const match = options.find((opt) => answerKey(optionDisplayText(opt)) === key);
+    return match === undefined ? null : optionDisplayText(match);
+};
+
+// "b", "(b)", "b)", "B.", "Option B", "option 2" — the letter/number forms an
+// answer key is written in, beyond the exact keys in answerMap below.
+const LETTER_ANSWER = /^(?:option\s*)?\(?([a-h])\)?\.?$/i;
+const NUMBER_ANSWER = /^(?:option\s*)?\(?([1-8])\)?\.?$/i;
+
 const normalizeSingleAnswer = (ans, options) => {
     if (ans === undefined || ans === null) return "";
     if (typeof ans === "boolean") return ans ? "True" : "False";
 
     const answerStr = String(ans).trim();
     if (!answerStr) return "";
+
+    // The option's own text wins over any letter/number reading: with
+    // options "3", "4", "5" an answer of "3" means "3", not the third option.
+    const byText = findOptionByText(answerStr, options);
+    if (byText !== null) return byText;
 
     const answerMap = {
         A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7,
@@ -115,6 +136,13 @@ const normalizeSingleAnswer = (ans, options) => {
             // display text either way.
             return optionDisplayText(options[idx]) || options[idx];
         }
+    }
+
+    const letter = answerStr.match(LETTER_ANSWER);
+    const number = answerStr.match(NUMBER_ANSWER);
+    const idx = letter ? letter[1].toUpperCase().charCodeAt(0) - 65 : number ? Number(number[1]) - 1 : -1;
+    if (idx >= 0 && Array.isArray(options) && options[idx] !== undefined) {
+        return optionDisplayText(options[idx]) || options[idx];
     }
 
     return answerStr;
@@ -135,9 +163,13 @@ const normalizeCorrectAnswer = (row, options) => {
         return raw.map((a) => normalizeSingleAnswer(a, options));
     }
 
-    // If string representing JSON array or comma/pipe separated values
+    // If string representing JSON array or comma/semicolon/pipe separated values
     if (typeof raw === "string" && raw.trim()) {
         const trimmed = raw.trim();
+        // An option whose own text contains a comma ("Paris, France") is one answer.
+        if (findOptionByText(trimmed, options) !== null) {
+            return normalizeSingleAnswer(trimmed, options);
+        }
         if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
             try {
                 const parsed = JSON.parse(trimmed);
@@ -154,6 +186,10 @@ const normalizeCorrectAnswer = (row, options) => {
         }
         if (trimmed.includes("|")) {
             const parts = trimmed.split("|").map((s) => s.trim()).filter(Boolean);
+            return parts.map((p) => normalizeSingleAnswer(p, options));
+        }
+        if (trimmed.includes(";")) {
+            const parts = trimmed.split(";").map((s) => s.trim()).filter(Boolean);
             return parts.map((p) => normalizeSingleAnswer(p, options));
         }
     }

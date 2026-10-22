@@ -1,5 +1,6 @@
 const questionService = require("./question.service");
 const questionRepositoryService = require("./services/questionRepository.service");
+const importService = require("./question.import.service");
 
 /** Creating a "single question" is repository-only unless a quizId was supplied — mirrors how bulkCreateQuestions/importQuestions already attach their inserted questions via the QuizQuestion join table, which this path was missing entirely. */
 const attachIfQuizProvided = async (question, quizId) => {
@@ -170,6 +171,29 @@ const importQuestionsFile = async (req, res, next) => {
 };
 
 // =========================
+// Preview a question file (writes nothing)
+// =========================
+const previewImportFile = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Choose a question file to import (CSV, Excel, Word, PDF, TXT or JSON).",
+      });
+    }
+
+    const result = await importService.previewFile(req.file);
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// =========================
 // Update Question
 // =========================
 const updateQuestion = async (req, res, next) => {
@@ -255,6 +279,7 @@ module.exports = {
   createQuestion,
   bulkCreateQuestions,
   importQuestionsFile,
+  previewImportFile,
   uploadQuestions,
   updateQuestion,
   deleteQuestion,
