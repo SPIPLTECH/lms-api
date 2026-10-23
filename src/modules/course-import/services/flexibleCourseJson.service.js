@@ -550,12 +550,12 @@ function parseCourseJson(input, { checkReferences: withReferences = true, checkA
   const settingsSource = isPlainObject(input.settings) ? input.settings : {};
   const settings = { ...settingsSource };
   // A setting written on the course itself (template) wins over a `settings` block.
-  for (const key of ["visibility", "certificatesEnabled", "discussionEnabled"]) {
+  for (const key of ["visibility", "certificatesEnabled", "discussionEnabled", "sequentialLearning"]) {
     if (isPresent(info[key])) settings[key] = info[key];
   }
   const settingsPath = (key) => (isPresent(info[key]) ? joinPath(infoKey || "", key) : `settings.${key}`);
   if (isPresent(settings.visibility)) settings.visibility = checkEnum(settings.visibility, VISIBILITIES, settingsPath("visibility"), report);
-  for (const key of ["certificatesEnabled", "discussionEnabled"]) {
+  for (const key of ["certificatesEnabled", "discussionEnabled", "sequentialLearning"]) {
     if (isPresent(settings[key]) && typeof settings[key] !== "boolean") report.errors.push(`${settingsPath(key)} must be true or false.`);
   }
 

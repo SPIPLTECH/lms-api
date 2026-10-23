@@ -64,15 +64,31 @@ async function loadSequenceBodies(hierarchy, { allBodies }) {
  * source of completion) turned into ordered, lock-stamped steps.
  *
  * `persist: false` for access checks, which must not write progress rows.
- * Evaluator accounts get every step open (no complete-to-unlock order).
+ * Every step is open (no complete-to-unlock order) for evaluator accounts and
+ * in a course whose instructor turned sequential learning off — which also
+ * keeps no progress (`progressTracked: false`, see isProgressTracked).
  */
 async function computeStudentSequence(studentId, courseId, { persist = false, allBodies = false } = {}) {
-  const [rollup, unlockAll] = await Promise.all([
+  const [rollup, isEvaluator, progressTracked] = await Promise.all([
     recomputeCourseProgress(studentId, courseId, null, { includeTree: true, persist }),
-    isEvaluatorStudent(studentId)
+    isEvaluatorStudent(studentId),
+    isProgressTracked(courseId)
   ]);
+  const unlockAll = isEvaluator || !progressTracked;
   const bodies = await loadSequenceBodies(rollup.hierarchy, { allBodies });
-  return { rollup, sequence: buildLearningSequence(rollup.hierarchy, { bodies, unlockAll }) };
+  return { rollup, progressTracked, sequence: buildLearningSequence(rollup.hierarchy, { bodies, unlockAll }) };
+}
+
+/**
+ * Progress is kept only in a course with sequential learning on. With it off
+ * every item is open from the start, so there is no order to follow and
+ * nothing to track: visits and completions are not recorded (the roll-up
+ * writes nothing either, see utils/progressRollup.js).
+ */
+async function isProgressTracked(courseId) {
+  if (!courseId) return true;
+  const course = await prisma.course.findUnique({ where: { id: courseId }, select: { sequentialLearning: true } });
+  return course?.sequentialLearning !== false;
 }
 
 /**
@@ -381,6 +397,26 @@ async function completeContent(studentId, contentId, completed = true, requestin
   }
   const courseIds = new Set(contentIdsByCourse.keys());
 
+  // Nothing is recorded in a course that keeps no progress (isProgressTracked).
+  for (const courseId of [...courseIds]) {
+    if (await isProgressTracked(courseId)) continue;
+    courseIds.delete(courseId);
+    contentIdsByCourse.delete(courseId);
+  }
+  const trackedContentIds = contents.filter((content) => {
+    const courseId = resolveCourseId(content);
+    return !courseId || courseIds.has(courseId);
+  }).map((content) => content.id);
+  if (trackedContentIds.length === 0) {
+    return {
+      contentId: contentIds.length === 1 ? contentIds[0] : contentIds,
+      studentId,
+      completed,
+      progressTracked: false,
+      courseProgress: null
+    };
+  }
+
   if (requestingUser) {
     await Promise.all([...courseIds].map((courseId) => assertCourseProgressAccess(requestingUser, studentId, courseId)));
 
@@ -397,7 +433,7 @@ async function completeContent(studentId, contentId, completed = true, requestin
     }
   }
 
-  await upsertContentCompletions(studentId, contentIds, completed, existingRows);
+  await upsertContentCompletions(studentId, trackedContentIds, completed, existingRows);
 
   // One rollup per distinct course (almost always exactly one — a merged
   // block's rows all come from the same lesson) instead of one per content id.
@@ -472,6 +508,10 @@ async function completeLesson(studentId, lessonId, completed = true, requestingU
   }
 
   const courseId = lesson.module.courseId;
+
+  if (!(await isProgressTracked(courseId))) {
+    return { lessonId, studentId, completed, progressTracked: false, courseProgress: null };
+  }
 
   if (requestingUser) {
     await assertCourseProgressAccess(requestingUser, studentId, courseId);
@@ -645,6 +685,11 @@ async function markVisited(studentId, params, visited = true, requestingUser = n
     await assertCourseProgressAccess(requestingUser, studentId, courseId);
   }
 
+  // A course that keeps no progress records no visits either.
+  if (courseId && !(await isProgressTracked(courseId))) {
+    return { entityType, entityId, studentId, visited, changed: false, progressTracked: false, courseProgress: null };
+  }
+
   // A Quiz/Assignment in the learning sequence is visited through its Content
   // row — ContentProgress is the sequence-level progress of every item.
   // Unwrapped ones (qualifying tests, practice quizzes) keep their own rows.
@@ -791,7 +836,7 @@ async function getStudentLearningPath(studentId, courseId) {
  * carry no material (`body: null`).
  */
 async function getStudentLearningSequence(studentId, courseId) {
-  const { rollup, sequence } = await computeStudentSequence(studentId, courseId, {
+  const { rollup, progressTracked, sequence } = await computeStudentSequence(studentId, courseId, {
     persist: true,
     allBodies: true
   });
@@ -799,12 +844,15 @@ async function getStudentLearningSequence(studentId, courseId) {
   return {
     courseId,
     title: rollup.hierarchy.title,
-    progress: {
-      progressPercent: rollup.progressPercent,
-      completedItems: rollup.completedItems,
-      totalItems: rollup.totalItems,
-      completed: rollup.completed
-    },
+    progressTracked,
+    progress: progressTracked
+      ? {
+          progressPercent: rollup.progressPercent,
+          completedItems: rollup.completedItems,
+          totalItems: rollup.totalItems,
+          completed: rollup.completed
+        }
+      : null,
     steps: sequence.steps,
     tree: sequence.tree,
     currentIndex: sequence.currentIndex,

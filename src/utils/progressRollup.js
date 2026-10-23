@@ -155,7 +155,7 @@ const earliest = (dates) => {
 async function computeCourseProgress(studentId, courseId, tx = null, options = {}) {
   const client = tx || prisma;
   const includeTree = options.includeTree === true;
-  const persist = options.persist !== false;
+  let persist = options.persist !== false;
 
   // 1. The live published hierarchy, every level with its own Content rows.
   const course = await client.course.findUnique({
@@ -164,6 +164,7 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       id: true,
       title: true,
       status: true,
+      sequentialLearning: true,
       contents: ownContents('course'),
       modules: {
         where: { isPublished: true },
@@ -221,6 +222,10 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
   if (!course) {
     throw new Error(`Course with ID ${courseId} not found`);
   }
+
+  // A course with sequential learning off keeps no progress: the roll-up is
+  // still computed for whoever asks, but nothing is written.
+  if (course.sequentialLearning === false) persist = false;
 
   // 2. Collect every reachable item and container id. Unpublished quiz/
   // assignment items are dropped from each container here, once.

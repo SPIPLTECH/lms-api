@@ -39,6 +39,8 @@ const getEnrollments = async (
           title: true,
           description: true,
           thumbnailUrl: true,
+          // false: the course keeps no progress, so the card shows none.
+          sequentialLearning: true,
           creator: { select: { name: true } },
           modules: {
             select: {

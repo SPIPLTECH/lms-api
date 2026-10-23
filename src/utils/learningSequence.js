@@ -30,8 +30,9 @@
  *   A lesson/topic the student qualified out of counts as complete (the
  *   roll-up marks its items complete).
  *
- *   `unlockAll` (evaluator accounts, see utils/evaluatorAccess) opens every
- *   step; completion, the current step and resume are tracked as usual.
+ *   `unlockAll` opens every step: for evaluator accounts (utils/evaluatorAccess),
+ *   whose completion, current step and resume are tracked as usual, and in
+ *   courses with Course.sequentialLearning off, which keep no progress at all.
  */
 
 const { completionHint } = require("./itemCompletion");

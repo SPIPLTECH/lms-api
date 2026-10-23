@@ -1237,6 +1237,7 @@ const duplicateCourse = async (courseId, instructorId) => {
         tags: source.tags,
         certificatesEnabled: source.certificatesEnabled,
         discussionEnabled: source.discussionEnabled,
+        sequentialLearning: source.sequentialLearning,
 
         estimatedLearningHours: source.estimatedLearningHours
       }

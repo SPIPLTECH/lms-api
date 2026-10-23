@@ -178,6 +178,10 @@ model Course {
   estimatedLearningHours Float?
   certificatesEnabled    Boolean          @default(false)
   discussionEnabled      Boolean          @default(true)
+  /// Students must finish each item before the next one opens
+  /// (utils/learningSequence.js). Off: every item is open from the start and
+  /// no progress is kept (progress.service isProgressTracked).
+  sequentialLearning     Boolean          @default(true)
   
   publishedAt            DateTime?
   creatorId              String

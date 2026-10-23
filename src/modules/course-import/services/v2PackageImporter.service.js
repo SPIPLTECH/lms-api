@@ -209,6 +209,7 @@ async function importV2Manifest(canonicalJson, instructorId) {
         tags: Array.isArray(metadata.tags) ? metadata.tags : [],
         certificatesEnabled: settings.certificatesEnabled ?? false,
         discussionEnabled: settings.discussionEnabled ?? true,
+        sequentialLearning: settings.sequentialLearning ?? true,
         estimatedLearningHours: metadata.estimatedLearningHours ?? null,
         creatorId: instructorId
       }
