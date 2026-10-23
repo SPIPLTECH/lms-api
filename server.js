@@ -66,4 +66,8 @@ server.listen(PORT, HOST, () => {
             );
         }
     }
+
+    // Assignment auto-evaluation: runs queued evaluations, including any left
+    // over from before a restart (EVALUATION_WORKER=off disables it here).
+    require("./src/modules/assignment-evaluation/evaluationQueue").startWorker();
 });

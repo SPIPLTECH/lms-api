@@ -47,6 +47,10 @@ model User {
   playbackLeases          PlaybackLease[]
   auditEvents             AuditEvent[]
   evaluatorAccess         EvaluatorAccess?
+  assignmentEvaluations   AssignmentEvaluation[]      @relation("AssignmentEvaluationCreatedBy")
+  evaluationSynonymGroups EvaluationSynonymGroup[]
+  evaluationJobs          AssignmentEvaluationJob[]
+  evaluationAudits        AssignmentEvaluationAudit[]
 
   @@index([role])
 }
@@ -942,6 +946,7 @@ model Assignment {
   concept        Concept?               @relation(fields: [conceptId], references: [id], onDelete: Cascade)
   submissions    AssignmentSubmission[]
   progresses     AssignmentProgress[]
+  rubric         AssignmentRubric?
   lessonQueries  LessonQuery[]
   content        Content?
 
@@ -975,6 +980,9 @@ model AssignmentSubmission {
 
   assignment Assignment     @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   student    StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  evaluations      AssignmentEvaluation[]
+  evaluationJob    AssignmentEvaluationJob?
+  evaluationAudits AssignmentEvaluationAudit[]
 
   @@unique([studentId, assignmentId])
   @@index([studentId])
@@ -1656,4 +1664,150 @@ model AuditEvent {
 
   @@index([userId, createdAt])
   @@index([eventType, createdAt])
+}
+// ─── Assignment auto-evaluation ───────────────────────────────────────────
+// Rule-based marking of written / PDF assignment answers
+// (src/modules/assignment-evaluation). Added by
+// scripts/add-assignment-evaluation.sql and
+// scripts/assignment-evaluation-2-review-workflow.sql (which also holds the
+// partial unique indexes and CHECK constraints Prisma cannot express);
+// never db push.
+
+/// Marking scheme for one assignment. Without one (or with enabled=false) the
+/// assignment is graded by hand exactly as before.
+model AssignmentRubric {
+  id             String                      @id @default(cuid())
+  assignmentId   String                      @unique
+  enabled        Boolean                     @default(true)
+  idealAnswer    String
+  /// Always equal to Assignment.marks (saving the scheme sets both).
+  maxMarks       Float
+  /// Marks are awarded in steps of 0.25, 0.5 or 1.
+  markStep       Float                       @default(0.5)
+  /// Used only when there are no criteria (an automatic rubric is built).
+  keywords       String[]                    @default([])
+  /// Assignment-specific synonym groups, e.g. [["co2", "carbon dioxide"]].
+  synonyms       Json                        @default("[]")
+  misconceptions String[]                    @default([])
+  /// No longer used: results are published only when an instructor approves
+  /// them. Kept (always false) so older branches keep working.
+  autoPublish    Boolean                     @default(false)
+  /// Bumped on every save; evaluations record the version they used.
+  version        Int                         @default(1)
+  createdAt      DateTime                    @default(now())
+  updatedAt      DateTime                    @updatedAt
+  assignment     Assignment                  @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  criteria       AssignmentRubricCriterion[]
+}
+
+model AssignmentRubricCriterion {
+  id             String           @id @default(cuid())
+  rubricId       String
+  position       Int
+  description    String
+  marks          Float
+  keywords       String[]         @default([])
+  phrases        String[]         @default([])
+  /// Statements that contradict this criterion: zero it and flag for review.
+  contradictions String[]         @default([])
+  minKeywords    Int?
+  rubric         AssignmentRubric @relation(fields: [rubricId], references: [id], onDelete: Cascade)
+
+  @@unique([rubricId, position])
+}
+
+/// Every evaluation of a submission is kept: automatic runs, re-evaluations
+/// and instructor decisions. Exactly one per submission has isCurrent = true
+/// (the latest proposal or decision) and at most one has isPublished = true
+/// (the instructor-approved result the student sees).
+model AssignmentEvaluation {
+  id                    String               @id @default(cuid())
+  submissionId          String
+  version               Int
+  isCurrent             Boolean              @default(true)
+  /// AUTO | INSTRUCTOR
+  source                String
+  engineName            String
+  engineVersion         String
+  marksAwarded          Float
+  maxMarks              Float
+  confidence            Float?
+  needsReview           Boolean
+  reviewReasons         String[]             @default([])
+  /// Criterion breakdown, evidence and flags (engine result).
+  result                Json
+  /// Student-facing feedback (structured).
+  feedback              Json
+  /// The text that was evaluated: typed answer and/or text read from the PDF.
+  inputText             String
+  /// Where the text came from: typed, PDF (method, pages, OCR confidence).
+  inputMeta             Json                 @default("{}")
+  overrideReason        String?
+  instructorComment     String?
+  createdById           String?
+  createdAt             DateTime             @default(now())
+  /// Marking-scheme version and submission version (its submittedAt) this
+  /// result was computed from.
+  rubricVersion         Int?
+  submissionSubmittedAt DateTime?
+  /// Only instructor decisions are published (CHECK constraint).
+  isPublished           Boolean              @default(false)
+  publishedAt           DateTime?
+  submission            AssignmentSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  createdBy             User?                @relation("AssignmentEvaluationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([submissionId, version])
+  @@index([submissionId, isCurrent])
+}
+
+/// Durable evaluation queue: one row per submission. QUEUED -> PROCESSING ->
+/// DONE, or back to QUEUED for a retry / a request that arrived mid-run
+/// (rerun), or FAILED after the last attempt.
+model AssignmentEvaluationJob {
+  id             String               @id @default(cuid())
+  submissionId   String               @unique
+  /// QUEUED | PROCESSING | DONE | FAILED
+  status         String               @default("QUEUED")
+  /// SUBMITTED | REEVALUATE | REOPEN | RUBRIC_CHANGED | EVALUATE_ALL
+  reason         String
+  /// The instructor explicitly reopened a graded submission.
+  allowFinalized Boolean              @default(false)
+  /// Requested again while running: run once more when done.
+  rerun          Boolean              @default(false)
+  attempts       Int                  @default(0)
+  runAfter       DateTime             @default(now())
+  lockedAt       DateTime?
+  lastError      String?
+  requestedById  String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @default(now()) @updatedAt
+  submission     AssignmentSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  requestedBy    User?                @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+
+  @@index([status, runAfter])
+}
+
+/// Who did what to a submission's evaluation, and when.
+model AssignmentEvaluationAudit {
+  id           String               @id @default(cuid())
+  submissionId String
+  evaluationId String?
+  action       String
+  actorId      String?
+  details      Json                 @default("{}")
+  createdAt    DateTime             @default(now())
+  submission   AssignmentSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  actor        User?                @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([submissionId, createdAt])
+}
+
+/// Synonyms shared by every assignment ("co2" = "carbon dioxide").
+model EvaluationSynonymGroup {
+  id          String   @id @default(cuid())
+  terms       String[]
+  note        String?
+  createdById String?
+  createdAt   DateTime @default(now())
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
 }

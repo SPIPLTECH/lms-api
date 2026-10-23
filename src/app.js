@@ -31,6 +31,7 @@ const noteRoutes = require("./modules/notes/note.routes");
 const bookmarkRoutes = require("./modules/bookmarks/bookmark.routes");
 const achievementRoutes = require("./modules/achievements/achievement.routes");
 const assignmentRoutes = require("./modules/assignments/assignment.routes");
+const assignmentEvaluationRoutes = require("./modules/assignment-evaluation/assignmentEvaluation.routes");
 const resultsRoutes = require("./modules/results/results.routes");
 const lessonQueryRoutes = require("./modules/lesson-queries/lessonQuery.routes");
 const discussionRoutes = require("./modules/discussions/discussion.routes");
@@ -164,6 +165,9 @@ app.use("/notes", noteRoutes);
 app.use("/bookmarks", bookmarkRoutes);
 app.use("/achievements", achievementRoutes);
 app.use("/assignments", assignmentRoutes);
+// Auto-evaluation: marking schemes and evaluations for each assignment.
+app.use("/assignments", assignmentEvaluationRoutes.assignmentRouter);
+app.use("/assignment-evaluation", assignmentEvaluationRoutes.synonymRouter);
 app.use("/results", resultsRoutes);
 app.use("/lesson-queries", lessonQueryRoutes);
 app.use("/discussions", discussionRoutes);
