@@ -16,11 +16,13 @@ const {
   updateConceptSchema,
   reorderConceptsSchema,
 } = require("./concept.validation");
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 
 router.get(
   "/",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   conceptController.getConcepts
 );
 
@@ -38,6 +40,7 @@ router.get(
   "/:conceptId",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   conceptController.getConceptById
 );
 

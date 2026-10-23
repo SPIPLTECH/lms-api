@@ -5,6 +5,7 @@ const controller = require("./learnerModel.controller");
 const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 const {
   initializeSchema,
   recordEvidenceSchema,
@@ -12,10 +13,16 @@ const {
   getDecisionSchema,
 } = require("./learnerModel.validation");
 
+// All student-accessible learner-model routes expose or mutate course-learning
+// state. While another device of the account holds the playback lease, these
+// routes are refused with 409 CONTENT_ACTIVE_ON_ANOTHER_DEVICE.
+// ADMIN and INSTRUCTOR are never gated (requireContentAccess is a no-op for them).
+
 router.get(
   "/",
   verifyToken,
   checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]),
+  requireContentAccess,
   controller.getLearnerState
 );
 
@@ -26,6 +33,7 @@ router.get(
   "/next-action",
   verifyToken,
   checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]),
+  requireContentAccess,
   controller.getNextAction
 );
 
@@ -37,6 +45,7 @@ router.get(
   "/recommendations",
   verifyToken,
   checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]),
+  requireContentAccess,
   controller.getRecommendations
 );
 
@@ -48,6 +57,7 @@ router.get(
   "/signals",
   verifyToken,
   checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]),
+  requireContentAccess,
   controller.getLearningSignals
 );
 
@@ -83,6 +93,7 @@ router.post(
   "/initialize",
   verifyToken,
   checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]),
+  requireContentAccess,
   validate(initializeSchema),
   controller.initializeLearnerState
 );
@@ -91,6 +102,7 @@ router.post(
   "/evidence",
   verifyToken,
   checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]),
+  requireContentAccess,
   validate(recordEvidenceSchema),
   controller.recordEvidence
 );
@@ -99,6 +111,7 @@ router.post(
   "/misconception",
   verifyToken,
   checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]),
+  requireContentAccess,
   validate(recordMisconceptionSchema),
   controller.recordMisconception
 );
@@ -107,6 +120,7 @@ router.post(
   "/decision",
   verifyToken,
   checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]),
+  requireContentAccess,
   validate(getDecisionSchema),
   controller.getPedagogicalDecision
 );

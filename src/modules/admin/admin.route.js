@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const adminController = require("./admin.controller");
+const sessionController = require("../sessions/session.controller");
 
 const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
@@ -49,6 +50,18 @@ router.patch(
 router.delete(
   "/users/:id",
   adminController.deleteUser
+);
+
+/* Session Management — explicit, audited; ordinary sign-in never ends
+   another device's session. */
+router.get(
+  "/users/:id/sessions",
+  sessionController.listUserSessions
+);
+
+router.post(
+  "/sessions/:id/revoke",
+  sessionController.revokeSession
 );
 
 /* Admin Management */

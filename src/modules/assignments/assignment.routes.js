@@ -7,6 +7,7 @@ const checkRole = require("../../middleware/role.middleware");
 const verifyAssignmentOwnership = require("../../middleware/assignmentOwnership.middleware");
 const verifyAssignmentParentOwnership = require("../../middleware/assignmentParentOwnership.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 const {
   createAssignmentSchema,
   updateAssignmentSchema,
@@ -14,10 +15,13 @@ const {
   gradeSubmissionSchema,
 } = require("./assignment.validation");
 
+// Assignment list is course content for students — gated while another device
+// holds the playback lease.
 router.get(
     "/",
     verifyToken,
     checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]),
+    requireContentAccess,
     controller.getAssignments
 );
 
@@ -25,6 +29,7 @@ router.get(
     "/:assignmentId",
     verifyToken,
     checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]),
+    requireContentAccess,
     controller.getAssignmentById
 );
 
@@ -78,6 +83,7 @@ router.post(
     "/:assignmentId/submit",
     verifyToken,
     checkRole(["STUDENT"]),
+    requireContentAccess,
     validate(submitAssignmentSchema),
     controller.submitAssignment
 );

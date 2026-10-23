@@ -12,6 +12,7 @@ const {
 } = require("../../middleware/rateLimit.middleware");
 
 const controller = require("./aiAssistant.controller");
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 const {
   guestMessageSchema,
   conversationMessageSchema,
@@ -38,6 +39,7 @@ const {
 router.post(
   "/guest/messages/stream",
   optionalToken,
+  requireContentAccess,
   aiAssistantGuestRateLimiter,
   validate(guestMessageSchema, "body"),
   controller.streamGuestMessage
@@ -53,30 +55,38 @@ router.post(
 router.use(verifyToken);
 router.use(checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]));
 
+// Creating and listing conversations exposes course context and conversation
+// history — gated while another device holds the playback lease.
 router.post(
   "/conversations",
+  requireContentAccess,
   validate(createConversationSchema, "body"),
   controller.createConversation
 );
 
-router.get("/conversations", controller.listConversations);
+router.get("/conversations", requireContentAccess, controller.listConversations);
 
 router.get(
   "/conversations/:conversationId/messages",
+  requireContentAccess,
   validate(conversationIdParamSchema, "params"),
   controller.getConversationMessages
 );
 
 router.post(
   "/conversations/:conversationId/messages/stream",
+  requireContentAccess,
   aiAssistantUserRateLimiter,
   validate(conversationIdParamSchema, "params"),
   validate(conversationMessageSchema, "body"),
   controller.streamConversationMessage
 );
 
+// Updating and deleting a conversation modifies course-learning state;
+// gated while another device holds the playback lease.
 router.patch(
   "/conversations/:conversationId",
+  requireContentAccess,
   validate(conversationIdParamSchema, "params"),
   validate(updateConversationSchema, "body"),
   controller.updateConversation
@@ -84,6 +94,7 @@ router.patch(
 
 router.delete(
   "/conversations/:conversationId",
+  requireContentAccess,
   validate(conversationIdParamSchema, "params"),
   controller.deleteConversation
 );

@@ -599,7 +599,9 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
 
       // Every quiz of the course, for counts and the instructor's quiz lists.
       quizzes: quizzesInclude(),
-      enrollments: true
+      // Students and guests (this route is public for published courses) get
+      // the enrollment rows' ids only — never other students' profile ids.
+      enrollments: isStudentOrGuest ? { select: { id: true } } : true
     }
   });
 

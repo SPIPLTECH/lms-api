@@ -18,6 +18,7 @@ const { optionalToken } = require(
 const checkRole = require(
   "../../middleware/role.middleware"
 );
+const { contentAccess } = require("../../middleware/contentAccess.middleware");
 
 const verifyCourseOwnership = require(
   "../../middleware/courseOwnership.middleware"
@@ -57,6 +58,8 @@ router.get(
 router.get(
   "/:courseId",
   optionalToken,
+  // The full tree is course content; ?include=meta (title, card data) is not.
+  contentAccess({ skip: (req) => req.query.include === "meta" }),
   controller.getCourseById
 );
 

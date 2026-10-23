@@ -32,6 +32,8 @@ const initializeSocket = (server) => {
 
         // Join user-specific notification room
         socket.join(`user_${socket.user.id}`);
+        // …and the session's own room, so ending the session closes it.
+        socket.join(`session_${socket.sessionId}`);
 
         registerPresenceEvents(io, socket);
         socket.on("disconnect", () => {
@@ -52,7 +54,21 @@ const getIO = () => {
     return io;
 };
 
+/**
+ * Closes the sockets of ended sessions (logout, expiry, revocation). Process-
+ * local: with several API instances and no Socket.io adapter, sockets on
+ * other instances stay open until their next reconnect, which then fails the
+ * session check.
+ */
+const disconnectSessions = (sessionIds = []) => {
+    if (!io) return;
+    for (const sessionId of sessionIds) {
+        io.in(`session_${sessionId}`).disconnectSockets(true);
+    }
+};
+
 module.exports = {
     initializeSocket,
     getIO,
+    disconnectSessions,
 };

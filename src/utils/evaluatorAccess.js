@@ -71,7 +71,7 @@ const loadAccess = async (userId) => {
       }
       return null;
     }
-    // Same policy as utils/sessionVersion: a database blip falls back to the
+    // A database blip falls back to the
     // last known row; with nothing cached, the caller's error handling decides.
     if (hit) return hit.access;
     throw error;

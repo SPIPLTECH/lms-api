@@ -7,14 +7,16 @@ const verifyToken = require(
   "../../middleware/auth.middleware"
 );
 
-const { authRateLimiter, passwordResetRateLimiter } = require("../../middleware/rateLimit.middleware");
+const { authRateLimiter, passwordResetRateLimiter, refreshRateLimiter } = require("../../middleware/rateLimit.middleware");
 
 const validate = require("../../middleware/joiValidation.middleware");
 const {
   registerSchema,
   loginSchema,
+  googleLoginSchema,
   verifyOtpSchema,
   forgotPasswordSchema,
+  verifyResetOtpSchema,
   resetPasswordSchema,
   changePasswordSchema,
   resendVerificationSchema,
@@ -35,6 +37,13 @@ router.post(
   authRateLimiter,
   validate(loginSchema),
   authController.login
+);
+
+router.post(
+  "/google",
+  authRateLimiter,
+  validate(googleLoginSchema),
+  authController.googleLogin
 );
 
 router.post(
@@ -59,6 +68,13 @@ router.post(
 );
 
 router.post(
+  "/verify-reset-otp",
+  authRateLimiter,
+  validate(verifyResetOtpSchema),
+  authController.verifyResetOtp
+);
+
+router.post(
   "/change-password",
   verifyToken,
   validate(changePasswordSchema),
@@ -74,6 +90,7 @@ router.post(
 
 router.post(
   "/refresh-token",
+  refreshRateLimiter,
   authController.refreshToken
 );
 
@@ -86,10 +103,12 @@ router.get(
   authController.profile
 );
 
+// No verifyToken: logging out must work with an expired access token or
+// with only the refresh credential left. The controller finds the session
+// from either and ends it; an unknown session is a no-op.
 router.post(
   "/logout",
-  verifyToken,
   authController.logout
 );
 
-module.exports = router;
+module.exports = router;

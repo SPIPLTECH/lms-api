@@ -28,11 +28,13 @@ const {
   updateLessonSchema,
   reorderLessonsSchema
 } = require("./lesson.validation");
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 
 router.get(
   "/",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   lessonController.getLessons
 );
 
@@ -40,12 +42,14 @@ router.get(
   "/:lessonId",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   lessonController.getLessonById
 );
 
 router.get(
   "/:lessonId/transcript",
   verifyToken,
+  requireContentAccess,
   lessonController.getLessonTranscript
 );
 

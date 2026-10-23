@@ -18,6 +18,7 @@ const db = {
   access: new Map(), // userId -> EvaluatorAccess row
   courses: new Map(), // id -> { id, status }
   enrollments: [], // { studentId, courseId }
+  sessions: new Map(), // id -> AuthSession row (+ device, user) for verifyToken
 };
 let idSeq = 0;
 const nextId = (prefix) => `${prefix}_${++idSeq}`;
@@ -47,6 +48,11 @@ const fakePrisma = {
       const user = [...db.users.values()].find((u) => u.studentProfile?.id === where.id);
       return user ? { id: where.id, userId: user.id } : null;
     },
+  },
+  // verifyToken checks the token's session on every request (session.service).
+  authSession: {
+    findUnique: async ({ where }) => db.sessions.get(where.id) || null,
+    updateMany: async () => ({ count: 1 }),
   },
   evaluatorAccess: {
     findUnique: async ({ where }) => {
@@ -110,7 +116,7 @@ const {
   isEvaluatorStudent,
 } = require("../src/utils/evaluatorAccess");
 const { buildLearningSequence } = require("../src/utils/learningSequence");
-const { passwordFingerprint } = require("../src/utils/sessionVersion");
+const { randomToken, sha256 } = require("../src/utils/sessionCrypto");
 const { verifyToken, optionalToken } = require("../src/middleware/auth.middleware");
 const evaluatorService = require("../src/modules/evaluators/evaluator.service");
 const feedbackSite = require("../src/modules/evaluators/feedbackSite.client");
@@ -141,7 +147,9 @@ const publishCourses = () => {
   db.courses.set(SECTION_B, { id: SECTION_B, status: "PUBLISHED" });
 };
 
-// A user with (optionally) an evaluator row, plus a valid access token.
+// A user with (optionally) an evaluator row, plus a valid access token for an
+// ACTIVE session bound to a device (the key is sent by runVerify).
+const deviceKeyFor = new Map(); // token -> device key
 const makeUser = ({ startsAt, feedbackCompletedAt = null, evaluator = true } = {}) => {
   const id = nextId("user");
   const password = `hash-${id}`;
@@ -151,12 +159,28 @@ const makeUser = ({ startsAt, feedbackCompletedAt = null, evaluator = true } = {
     const start = startsAt ?? new Date();
     db.access.set(id, { id: nextId("ea"), userId: id, startsAt: start, expiresAt: expiryFor(start), feedbackCompletedAt });
   }
-  const token = jwt.sign({ id, email: `${id}@example.com`, role: "STUDENT", pv: passwordFingerprint(password) }, process.env.JWT_ACCESS_SECRET);
+  const sid = nextId("session");
+  const deviceKey = randomToken(32);
+  const now = Date.now();
+  db.sessions.set(sid, {
+    id: sid,
+    userId: id,
+    deviceId: nextId("device"),
+    status: "ACTIVE",
+    lastSeenAt: new Date(now),
+    expiresAt: new Date(now + HOUR),
+    absoluteExpiry: new Date(now + 24 * HOUR),
+    device: { deviceKeyHash: sha256(deviceKey), revokedAt: null },
+    user: { status: "ACTIVE" },
+  });
+  const token = jwt.sign({ id, email: `${id}@example.com`, role: "STUDENT", sid }, process.env.JWT_ACCESS_SECRET);
+  deviceKeyFor.set(token, deviceKey);
   return { id, token, studentProfileId: studentProfile.id };
 };
 
 const runVerify = async (middleware, token, originalUrl) => {
-  const req = { headers: { authorization: `Bearer ${token}` }, originalUrl, path: originalUrl.split("?")[0] };
+  const headers = { authorization: `Bearer ${token}`, "x-device-key": deviceKeyFor.get(token) };
+  const req = { headers, get: (name) => headers[name.toLowerCase()], originalUrl, path: originalUrl.split("?")[0] };
   const res = {
     statusCode: 200,
     body: undefined,
@@ -253,7 +277,7 @@ test("registration input cannot choose a role or evaluator fields", () => {
     {
       name: "Eva Tester",
       email: "eva@example.com",
-      password: "longenough1",
+      password: "LongEnough1!",
       role: "ADMIN",
       expiresAt: "2099-01-01",
       feedbackCompletedAt: "2026-01-01",

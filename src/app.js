@@ -42,9 +42,21 @@ const fileRoutes = require("./modules/files/file.routes");
 const courseImportRoutes = require("./modules/course-import/routes");
 const aiAssistantRoutes = require("./modules/ai-assistant/aiAssistant.routes");
 const progressRoutes = require("./modules/progress/progress.routes");
+const sessionRoutes = require("./modules/sessions/session.routes");
+const deviceRoutes = require("./modules/devices/device.routes");
+const playbackRoutes = require("./modules/playback/playback.routes");
+const requestId = require("./middleware/requestId.middleware");
+const protectVideoSources = require("./middleware/mediaProtection.middleware");
+const stripResponseSecrets = require("./middleware/responseSecrets.middleware");
+const uploadsHandler = require("./middleware/uploads.middleware");
+const { redactLoggedUrl } = require("./utils/logRedaction");
 const evaluatorRoutes = require("./modules/evaluators/evaluator.routes");
 const app = express();
 app.disable('etag');
+
+// Correlation id first, so every response — including CORS rejections and
+// errors — can carry it.
+app.use(requestId);
 
 // Every API call from the frontend is cross-origin with an Authorization
 // header, so the browser preflights it. Without Access-Control-Max-Age that
@@ -79,6 +91,9 @@ app.use(
     crossOriginResourcePolicy: { policy: "cross-origin" },
   }),
 );
+// The request log must not record live signed media URLs: the token in
+// /playback/media/<token> is a bearer credential while its lease is active.
+morgan.token("url", (req) => redactLoggedUrl(req.originalUrl || req.url));
 app.use(morgan("dev"));
 
 app.use(express.json({
@@ -91,7 +106,20 @@ app.use(express.json({
   },
 }));
 app.use(express.urlencoded({ extended: true, limit: "100mb" }));
-app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
+// /uploads serves files (course content like PDFs, documents, audio, and public
+// assets like avatars and thumbnails). uploadsHandler allows public assets through
+// while strictly requiring authentication and enforcing the per-student playback-lease
+// rule on course content files.
+app.use("/uploads", uploadsHandler);
+
+// Students and guests never receive a VIDEO item's source in any JSON
+// response; they get it from POST /playback/start once they hold the lease.
+// See utils/mediaProtection.js.
+app.use(protectVideoSources);
+
+// No response, to any role, carries password hashes, reset codes or stored
+// credential hashes. See utils/responseSecrets.js.
+app.use(stripResponseSecrets);
 
 /*
 |--------------------------------------------------------------------------
@@ -151,6 +179,9 @@ app.use("/ai-assistant", aiAssistantRoutes);
 app.use("/course-import", courseImportRoutes);
 app.use("/api/ai", courseImportRoutes);
 app.use("/progress", progressRoutes);
+app.use("/sessions", sessionRoutes);
+app.use("/devices", deviceRoutes);
+app.use("/playback", playbackRoutes);
 // Temporary evaluator accounts — registration, access status, feedback check.
 app.use("/evaluators", evaluatorRoutes);
 app.use(

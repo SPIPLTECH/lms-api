@@ -33,6 +33,7 @@ const {
   reorderContentsSchema,
   swapSequenceOrderSchema
 } = require("./content.validation");
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 
 // File upload endpoint for DOCUMENT / PRESENTATION content
 router.post(
@@ -98,6 +99,7 @@ router.get(
   "/",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   controller.getContents
 );
 
@@ -105,6 +107,7 @@ router.get(
   "/:contentId",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   controller.getContentById
 );
 

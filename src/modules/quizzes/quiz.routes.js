@@ -6,6 +6,7 @@ const checkRole = require("../../middleware/role.middleware");
 const verifyQuizOwnership = require("../../middleware/quizOwnership.middleware");
 const verifyCourseOwnership = require("../../middleware/courseOwnership.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
+const requireContentAccess = require("../../middleware/contentAccess.middleware");
 const {
   createQuizSchema,
   updateQuizSchema,
@@ -24,25 +25,29 @@ router.get(
   "/",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   controller.getQuizzes
 );
 
 // The signed-in student's own quiz attempt history, one entry per quiz —
 // feeds the student Submissions page. Defined before GET /:quizId so the
 // literal segment isn't captured as a quiz id.
+// Gated: exposes which quizzes the student has attempted (course content).
 router.get(
   "/my-submissions",
   verifyToken,
   checkRole(["STUDENT"]),
+  requireContentAccess,
   controller.getMyQuizSubmissions
 );
 
-router.get("/:quizId/result", verifyToken, controller.getQuizResult);
+router.get("/:quizId/result", verifyToken, requireContentAccess, controller.getQuizResult);
 
 router.get(
   "/:quizId",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
+  requireContentAccess,
   controller.getQuizById
 );
 
@@ -75,14 +80,18 @@ router.delete(
 router.post(
   "/:quizId/submit",
   verifyToken,
+  requireContentAccess,
   validate(submitQuizSchema),
   controller.submitQuiz
 );
 
+// Self-generated assessment quiz: uses course concepts to produce questions —
+// exposes course content; gated while another device holds the playback lease.
 router.post(
   "/self-generate",
   verifyToken,
   checkRole(["STUDENT"]),
+  requireContentAccess,
   validate(generateSelfAssessmentQuizSchema),
   controller.generateSelfAssessmentQuiz
 );

@@ -65,7 +65,53 @@ const aiAssistantUserRateLimiter = rateLimit({
   }
 });
 
+// Session and playback endpoints. Keyed on the user (after verifyToken) so a
+// campus behind one NAT is not throttled as one client; the refresh endpoint
+// has no user yet and stays per IP. Budgets sit well above normal use: the
+// app refreshes about once per access-token lifetime, polls its session every
+// few minutes and starts playback once per video opened.
+const perUser = (prefix) => (req) => (req.user && req.user.id ? `${prefix}:${req.user.id}` : ipKeyGenerator(req));
+
+const refreshRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many session refresh attempts, please try again shortly." }
+});
+
+const sessionStatusRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: perUser("session"),
+  message: { success: false, message: "Too many session status requests, please try again shortly." }
+});
+
+const deviceRegisterRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: perUser("device"),
+  message: { success: false, message: "Too many device registration requests, please try again shortly." }
+});
+
+const playbackStartRateLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: perUser("playback"),
+  message: { success: false, message: "Too many playback requests, please try again shortly." }
+});
+
 module.exports = {
+  refreshRateLimiter,
+  sessionStatusRateLimiter,
+  deviceRegisterRateLimiter,
+  playbackStartRateLimiter,
   authRateLimiter,
   passwordResetRateLimiter,
   llmRateLimiter,

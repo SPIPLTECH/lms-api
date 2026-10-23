@@ -1,4 +1,5 @@
 const Joi = require("joi");
+const { passwordField } = require("./password.policy");
 
 /**
  * Auth Validation Schemas
@@ -21,11 +22,7 @@ const registerSchema = Joi.object({
     "any.required": "Email is required.",
   }),
 
-  password: Joi.string().min(8).max(128).required().messages({
-    "string.min": "Password must be at least 8 characters.",
-    "string.max": "Password must be at most 128 characters.",
-    "any.required": "Password is required.",
-  }),
+  password: passwordField("Password"),
 
   phoneNumber: Joi.string()
     .pattern(/^\+?[0-9]{7,15}$/)
@@ -47,6 +44,19 @@ const loginSchema = Joi.object({
   password: Joi.string().min(1).max(128).required().messages({
     "any.required": "Password is required.",
   }),
+
+  // This browser's current refresh credential, sent only to prove it already
+  // holds the account's session (same-device re-authentication).
+  currentRefreshToken: Joi.string().max(256).optional().allow(null, ""),
+});
+
+// Google sign-in: only Google's ID token. Profile fields are not accepted —
+// identity comes from verifying the token on the server.
+const googleLoginSchema = Joi.object({
+  credential: Joi.string().min(1).max(8192).required().messages({
+    "any.required": "Google credential is required.",
+  }),
+  currentRefreshToken: Joi.string().max(256).optional().allow(null, ""),
 });
 
 const verifyOtpSchema = Joi.object({
@@ -71,6 +81,22 @@ const forgotPasswordSchema = Joi.object({
   }),
 });
 
+// Step 1 of the reset flow: check the emailed OTP without consuming it.
+const verifyResetOtpSchema = Joi.object({
+  email: Joi.string().email().required().messages({
+    "string.email": "A valid email address is required.",
+    "any.required": "Email is required.",
+  }),
+
+  otp: Joi.string()
+    .pattern(/^[0-9]{6}$/)
+    .required()
+    .messages({
+      "string.pattern.base": "OTP must be a 6-digit number.",
+      "any.required": "OTP is required.",
+    }),
+});
+
 const resetPasswordSchema = Joi.object({
   email: Joi.string().email().required().messages({
     "string.email": "A valid email address is required.",
@@ -85,11 +111,7 @@ const resetPasswordSchema = Joi.object({
       "any.required": "OTP is required.",
     }),
 
-  newPassword: Joi.string().min(8).max(128).required().messages({
-    "string.min": "New password must be at least 8 characters.",
-    "string.max": "New password must be at most 128 characters.",
-    "any.required": "New password is required.",
-  }),
+  newPassword: passwordField("New password"),
 });
 
 const changePasswordSchema = Joi.object({
@@ -97,11 +119,11 @@ const changePasswordSchema = Joi.object({
     "any.required": "Current password is required.",
   }),
 
-  newPassword: Joi.string().min(8).max(128).required().messages({
-    "string.min": "New password must be at least 8 characters.",
-    "string.max": "New password must be at most 128 characters.",
-    "any.required": "New password is required.",
-  }),
+  newPassword: passwordField("New password")
+    .invalid(Joi.ref("currentPassword"))
+    .messages({
+      "any.invalid": "New password must be different from your current password.",
+    }),
 });
 
 const resendVerificationSchema = Joi.object({
@@ -114,8 +136,10 @@ const resendVerificationSchema = Joi.object({
 module.exports = {
   registerSchema,
   loginSchema,
+  googleLoginSchema,
   verifyOtpSchema,
   forgotPasswordSchema,
+  verifyResetOtpSchema,
   resetPasswordSchema,
   changePasswordSchema,
   resendVerificationSchema,
