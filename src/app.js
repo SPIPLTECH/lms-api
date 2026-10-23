@@ -54,6 +54,11 @@ const { redactLoggedUrl } = require("./utils/logRedaction");
 const evaluatorRoutes = require("./modules/evaluators/evaluator.routes");
 const app = express();
 app.disable('etag');
+// Render terminates TLS at its proxy and forwards with X-Forwarded-For. Trust
+// that one hop so req.ip is the client, not the proxy — otherwise every
+// request shares the proxy's IP and the rate limiters throttle the whole site
+// as one client.
+app.set('trust proxy', 1);
 
 // Correlation id first, so every response — including CORS rejections and
 // errors — can carry it.
