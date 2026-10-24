@@ -1128,9 +1128,112 @@ const trackCourseView = async (courseId, instructorId) => {
   }
 };
 
+// An assignment may hang off any of the six levels, and courseId is set only
+// on course-level rows, so the course is reached through whichever parent a
+// row has.
+const assignmentsOfCourse = (courseId) => [
+  { courseId },
+  { module: { courseId } },
+  { lesson: { module: { courseId } } },
+  { topic: { lesson: { module: { courseId } } } },
+  { subTopic: { topic: { lesson: { module: { courseId } } } } },
+  { concept: { subTopic: { topic: { lesson: { module: { courseId } } } } } },
+];
+
+const MARKETING_REVIEWS_LIMIT = 10;
+
+/**
+ * Public course summary for the marketing site: the course card fields, live
+ * counts and the latest reviews. Read straight from the course tables, so
+ * nothing is stored twice and no number goes stale. Only a PUBLISHED course
+ * that is not PRIVATE is returned; anything else is null (404). Counts cover
+ * published material only, as a student sees it; qualifying tests are not
+ * counted as quizzes.
+ */
+const getCourseMarketingInfo = async (courseId) => {
+  const [course, lessonsCount, assignmentsCount, ratings, reviews] = await Promise.all([
+    prisma.course.findFirst({
+      where: { id: courseId, status: "PUBLISHED", visibility: { not: "PRIVATE" } },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        thumbnailUrl: true,
+        level: true,
+        category: true,
+        language: true,
+        estimatedLearningHours: true,
+        certificatesEnabled: true,
+        creator: { select: { name: true } },
+        _count: {
+          select: {
+            modules: { where: { isPublished: true } },
+            enrollments: true,
+            quizzes: { where: { isPublished: true, quizTag: { not: "QUALIFYING" } } },
+          },
+        },
+      },
+    }),
+    prisma.lesson.count({
+      where: { isPublished: true, module: { courseId, isPublished: true } },
+    }),
+    prisma.assignment.count({
+      where: { isPublished: true, OR: assignmentsOfCourse(courseId) },
+    }),
+    prisma.review.aggregate({
+      where: { courseId },
+      _avg: { rating: true },
+      _count: { _all: true },
+    }),
+    prisma.review.findMany({
+      where: { courseId },
+      orderBy: { createdAt: "desc" },
+      take: MARKETING_REVIEWS_LIMIT,
+      select: {
+        id: true,
+        rating: true,
+        review: true,
+        createdAt: true,
+        student: { select: { user: { select: { name: true, avatar: true } } } },
+      },
+    }),
+  ]);
+
+  if (!course) return null;
+
+  return {
+    courseId: course.id,
+    courseName: course.title,
+    instructorName: course.creator?.name ?? null,
+    courseOverview: course.description,
+    thumbnailUrl: course.thumbnailUrl,
+    level: course.level,
+    category: course.category,
+    language: course.language,
+    durationHours: course.estimatedLearningHours,
+    certificateAvailable: course.certificatesEnabled,
+    totalModules: course._count.modules,
+    totalLessons: lessonsCount,
+    studentsEnrolled: course._count.enrollments,
+    avgRating: ratings._avg.rating ? parseFloat(ratings._avg.rating.toFixed(1)) : 0,
+    totalReviews: ratings._count._all,
+    interactiveQuizzes: course._count.quizzes,
+    assignedWorksheets: assignmentsCount,
+    studentReviews: reviews.map((r) => ({
+      reviewId: r.id,
+      rating: r.rating,
+      comment: r.review,
+      studentName: r.student?.user?.name ?? null,
+      studentAvatar: r.student?.user?.avatar ?? null,
+      createdAt: r.createdAt,
+    })),
+  };
+};
+
 module.exports = {
   getCourses,
   getCourseById,
+  getCourseMarketingInfo,
   createCourse,
   updateCourse,
   updateStatus,

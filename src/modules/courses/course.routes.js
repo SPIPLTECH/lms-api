@@ -55,6 +55,14 @@ router.get(
   controller.getCourseById
 );
 
+// Public, no token: the marketing site's course summary (card fields, live
+// counts, latest reviews). Only PUBLISHED, non-PRIVATE courses; the service
+// returns null (404) for anything else.
+router.get(
+  "/:courseId/marketing",
+  controller.getCourseMarketingInfo
+);
+
 router.post(
   "/",
   verifyToken,

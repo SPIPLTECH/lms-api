@@ -75,6 +75,26 @@ const getCourseById = async (
   }
 };
 
+const getCourseMarketingInfo = async (req, res, next) => {
+  try {
+    const info = await courseService.getCourseMarketingInfo(req.params.courseId);
+
+    if (!info) {
+      return res.status(404).json({
+        success: false,
+        message: "Course not found"
+      });
+    }
+
+    res.json({
+      success: true,
+      data: info
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const createCourse = async (
   req,
   res,
@@ -227,6 +247,7 @@ const trackCourseView = async (req, res, next) => {
 module.exports = {
   getCourses,
   getCourseById,
+  getCourseMarketingInfo,
   createCourse,
   updateCourse,
   updateStatus,
