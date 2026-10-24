@@ -248,7 +248,8 @@ test("the raw junction relation is not a back door to the answer key", async (t)
   // The sanitized set is still there, and still complete.
   assert.strictEqual(result.questions.length, 2);
   assert.strictEqual(result.questions[0].question, "Which gate outputs true only when both inputs are true?");
-  assert.deepStrictEqual(result.questions[0].options, ["AND", "OR"]);
+  // Shuffled for a student, so compared as a set.
+  assert.deepStrictEqual([...result.questions[0].options].sort(), ["AND", "OR"]);
 });
 
 test("an instructor still gets the raw relation the composer reads", async (t) => {

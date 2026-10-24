@@ -178,27 +178,52 @@ test("qualifying test — opening an EARLIER attempt still withholds the key", a
   assert.ok(!payloadHasKey(result));
 });
 
-test("an ordinary quiz always returns the full review", async (t) => {
-  for (const quizTag of ["SELF_TEST", "FINAL"]) {
-    const originals = {
-      quizFindUnique: prisma.quiz.findUnique,
-      attemptFindMany: prisma.quizAttempt.findMany,
-      submissionFindUnique: prisma.quizSubmission.findUnique
-    };
-    prisma.quiz.findUnique = async () => buildQuiz({ quizTag });
-    prisma.quizAttempt.findMany = async () => [attempt(1)];
-    prisma.quizSubmission.findUnique = async () => null;
-
-    const result = await quizService.getQuizResult("student-1", "quiz-1");
-
-    assert.strictEqual(result.answerKeyRevealed, true, `${quizTag} review is unchanged`);
-    assert.strictEqual(result.quiz.questions[0].correctAnswer, CORRECT);
-    assert.strictEqual(result.quiz.questions[0].explanation, EXPLANATION);
-
+// Runs getQuizResult against `quiz` with `attempts` as the student's log.
+async function resultFor(quiz, attempts) {
+  const originals = {
+    quizFindUnique: prisma.quiz.findUnique,
+    attemptFindMany: prisma.quizAttempt.findMany,
+    submissionFindUnique: prisma.quizSubmission.findUnique
+  };
+  prisma.quiz.findUnique = async () => quiz;
+  prisma.quizAttempt.findMany = async () => attempts;
+  prisma.quizSubmission.findUnique = async () => null;
+  try {
+    return await quizService.getQuizResult("student-1", "quiz-1");
+  } finally {
     prisma.quiz.findUnique = originals.quizFindUnique;
     prisma.quizAttempt.findMany = originals.attemptFindMany;
     prisma.quizSubmission.findUnique = originals.submissionFindUnique;
   }
+}
+
+test("a Self-Test always returns the full review — its key was shown during the attempt", async () => {
+  const result = await resultFor(buildQuiz({ quizTag: "SELF_TEST" }), [attempt(1)]);
+
+  assert.strictEqual(result.answerKeyRevealed, true);
+  assert.strictEqual(result.quiz.questions[0].correctAnswer, CORRECT);
+  assert.strictEqual(result.quiz.questions[0].explanation, EXPLANATION);
+});
+
+test("a Final withholds the key while a retake is still available, like a qualifying test", async () => {
+  // Failed attempt 1 of 3: reading the key here would hand attempt 2 a 100%.
+  const result = await resultFor(buildQuiz({ quizTag: "FINAL" }), [attempt(1)]);
+
+  assert.strictEqual(result.answerKeyRevealed, false);
+  assert.ok(!JSON.stringify(result).includes(EXPLANATION), "no explanation anywhere");
+  assert.ok(!("correctAnswer" in result.quiz.questions[0]));
+});
+
+test("a Final shows the key once the outcome is settled", async () => {
+  const passed = await resultFor(buildQuiz({ quizTag: "FINAL" }), [attempt(1, { passed: true, percentage: 100 })]);
+  assert.strictEqual(passed.answerKeyRevealed, true, "passed");
+  assert.strictEqual(passed.quiz.questions[0].correctAnswer, CORRECT);
+
+  // The default Final has one attempt, so it is settled the moment it is
+  // submitted and the result page reviews it exactly as before.
+  const single = await resultFor(buildQuiz({ quizTag: "FINAL", attempts: 1 }), [attempt(1)]);
+  assert.strictEqual(single.answerKeyRevealed, true, "out of attempts");
+  assert.strictEqual(single.quiz.questions[0].correctAnswer, CORRECT);
 });
 
 // ---------------------------------------------------------------------------

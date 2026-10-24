@@ -3,10 +3,12 @@
 // =====================================
 
 // A single option entry is either a plain string (legacy — never carries a
-// misconception tag) or a richer { optionText, isCorrect, misconceptionTag }
-// object. Coercing every entry via String(opt) — the old behavior — turns
-// an object option into the literal text "[object Object]", silently
-// destroying any authored tag. This preserves the object shape instead.
+// misconception tag) or a richer { optionText, isCorrect, misconceptionTag,
+// explanation } object. Coercing every entry via String(opt) — the old
+// behavior — turns an object option into the literal text "[object Object]",
+// silently destroying any authored tag. This preserves the object shape
+// instead. `explanation` is why that option is wrong, shown to a student on a
+// Self-Test once they check their answer.
 const normalizeOption = (opt) => {
     if (opt && typeof opt === "object" && !Array.isArray(opt)) {
         const optionText = String(opt.optionText ?? opt.text ?? "").trim();
@@ -18,6 +20,10 @@ const normalizeOption = (opt) => {
         }
         if (opt.misconceptionTag !== undefined && opt.misconceptionTag !== null && String(opt.misconceptionTag).trim() !== "") {
             normalized.misconceptionTag = String(opt.misconceptionTag).trim();
+        }
+        const explanation = opt.explanation !== undefined && opt.explanation !== null ? String(opt.explanation).trim() : "";
+        if (explanation) {
+            normalized.explanation = explanation;
         }
         return normalized;
     }
@@ -62,7 +68,9 @@ const normalizeOptions = (row) => {
         }
     }
 
-    // Case 3: optionA, optionB... or option1, option2...
+    // Case 3: optionA, optionB... or option1, option2... — each optionally
+    // paired with an optionA_explanation (why that option is wrong), which
+    // makes the option an object rather than a plain string.
     const options = [];
 
     const optionKeys = [
@@ -76,7 +84,10 @@ const normalizeOptions = (row) => {
             row[key] !== null &&
             String(row[key]).trim() !== ""
         ) {
-            options.push(String(row[key]).trim());
+            const optionText = String(row[key]).trim();
+            const reason = row[`${key}_explanation`];
+            const explanation = reason !== undefined && reason !== null ? String(reason).trim() : "";
+            options.push(explanation ? { optionText, explanation } : optionText);
         }
     });
 

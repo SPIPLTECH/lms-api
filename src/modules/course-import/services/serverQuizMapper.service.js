@@ -18,6 +18,14 @@ const isBackendGradable = (block) => {
   }
 };
 
+// An option may be a plain string or an { optionText, explanation, ... }
+// object; the answer key is always the option's text, which is what the
+// scorer compares a submitted answer against.
+const optionTextAt = (options, index) => {
+  const opt = options[index];
+  return opt && typeof opt === "object" ? String(opt.optionText ?? opt.text ?? "") : opt;
+};
+
 const mapAnswerToBackendQuestion = (block) => {
   if (!isBackendGradable(block)) return null;
 
@@ -26,9 +34,9 @@ const mapAnswerToBackendQuestion = (block) => {
 
   switch (block.answerType) {
     case "chooseOne":
-      return { questionType: "MCQ", correctAnswer: options[correctAnswer[0]] };
+      return { questionType: "MCQ", correctAnswer: optionTextAt(options, correctAnswer[0]) };
     case "chooseMultiple":
-      return { questionType: "MULTIPLE_CORRECT", correctAnswer: correctAnswer.map((i) => options[i]) };
+      return { questionType: "MULTIPLE_CORRECT", correctAnswer: correctAnswer.map((i) => optionTextAt(options, i)) };
     case "fill-in-the-blanks":
       return { questionType: "FILL_BLANK", correctAnswer: correctAnswer[0] };
     default:

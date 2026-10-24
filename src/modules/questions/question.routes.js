@@ -27,8 +27,14 @@ const upload = multer({
 // Question Repository Routes
 // =========================
 
+// The read routes below return whole Question rows — correctAnswer,
+// explanation, hint and option flags included — so they are for the people
+// who author questions. A student reads a quiz's questions only through
+// GET /quizzes/:quizId, which withholds the answer key.
+const AUTHORS = ["ADMIN", "INSTRUCTOR"];
+
 // GET /questions - Paginated search and filter repository questions
-router.get("/", verifyToken, requireContentAccess, controller.getQuestions);
+router.get("/", verifyToken, checkRole(AUTHORS), requireContentAccess, controller.getQuestions);
 
 // POST /questions/upload - Bulk file upload (Excel, CSV, JSON)
 router.post(
@@ -40,7 +46,7 @@ router.post(
 );
 
 // GET /questions/quiz/:quizId - Questions by Quiz ID
-router.get("/quiz/:quizId", verifyToken, requireContentAccess, controller.getQuestionsByQuizId);
+router.get("/quiz/:quizId", verifyToken, checkRole(AUTHORS), requireContentAccess, controller.getQuestionsByQuizId);
 
 // POST /questions - Manual single question creation
 router.post(
@@ -114,6 +120,6 @@ router.delete(
 );
 
 // Fallback GET /questions/:quizId
-router.get("/:quizId", verifyToken, requireContentAccess, controller.getQuestionsByQuizId);
+router.get("/:quizId", verifyToken, checkRole(AUTHORS), requireContentAccess, controller.getQuestionsByQuizId);
 
 module.exports = router;

@@ -72,6 +72,9 @@ const TYPE_NAMES = {
 };
 
 const optionText = (opt) => (opt && typeof opt === "object" ? String(opt.optionText ?? opt.text ?? "") : String(opt));
+// Why an option is wrong, or "" — index-aligned with `options` below, which the
+// composer's editor keeps as plain strings.
+const optionExplanation = (opt) => (opt && typeof opt === "object" && opt.explanation ? String(opt.explanation) : "");
 
 const toPreviewItem = (row, index) => {
     // CSVs written by hand often call the column "type".
@@ -99,6 +102,7 @@ const toPreviewItem = (row, index) => {
         question: q.question,
         questionType: questionType || q.questionType,
         options: (q.options || []).map(optionText),
+        optionExplanations: (q.options || []).map(optionExplanation),
         correctAnswer,
         explanation: q.explanation || "",
         marks: q.marks || 1,

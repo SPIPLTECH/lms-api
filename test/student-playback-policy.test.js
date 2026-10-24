@@ -819,8 +819,9 @@ const GATED_ROUTES = [
   ["GET", "/assignments"],
   ["GET", "/quizzes/my-submissions"],
   ["POST", "/quizzes/self-generate", {}],
-  ["GET", "/questions"],
-  ["GET", "/questions/quiz/q1"],
+  // GET /questions and /questions/quiz/:id are not here: they return whole
+  // answer keys and are instructor/admin only, so a student never reaches
+  // the lease gate on them (see self-test-answer-reveal.test.js).
   ["GET", "/notes"],
   ["GET", "/notes/n1"],
   ["POST", "/notes", {}],
