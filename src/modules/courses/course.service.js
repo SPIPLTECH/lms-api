@@ -2,9 +2,6 @@ const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
 const ApiError = require("../../utils/ApiError");
 const { buildLessonLockMap } = require("../../utils/dripAccess");
-// const verifyToken = require(
-//   "../../middleware/auth.middleware"
-// );
 
 /**
  * Batched stats block for the course card / workspace overview — one set of
