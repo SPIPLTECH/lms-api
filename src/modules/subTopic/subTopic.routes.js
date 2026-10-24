@@ -14,7 +14,6 @@ const validate = require("../../middleware/joiValidation.middleware");
 const {
   createSubTopicSchema,
   updateSubTopicSchema,
-  reorderSubTopicsSchema,
 } = require("./subTopic.validation");
 const requireContentAccess = require("../../middleware/contentAccess.middleware");
 
@@ -24,16 +23,6 @@ router.get(
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
   requireContentAccess,
   subTopicController.getSubTopics
-);
-
-// Must stay above GET /:subTopicId, which would otherwise capture "reorder".
-router.patch(
-  "/reorder",
-  verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  validate(reorderSubTopicsSchema),
-  verifyTopicOwnership.fromBody,
-  subTopicController.reorderSubTopics
 );
 
 router.get(

@@ -1,6 +1,6 @@
 const ApiError = require("../../utils/ApiError");
 const prisma = require("../../config/database");
-const { claimContainerOrder, releaseContainerOrder, moveContainers } = require("../contents/contentOrder.util");
+const { claimContainerOrder, releaseContainerOrder } = require("../contents/contentOrder.util");
 
 const getTopics = async (lessonId, role, userId) => {
   const where = {};
@@ -144,32 +144,10 @@ const deleteTopic = async (topicId) => {
   });
 };
 
-/**
- * Moves topics within their lesson's learning sequence, which they share
- * with the lesson's Content rows: each listed topic goes to its requested
- * position, everything else keeps its relative order, and the sequence stays
- * 1..n. A topic of another lesson is refused.
- */
-const reorderTopics = async (lessonId, topics) => {
-  const existing = await prisma.topic.findMany({
-    where: { lessonId },
-    select: { id: true }
-  });
-  const validIds = new Set(existing.map((row) => row.id));
-  if (!topics.every((row) => validIds.has(row.id))) {
-    throw new ApiError(403, "One or more topics do not belong to this lesson.");
-  }
-
-  return prisma.$transaction((tx) =>
-    moveContainers("topic", lessonId, topics.map(({ id, order }) => ({ id, order })), tx)
-  );
-};
-
 module.exports = {
   getTopics,
   getTopicById,
   createTopic,
   updateTopic,
   deleteTopic,
-  reorderTopics,
 };

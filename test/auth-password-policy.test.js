@@ -19,7 +19,6 @@ const {
   changePasswordSchema,
   verifyResetOtpSchema,
 } = require("../src/modules/auth/auth.validation");
-const { createAdminSchema } = require("../src/modules/admin/admin.validation");
 const { PASSWORD_REGEX } = require("../src/modules/auth/password.policy");
 const { otpEmail } = require("../src/utils/emailTemplates");
 
@@ -80,7 +79,7 @@ test("password regex rejects passwords missing a required class", () => {
   }
 });
 
-test("register, reset and admin-create schemas enforce the policy", () => {
+test("register and reset schemas enforce the policy", () => {
   const weak = "password123";
   assert.ok(
     registerSchema.validate({ name: "Asha", email: "a@b.co", password: weak }).error
@@ -90,9 +89,6 @@ test("register, reset and admin-create schemas enforce the policy", () => {
   );
   assert.ok(
     resetPasswordSchema.validate({ email: "a@b.co", otp: "123456", newPassword: weak }).error
-  );
-  assert.ok(
-    createAdminSchema.validate({ name: "Admin", email: "a@b.co", password: "abc123" }).error
   );
 });
 

@@ -17,7 +17,6 @@ const {
   guestMessageSchema,
   conversationMessageSchema,
   createConversationSchema,
-  updateConversationSchema,
   conversationIdParamSchema,
 } = require("./aiAssistant.validation");
 
@@ -80,23 +79,6 @@ router.post(
   validate(conversationIdParamSchema, "params"),
   validate(conversationMessageSchema, "body"),
   controller.streamConversationMessage
-);
-
-// Updating and deleting a conversation modifies course-learning state;
-// gated while another device holds the playback lease.
-router.patch(
-  "/conversations/:conversationId",
-  requireContentAccess,
-  validate(conversationIdParamSchema, "params"),
-  validate(updateConversationSchema, "body"),
-  controller.updateConversation
-);
-
-router.delete(
-  "/conversations/:conversationId",
-  requireContentAccess,
-  validate(conversationIdParamSchema, "params"),
-  controller.deleteConversation
 );
 
 module.exports = router;

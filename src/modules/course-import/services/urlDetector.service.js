@@ -18,14 +18,6 @@ const getVideoProvider = (url) => {
   return "external";
 };
 
-/** Scans free text for bare URLs and classifies each by likely content type. */
-const detectUrls = (text) => {
-  if (!text) return [];
-  const matches = text.match(URL_REGEX) || [];
-  const unique = [...new Set(matches)];
-  return unique.map((url) => ({ url, contentType: classifyUrl(url) }));
-};
-
 // Content types rich enough to deserve their own Composer block instead of
 // staying a plain inline hyperlink.
 const MEDIA_CONTENT_TYPES = new Set(["video", "image", "audio", "document"]);
@@ -94,4 +86,4 @@ const splitOnUrls = (text) => {
   return segments;
 };
 
-module.exports = { detectUrls, classifyUrl, getVideoProvider, splitOnUrls };
+module.exports = { classifyUrl, getVideoProvider, splitOnUrls };

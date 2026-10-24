@@ -1,5 +1,5 @@
 const prisma = require('../../config/database');
-const { recomputeCourseProgress, ensureProgressInitialized } = require('../../utils/progressRollup');
+const { recomputeCourseProgress } = require('../../utils/progressRollup');
 const { buildLearningPath, resolveNextItem } = require('../../utils/learningPath');
 const { buildLearningSequence, findStepForContent } = require('../../utils/learningSequence');
 const { getCourseQualifyingQuizzes } = require('../../utils/qualification');
@@ -860,115 +860,6 @@ async function getStudentLearningSequence(studentId, courseId) {
   };
 }
 
-/**
- * Retrieves progress overview across all enrolled courses for a student.
- */
-async function getStudentOverallProgress(studentId) {
-  const enrollments = await prisma.enrollment.findMany({
-    where: { studentId },
-    include: {
-      course: {
-        select: {
-          id: true,
-          title: true,
-          thumbnailUrl: true,
-          category: true,
-          level: true
-        }
-      }
-    }
-  });
-
-  const validEnrollments = enrollments.filter((enc) => enc.course);
-
-  const results = await Promise.all(
-    validEnrollments.map(async (enc) => {
-      const rollup = await recomputeCourseProgress(studentId, enc.courseId);
-      return {
-        courseId: enc.courseId,
-        courseTitle: enc.course.title,
-        thumbnailUrl: enc.course.thumbnailUrl,
-        category: enc.course.category,
-        level: enc.course.level,
-        progressPercent: rollup.progressPercent,
-        completed: rollup.completed,
-        completedAt: enc.completedAt,
-        lastAccessedAt: enc.lastAccessedAt,
-        enrolledAt: enc.enrolledAt,
-        totalItems: rollup.totalItems,
-        completedItems: rollup.completedItems
-      };
-    })
-  );
-
-  return results;
-}
-
-/**
- * Instructor Analytics — retrieves read-only progress analytics for a course.
- */
-async function getInstructorCourseProgress(courseId) {
-  const enrollments = await prisma.enrollment.findMany({
-    where: { courseId },
-    include: {
-      student: {
-        include: {
-          user: {
-            select: { name: true, email: true }
-          }
-        }
-      }
-    }
-  });
-
-  const totalStudents = enrollments.length;
-  let completedStudents = 0;
-  let inProgressStudents = 0;
-  let totalPercentSum = 0;
-
-  const studentList = [];
-
-  for (const enc of enrollments) {
-    // Read-only: an instructor viewing analytics must not write progress rows
-    // or stamp every student's lastAccessedAt with "now".
-    const rollup = await recomputeCourseProgress(enc.studentId, courseId, null, { persist: false });
-    const percent = rollup.progressPercent;
-    totalPercentSum += percent;
-
-    let status = 'Not Started';
-    if (rollup.completed) {
-      status = 'Completed';
-      completedStudents++;
-    } else if (percent > 0) {
-      status = 'In Progress';
-      inProgressStudents++;
-    }
-
-    studentList.push({
-      studentId: enc.studentId,
-      name: enc.student?.user?.name || 'Student',
-      email: enc.student?.user?.email || '',
-      progressPercent: percent,
-      completedItems: rollup.completedItems,
-      totalItems: rollup.totalItems,
-      status,
-      lastAccessedAt: enc.lastAccessedAt || enc.enrolledAt
-    });
-  }
-
-  const avgProgressPercent = totalStudents > 0 ? Math.round(totalPercentSum / totalStudents) : 0;
-
-  return {
-    overview: {
-      totalStudents,
-      completedStudents,
-      inProgressStudents,
-      avgProgressPercent
-    },
-    students: studentList
-  };
-}
-
 module.exports = {
   assertCourseProgressAccess,
   assertContentsAccessible,
@@ -982,7 +873,4 @@ module.exports = {
   getStudentLearningPath,
   getStudentLearningSequence,
   resolveNextItem,
-  getStudentOverallProgress,
-  getInstructorCourseProgress,
-  ensureProgressInitialized
 };

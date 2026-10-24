@@ -15,21 +15,7 @@ const updateSubTopicSchema = Joi.object({
   isPublished: Joi.boolean().optional(),
 });
 
-const reorderSubTopicsSchema = Joi.object({
-  topicId: Joi.string().required(),
-  subTopics: Joi.array()
-    .items(
-      Joi.object({
-        id: Joi.string().required(),
-        order: Joi.number().integer().min(0).required(),
-      })
-    )
-    .min(1)
-    .required(),
-});
-
 module.exports = {
   createSubTopicSchema,
   updateSubTopicSchema,
-  reorderSubTopicsSchema,
 };

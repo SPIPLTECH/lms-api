@@ -39,9 +39,6 @@ router.post(
   controller.uploadQuestions
 );
 
-// GET /questions/question/:questionId - Single question details & quiz usage
-router.get("/question/:questionId", verifyToken, requireContentAccess, controller.getQuestionById);
-
 // GET /questions/quiz/:quizId - Questions by Quiz ID
 router.get("/quiz/:quizId", verifyToken, requireContentAccess, controller.getQuestionsByQuizId);
 

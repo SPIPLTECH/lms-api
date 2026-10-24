@@ -78,4 +78,4 @@ function readableLength(text) {
   return (String(text || '').match(/[\p{L}\p{N}]/gu) || []).length;
 }
 
-module.exports = { cleanPageText, cleanPdfText, readableLength, PAGE_NUMBER_LINE };
+module.exports = { cleanPageText, cleanPdfText, readableLength, };

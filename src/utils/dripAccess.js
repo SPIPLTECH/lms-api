@@ -86,4 +86,4 @@ const buildLessonLockMap = async (courseId, studentId) => {
   return { lockMap, completedSet, qualifiedSet, lockedContentIds };
 };
 
-module.exports = { buildLessonLockMap, getPublishedLessonIds };
+module.exports = { buildLessonLockMap, };

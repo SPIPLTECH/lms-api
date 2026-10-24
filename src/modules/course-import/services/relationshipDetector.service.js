@@ -258,7 +258,5 @@ function detectRelationships(fileInputs = []) {
 
 module.exports = {
   normalizeToken,
-  buildSectionMembers,
-  buildFileMembers,
   detectRelationships
 };

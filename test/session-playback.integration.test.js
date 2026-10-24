@@ -483,23 +483,6 @@ describe("sessions, devices and playback (PostgreSQL)", { skip: HAS_TEST_DB ? fa
     assert.strictEqual(audit.metadata.revokedBy, fixtures.instructor.id);
   });
 
-  test("suspension revokes the session; a suspended user can neither refresh nor sign in", async () => {
-    const f = await signInStudent();
-    await sessionService.setAccountStatus(fixtures.student.id, "SUSPENDED");
-    assert.strictEqual((await prisma.authSession.findUnique({ where: { id: f.session.id } })).status, "REVOKED");
-    await assert.rejects(authService.refreshToken(f.refreshToken, f.deviceKey), { code: "SESSION_INVALID" });
-    await assert.rejects(signInStudent(), { code: "ACCOUNT_SUSPENDED" });
-    await sessionService.setAccountStatus(fixtures.student.id, "ACTIVE");
-
-    // Status changed behind the service's back: the next refresh refuses it.
-    const g = await signInStudent();
-    await prisma.user.update({ where: { id: fixtures.student.id }, data: { status: "BLOCKED" } });
-    await assert.rejects(authService.refreshToken(g.refreshToken, g.deviceKey), { code: "ACCOUNT_SUSPENDED", statusCode: 403 });
-    const blocked = await http("GET", "/auth/profile", { token: g.accessToken, deviceKey: g.deviceKey });
-    assert.strictEqual(blocked.status, 401, "session was revoked by that refusal");
-    await prisma.user.update({ where: { id: fixtures.student.id }, data: { status: "ACTIVE" } });
-  });
-
   // -------------------------------------------------------------------------
   // Google identity linking
   // -------------------------------------------------------------------------

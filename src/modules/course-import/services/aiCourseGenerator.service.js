@@ -1072,4 +1072,4 @@ ${context && Object.keys(context).length > 0 ? JSON.stringify(context, null, 2) 
   return parsedJson;
 };
 
-module.exports = { generateCourseFromPrompt, generateCourse, repairGeneratedCourse, resolveCourseTemplate };
+module.exports = { generateCourseFromPrompt, generateCourse, };

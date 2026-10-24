@@ -65,24 +65,10 @@ const deleteConcept = async (req, res, next) => {
   }
 };
 
-const reorderConcepts = async (req, res, next) => {
-  try {
-    const result = await conceptService.reorderConcepts(
-      req.body.subTopicId,
-      req.body.concepts
-    );
-
-    res.json(result);
-  } catch (error) {
-    next(error);
-  }
-};
-
 module.exports = {
   getConcepts,
   getConceptById,
   createConcept,
   updateConcept,
   deleteConcept,
-  reorderConcepts,
 };

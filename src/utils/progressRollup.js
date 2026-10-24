@@ -886,17 +886,7 @@ async function recomputeCourseProgress(studentId, courseId, tx = null, options =
   return runExclusive(`${studentId}:${courseId}`, () => computeCourseProgress(studentId, courseId, tx, options));
 }
 
-/**
- * Ensures progress is initialized and computed.
- */
-async function ensureProgressInitialized(studentId, courseId, tx = null) {
-  return recomputeCourseProgress(studentId, courseId, tx);
-}
-
 module.exports = {
-  OWN_ITEMS_ONLY,
-  isVisibleItem,
   recomputeCourseProgress,
-  ensureProgressInitialized,
   containerRowChanged
 };

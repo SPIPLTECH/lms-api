@@ -50,27 +50,13 @@ const createConversationSchema = Joi.object({
   courseId: id.optional().allow(null, ""),
 }).options({ stripUnknown: true });
 
-const updateConversationSchema = Joi.object({
-  title: Joi.string().trim().max(LIMITS.MAX_TITLE_CHARS).optional().allow("", null),
-  status: Joi.string().valid("ACTIVE", "ARCHIVED").optional(),
-})
-  .min(1)
-  .options({ stripUnknown: true });
-
 const conversationIdParamSchema = Joi.object({
   conversationId: id.required(),
 });
-
-const listConversationsQuerySchema = Joi.object({
-  courseId: id.optional().allow(null, ""),
-  status: Joi.string().valid("ACTIVE", "ARCHIVED").optional(),
-}).options({ stripUnknown: true });
 
 module.exports = {
   guestMessageSchema,
   conversationMessageSchema,
   createConversationSchema,
-  updateConversationSchema,
   conversationIdParamSchema,
-  listConversationsQuerySchema,
 };

@@ -116,28 +116,6 @@ const reorderContents = async (
   }
 };
 
-// Trades the positions of two items of one parent, of any kind — see
-// contentService.swapSequenceOrder.
-const swapSequenceOrder = async (
-  req,
-  res,
-  next
-) => {
-  try {
-    const { first, second } = req.body;
-    const result =
-      await contentService.swapSequenceOrder(
-        first,
-        second,
-        req.user
-      );
-
-    res.json(result);
-  } catch (error) {
-    next(error);
-  }
-};
-
 module.exports = {
   getContents,
   getContentById,
@@ -145,5 +123,4 @@ module.exports = {
   updateContent,
   deleteContent,
   reorderContents,
-  swapSequenceOrder
 };

@@ -162,5 +162,4 @@ module.exports = {
   buildMediaDescriptor,
   sendLocalFile,
   streamBlob,
-  UPLOADS_ROOT,
 };

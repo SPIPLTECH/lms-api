@@ -282,7 +282,5 @@ const normalizeQuestion = (row) => {
 };
 
 module.exports = {
-    normalizeOptions,
-    normalizeCorrectAnswer,
     normalizeQuestion,
 };

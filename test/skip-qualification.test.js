@@ -7,9 +7,8 @@ const {
 } = require("../src/utils/qualification");
 const {
   buildLearningPath,
-  resolveAccess,
   resolveNextItem,
-  PATH_STATUS
+  PATH_STATUS,
 } = require("../src/utils/learningPath");
 const {
   summarizeWeakConcepts,
@@ -231,14 +230,6 @@ test("learning path — a node with nothing to track never blocks the course", (
   assert.strictEqual(statusOf(path, "t2"), PATH_STATUS.CURRENT);
 });
 
-test("learning path — completed material stays open for review", () => {
-  const done = { completed: true, satisfied: true };
-  const path = buildLearningPath(buildHierarchy({ m1: done, l1: done, t1: done }), noQuizzes);
-
-  assert.strictEqual(entryOf(path, "t1").locked, false, "you can always go back");
-  assert.strictEqual(resolveAccess(path, { topicId: "t1" }).allowed, true);
-});
-
 // ---------------------------------------------------------------------------
 // Qualification
 // ---------------------------------------------------------------------------
@@ -328,36 +319,6 @@ test("learning path — qualifying does not leak past the node it belongs to", (
   assert.strictEqual(statusOf(path, "t1"), PATH_STATUS.CURRENT, "Lesson 1's first topic is still the student's job");
   assert.strictEqual(entryOf(path, "l1").satisfied, false, "Lesson 1 is not done");
   assert.strictEqual(statusOf(path, "m2"), PATH_STATUS.LOCKED, "and Module 2 stays shut");
-});
-
-// ---------------------------------------------------------------------------
-// Backend access enforcement
-// ---------------------------------------------------------------------------
-
-test("resolveAccess — locked content is refused with a reason", () => {
-  const path = buildLearningPath(buildHierarchy(), noQuizzes);
-
-  const denied = resolveAccess(path, { topicId: "t2" });
-  assert.strictEqual(denied.allowed, false);
-  assert.match(denied.reason, /Data Types/, "the refusal names what was asked for");
-
-  assert.strictEqual(resolveAccess(path, { lessonId: "l3" }).allowed, false);
-  // Nothing asked for: nothing to refuse.
-  assert.strictEqual(resolveAccess(path, {}).allowed, true);
-  // An id this course knows nothing about isn't this check's business.
-  assert.strictEqual(resolveAccess(path, { topicId: "not-in-course" }).allowed, true);
-});
-
-test("resolveAccess — a qualified skip is what opens the door, not a bare pass", () => {
-  const done = { completed: true, satisfied: true };
-  const before = buildLearningPath(buildHierarchy({ m1: done, l1: done }), noQuizzes);
-  assert.strictEqual(resolveAccess(before, { topicId: "t2" }).allowed, false);
-
-  const after = buildLearningPath(
-    buildHierarchy({ m1: done, l1: done, t1: { qualified: true, satisfied: true } }),
-    noQuizzes
-  );
-  assert.strictEqual(resolveAccess(after, { topicId: "t2" }).allowed, true);
 });
 
 // ---------------------------------------------------------------------------

@@ -598,13 +598,11 @@ function buildValidationReport(parsed, extraWarnings = []) {
 const toDbQuizTag = (tag) => (isPresent(tag) && QUIZ_TAG_TO_DB[String(tag).trim().toUpperCase()] === "SELF_TEST" ? "SELF_TEST" : "FINAL");
 
 module.exports = {
-  CONTENT_TYPES,
   QUIZ_TAG_TO_DB,
   LEVELS,
   parseCourseJson,
   buildValidationReport,
   getQuestionProblems,
-  summarizeCourse,
   looksLikeCourseJson,
   toDbQuizTag,
 };

@@ -621,5 +621,4 @@ module.exports = {
     createAssignment,
     updateAssignment,
     deleteAssignment,
-    placeAssignmentInSequence,
 };

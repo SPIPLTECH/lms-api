@@ -44,8 +44,6 @@ const listSubmissions = async (apiUrl, token, search) =>
     timeout: REQUEST_TIMEOUT_MS,
   });
 
-const isConfigured = () => Boolean(config.feedbackApiUrl() && config.feedbackApiCredentials());
-
 /**
  * The earliest submission by `email` with submittedAt in [from, to], or null.
  * Throws FeedbackSiteUnavailable when the site cannot be asked.
@@ -91,4 +89,4 @@ const findSubmission = async ({ email, from, to }) => {
   return matches[0] ? { id: String(matches[0].id), submittedAt: new Date(matches[0].submittedAt) } : null;
 };
 
-module.exports = { findSubmission, isConfigured, FeedbackSiteUnavailable };
+module.exports = { findSubmission, FeedbackSiteUnavailable };

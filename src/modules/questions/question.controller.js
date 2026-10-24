@@ -54,32 +54,6 @@ const getQuestionsByQuizId = async (req, res, next) => {
 };
 
 // =========================
-// Get Question By ID
-// =========================
-const getQuestionById = async (req, res, next) => {
-  try {
-    const question = await questionRepositoryService.getQuestionById(
-      req.params.questionId,
-      req.user || {}
-    );
-
-    if (!question) {
-      return res.status(404).json({
-        success: false,
-        message: "Question not found",
-      });
-    }
-
-    res.json({
-      success: true,
-      data: question,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// =========================
 // Create Single Question
 // =========================
 const createQuestion = async (req, res, next) => {
@@ -275,7 +249,6 @@ const duplicateQuestion = async (req, res, next) => {
 module.exports = {
   getQuestions,
   getQuestionsByQuizId,
-  getQuestionById,
   createQuestion,
   bulkCreateQuestions,
   importQuestionsFile,

@@ -41,7 +41,6 @@ const CHILD_KEY = { COURSE: "modules", MODULE: "lessons", LESSON: "topics", TOPI
 const CHILD_KIND = { COURSE: "MODULE", MODULE: "LESSON", LESSON: "TOPIC", TOPIC: "SUBTOPIC", SUBTOPIC: "CONCEPT" };
 const PATH_FIELD = { MODULE: "moduleId", LESSON: "lessonId", TOPIC: "topicId", SUBTOPIC: "subTopicId", CONCEPT: "conceptId" };
 const LEVEL = { COURSE: "course", MODULE: "module", LESSON: "lesson", TOPIC: "topic", SUBTOPIC: "subTopic", CONCEPT: "concept" };
-const PARENT_FIELD_OF_KIND = { COURSE: "courseId", ...PATH_FIELD };
 
 const EMPTY_PATH = Object.freeze({ moduleId: null, lessonId: null, topicId: null, subTopicId: null, conceptId: null });
 
@@ -311,12 +310,7 @@ function flattenContainers(tree) {
 }
 
 module.exports = {
-  LEVEL,
-  PARENT_FIELD_OF_KIND,
-  isHtmlImage,
-  orderContainerEntries,
   buildLearningSequence,
-  resolveResumeIndex,
   findStepForContent,
   flattenContainers,
 };

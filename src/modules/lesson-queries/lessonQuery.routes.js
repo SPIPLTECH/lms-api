@@ -10,7 +10,6 @@ const requireContentAccess = require("../../middleware/contentAccess.middleware"
 const {
   createLessonQuerySchema,
   replyLessonQuerySchema,
-  updateStatusSchema
 } = require("./lessonQuery.validation");
 
 router.get(
@@ -54,14 +53,6 @@ router.patch(
   checkRole(["INSTRUCTOR", "ADMIN"]),
   validate(replyLessonQuerySchema),
   controller.replyToQuery
-);
-
-router.patch(
-  "/:queryId/status",
-  verifyToken,
-  checkRole(["INSTRUCTOR", "ADMIN"]),
-  validate(updateStatusSchema),
-  controller.updateStatus
 );
 
 module.exports = router;

@@ -208,4 +208,4 @@ const buildCourseContentContext = async (courseId, position = {}) => {
   return { chunks };
 };
 
-module.exports = { buildCourseContentContext, renderContent, TEXTUAL_TYPES };
+module.exports = { buildCourseContentContext, };

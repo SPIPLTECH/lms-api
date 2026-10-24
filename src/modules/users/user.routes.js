@@ -17,17 +17,9 @@ const checkRole = require(
 const validate = require("../../middleware/joiValidation.middleware");
 const {
   updateUserSchema,
-  updateUserStatusSchema,
   updateUserRoleSchema,
 } = require("./user.validation");
 const { avatarUpload } = require("../../middleware/upload.middleware");
-
-router.get(
-  "/",
-  verifyToken,
-  checkRole(["ADMIN"]),
-  userController.getUsers
-);
 
 // Registered before the /:userId routes below — otherwise Express would
 // match "/profile/me" as "/:userId" with userId="profile" and gate it
@@ -79,14 +71,6 @@ router.delete(
   verifyToken,
   checkRole(["ADMIN"]),
   userController.deleteUser
-);
-
-router.patch(
-  "/:userId/status",
-  verifyToken,
-  checkRole(["ADMIN"]),
-  validate(updateUserStatusSchema),
-  userController.updateUserStatus
 );
 
 router.patch(

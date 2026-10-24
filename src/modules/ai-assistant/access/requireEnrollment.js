@@ -39,23 +39,4 @@ const findEnrollment = async (userId, courseId) => {
   });
 };
 
-/**
- * Throwing enrollment gate — the hard boundary in front of any learning
- * content retrieval. Promoted from the inline pattern in
- * modules/entry-assessment/services/entryAssessment.service.js so the check
- * exists once instead of being re-derived per feature.
- *
- * Takes a USER id (what the JWT carries) and does the profile hop itself, so
- * no caller has to remember the distinction.
- *
- * @throws {ApiError} 403 when there is no active enrollment.
- */
-const requireEnrollment = async (userId, courseId) => {
-  const enrollment = await findEnrollment(userId, courseId);
-  if (!enrollment) {
-    throw new ApiError(403, "You must be enrolled in this course to use the assistant for its learning content.");
-  }
-  return enrollment;
-};
-
-module.exports = { requireEnrollment, findEnrollment, getStudentProfileId };
+module.exports = { findEnrollment, getStudentProfileId };

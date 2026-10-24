@@ -33,7 +33,6 @@ const controller = require("../src/modules/ai-assistant/aiAssistant.controller")
 const {
   conversationMessageSchema,
   guestMessageSchema,
-  updateConversationSchema,
 } = require("../src/modules/ai-assistant/aiAssistant.validation");
 
 /** Minimal Express-ish response that records the SSE frames written to it. */
@@ -242,11 +241,3 @@ test("contentIds is capped to 20 entries", () => {
   assert.ok(error);
 });
 
-test("conversation status is restricted to the known values", () => {
-  assert.equal(updateConversationSchema.validate({ status: "ARCHIVED" }).error, undefined);
-  assert.ok(updateConversationSchema.validate({ status: "DELETED_BY_ADMIN" }).error);
-});
-
-test("an empty update is rejected", () => {
-  assert.ok(updateConversationSchema.validate({}).error);
-});

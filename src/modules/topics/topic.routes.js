@@ -14,7 +14,6 @@ const validate = require("../../middleware/joiValidation.middleware");
 const {
   createTopicSchema,
   updateTopicSchema,
-  reorderTopicsSchema,
 } = require("./topic.validation");
 const requireContentAccess = require("../../middleware/contentAccess.middleware");
 
@@ -58,15 +57,6 @@ router.delete(
   checkRole(["ADMIN", "INSTRUCTOR"]),
   verifyTopicOwnership,
   topicController.deleteTopic
-);
-
-router.patch(
-  "/reorder",
-  verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  validate(reorderTopicsSchema),
-  verifyLessonOwnership.fromBody,
-  topicController.reorderTopics
 );
 
 module.exports = router;

@@ -39,53 +39,6 @@ const getCertificates = async (req, res, next) => {
   }
 };
 
-const getCertificateById = async (
-  req,
-  res,
-  next
-) => {
-  try {
-    const certificate =
-      await certificateService.getCertificateById(
-        req.params.certificateId
-      );
-
-    if (!certificate) {
-      return res.status(404).json({
-        success: false,
-        message: "Certificate not found"
-      });
-    }
-
-    res.json({
-      success: true,
-      data: certificate
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-const deleteCertificate = async (
-  req,
-  res,
-  next
-) => {
-  try {
-    await certificateService.deleteCertificate(
-      req.params.certificateId
-    );
-
-    res.json({
-      success: true,
-      message:
-        "Certificate deleted successfully"
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 const createCertificate = async (req, res, next) => {
   try {
     const { courseId, userId, issuedAt } = req.body;
@@ -119,41 +72,7 @@ const createCertificate = async (req, res, next) => {
   }
 };
 
-const updateCertificate = async (req, res, next) => {
-  try {
-    const { courseId, userId, issuedAt } = req.body;
-    const { certificateId } = req.params;
-
-    let studentId = req.body.studentId;
-    if (userId && !studentId) {
-      const profile = await prisma.studentProfile.findUnique({
-        where: { userId: userId }
-      });
-      if (profile) studentId = profile.id;
-      else studentId = userId;
-    }
-
-    const dataToUpdate = {};
-    if (courseId) dataToUpdate.courseId = courseId;
-    if (studentId) dataToUpdate.studentId = studentId;
-    if (issuedAt) dataToUpdate.issuedAt = new Date(issuedAt);
-
-    const cert = await certificateService.updateCertificate(certificateId, dataToUpdate);
-
-    res.json({
-      success: true,
-      data: cert,
-      message: "Certificate updated successfully"
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 module.exports = {
   getCertificates,
-  getCertificateById,
-  deleteCertificate,
   createCertificate,
-  updateCertificate
 };

@@ -83,28 +83,10 @@ const replyToQuery = async (req, res, next) => {
   }
 };
 
-const updateStatus = async (req, res, next) => {
-  try {
-    const query = await lessonQueryService.updateStatus(
-      req.params.queryId,
-      req.user,
-      req.body.status
-    );
-
-    res.json({
-      success: true,
-      data: query
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 module.exports = {
   getQueries,
   getMyQueries,
   getMyQuestions,
   createQuery,
   replyToQuery,
-  updateStatus
 };

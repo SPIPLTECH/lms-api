@@ -33,8 +33,6 @@ const {
   parseDOCX,
 } = require("./parsers/docx.parser");
 
-
-
 // =======================================
 // Parse Uploaded File
 // =======================================
@@ -85,8 +83,6 @@ const parseFile = async (filePath) => {
 
 };
 
-
-
 // =======================================
 // Exports
 // =======================================
@@ -94,23 +90,5 @@ const parseFile = async (filePath) => {
 module.exports = {
 
   parseFile,
-
-  parseCSV,
-
-  parseExcel,
-
-  parseJSON,
-
-  parseXML,
-
-  parseTXT,
-
-  parseTSV,
-
-  parseHTML,
-
-  parsePDF,
-
-  parseDOCX,
 
 };

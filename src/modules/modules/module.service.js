@@ -1,6 +1,6 @@
 const prisma = require("../../config/database");
 const ApiError = require("../../utils/ApiError");
-const { claimContainerOrder, releaseContainerOrder, moveContainers } = require("../contents/contentOrder.util");
+const { claimContainerOrder, releaseContainerOrder } = require("../contents/contentOrder.util");
 
 const getModules = async (courseId, role, userId) => {
   const where = {};
@@ -221,32 +221,10 @@ const deleteModule = async (
   });
 };
 
-/**
- * Moves modules within their course's learning sequence, which they share
- * with the course's Content rows: each listed module goes to its requested
- * position, everything else keeps its relative order, and the sequence stays
- * 1..n. A module of another course is refused.
- */
-const reorderModules = async (courseId, modules) => {
-  const existing = await prisma.module.findMany({
-    where: { courseId },
-    select: { id: true }
-  });
-  const validIds = new Set(existing.map((row) => row.id));
-  if (!modules.every((row) => validIds.has(row.id))) {
-    throw new ApiError(403, "One or more modules do not belong to this course.");
-  }
-
-  return prisma.$transaction((tx) =>
-    moveContainers("module", courseId, modules.map(({ id, order }) => ({ id, order })), tx)
-  );
-};
-
 module.exports = {
   getModules,
   getModuleById,
   createModule,
   updateModule,
   deleteModule,
-  reorderModules
 };

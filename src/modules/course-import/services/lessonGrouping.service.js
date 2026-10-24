@@ -190,7 +190,6 @@ function groupLessons(detectorResult = {}) {
 }
 
 module.exports = {
-  formatLessonTitle,
   deriveLessonTitle,
   groupLessons
 };

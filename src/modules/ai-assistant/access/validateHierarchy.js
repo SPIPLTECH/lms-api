@@ -133,4 +133,4 @@ const validateLearningPosition = async (courseId, raw = {}) => {
 const isSecurityViolation = (v) =>
   v.reason === "FOREIGN_COURSE" || v.reason === "HIERARCHY_MISMATCH";
 
-module.exports = { validateLearningPosition, isSecurityViolation, PARENT_FIELDS };
+module.exports = { validateLearningPosition, isSecurityViolation, };

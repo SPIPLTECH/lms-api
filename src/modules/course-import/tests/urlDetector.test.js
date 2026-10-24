@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { detectUrls, classifyUrl, getVideoProvider, splitOnUrls } = require("../services/urlDetector.service");
+const { classifyUrl, getVideoProvider, splitOnUrls } = require("../services/urlDetector.service");
 
 test("classifyUrl recognizes YouTube/Vimeo as video", () => {
   assert.equal(classifyUrl("https://youtube.com/watch?v=abc"), "video");
@@ -19,17 +19,6 @@ test("classifyUrl recognizes file-extension-based content types", () => {
 
 test("classifyUrl defaults to link for a generic web page", () => {
   assert.equal(classifyUrl("https://example.com/article"), "link");
-});
-
-test("detectUrls extracts and dedupes bare URLs from text", () => {
-  const text = "See https://example.com/a and also https://example.com/a again, plus https://example.com/b.";
-  const found = detectUrls(text);
-  assert.equal(found.length, 2);
-});
-
-test("detectUrls returns [] for empty/undefined input", () => {
-  assert.deepEqual(detectUrls(""), []);
-  assert.deepEqual(detectUrls(undefined), []);
 });
 
 test("getVideoProvider identifies youtube/vimeo/external", () => {

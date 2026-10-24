@@ -86,8 +86,6 @@ const corsOriginDelegate = (origin, callback) => {
 };
 
 module.exports = {
-  DEFAULT_ALLOWED_ORIGINS,
-  configuredOrigins,
   lanOriginsAllowed,
   isAllowedOrigin,
   corsOriginDelegate,

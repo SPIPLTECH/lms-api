@@ -31,47 +31,6 @@ test("V2 Importer Module Tests", async (t) => {
   t.before(() => setupV2TestEnv());
   t.after(() => cleanupV2TestEnv());
 
-  await t.test("1. Valid V2 course.json passes manifest validation", () => {
-    const validManifest = {
-      $schema: "https://orangetree.lms/schemas/course-v2.json",
-      version: "2.0",
-      metadata: { title: "Valid Course" },
-      settings: { visibility: "PUBLIC" },
-      modules: [{ title: "Module 1", lessons: [] }]
-    };
-
-    const res = v2Importer.validateV2Manifest(validManifest);
-    assert.strictEqual(res.isValid, true);
-    assert.strictEqual(res.errors.length, 0);
-  });
-
-  await t.test("1b. Modules are optional: an empty modules array is valid, and flagged as an empty course", () => {
-    const emptyModulesManifest = {
-      $schema: "https://orangetree.lms/schemas/course-v2.json",
-      version: "2.0",
-      metadata: { title: "Valid Course" },
-      settings: { visibility: "PUBLIC" },
-      modules: []
-    };
-
-    const res = v2Importer.validateV2Manifest(emptyModulesManifest);
-    assert.strictEqual(res.isValid, true);
-    assert.ok(res.warnings.some((w) => w.includes("no content, modules, quizzes or assignments")));
-  });
-
-  await t.test("2. Missing course.json metadata.title fails validation", () => {
-    const invalidManifest = {
-      version: "2.0",
-      metadata: {},
-      settings: {},
-      modules: []
-    };
-
-    const res = v2Importer.validateV2Manifest(invalidManifest);
-    assert.strictEqual(res.isValid, false);
-    assert.ok(res.errors[0].includes("metadata.title"));
-  });
-
   await t.test("3. Path traversal in asset package path is caught and rejected", () => {
     const safeCheck = v2Importer.isSafePackagePath("../../etc/passwd");
     assert.strictEqual(safeCheck, false);

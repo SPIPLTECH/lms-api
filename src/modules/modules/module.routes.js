@@ -20,7 +20,6 @@ const validate = require("../../middleware/joiValidation.middleware");
 const {
   createModuleSchema,
   updateModuleSchema,
-  reorderModulesSchema
 } = require("./module.validation");
 
 const checkRole = require(
@@ -77,18 +76,6 @@ router.delete(
   ]),
   verifyModuleOwnership,
   controller.deleteModule
-);
-
-router.patch(
-  "/reorder",
-  verifyToken,
-  checkRole([
-    "ADMIN",
-    "INSTRUCTOR"
-  ]),
-  validate(reorderModulesSchema),
-  verifyCourseOwnership.fromBody,
-  controller.reorderModules
 );
 
 module.exports = router;

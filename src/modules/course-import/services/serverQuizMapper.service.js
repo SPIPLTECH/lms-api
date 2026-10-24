@@ -62,4 +62,4 @@ const buildQuizPayload = (block, { courseId, lessonTitle }) => ({
   status: "DRAFT",
 });
 
-module.exports = { isBackendGradable, mapAnswerToBackendQuestion, buildQuestionPayload, buildQuizPayload };
+module.exports = { isBackendGradable, buildQuestionPayload, buildQuizPayload };

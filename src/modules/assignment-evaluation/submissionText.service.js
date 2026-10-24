@@ -132,7 +132,5 @@ module.exports = {
     collectSubmissionText,
     downloadPdf,
     resolvePdfLocation,
-    extractor,
     MAX_PDF_BYTES,
-    SUBMISSION_BLOB_PREFIX,
 };

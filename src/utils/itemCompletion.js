@@ -65,9 +65,6 @@ function completionHint(kind, quizTag) {
 }
 
 module.exports = {
-  ASSIGNMENT_COMPLETED_STATUSES,
-  QUIZ_COMPLETION,
-  quizCompletionRequirement,
   summarizeQuizAttempts,
   isQuizComplete,
   isAssignmentSubmissionComplete,
