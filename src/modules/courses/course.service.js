@@ -443,31 +443,29 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
     concept: {},
   };
 
-  // If role is STUDENT, check if student holds an active enrollment
+  // If role is STUDENT, check if student holds an active enrollment — profile
+  // and enrollment in one round trip.
   let isEnrolledStudent = false;
   let studentProfileId = null;
   if (role === "STUDENT" && userId) {
     const studentProfile = await prisma.studentProfile.findUnique({
       where: { userId },
-      select: { id: true }
+      select: { id: true, enrollments: { where: { courseId }, select: { id: true }, take: 1 } }
     });
     if (studentProfile) {
       studentProfileId = studentProfile.id;
-      const enrollment = await prisma.enrollment.findUnique({
-        where: {
-          studentId_courseId: {
-            studentId: studentProfile.id,
-            courseId
-          }
-        }
-      });
-      if (enrollment) isEnrolledStudent = true;
+      isEnrolledStudent = studentProfile.enrollments.length > 0;
     }
   }
 
   const publishedOnly = isStudentOrGuest ? { isPublished: true } : undefined;
 
-  const course = await prisma.course.findUnique({
+  // The student's lock state does not depend on the tree query, so the two
+  // run side by side instead of one after the other.
+  const lockMapPromise =
+    role === "STUDENT" && includeModules ? buildLessonLockMap(courseId, studentProfileId) : null;
+
+  const coursePromise = prisma.course.findUnique({
     where: {
       id: courseId
     },
@@ -549,11 +547,13 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
 
       // Every quiz of the course, for counts and the instructor's quiz lists.
       quizzes: quizzesInclude(),
-      // Students and guests (this route is public for published courses) get
-      // the enrollment rows' ids only — never other students' profile ids.
-      enrollments: isStudentOrGuest ? { select: { id: true } } : true
+      // Enrollment row ids only — never other students' profile ids, and no
+      // client reads more than the list's length (the count is in _count).
+      enrollments: { select: { id: true } }
     }
   });
+
+  const [course, lockState] = await Promise.all([coursePromise, lockMapPromise]);
 
   if (!course) return null;
 
@@ -561,8 +561,8 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
     return null;
   }
 
-  if (role === "STUDENT" && includeModules) {
-    const { lockMap, completedSet, qualifiedSet, lockedContentIds } = await buildLessonLockMap(courseId, studentProfileId);
+  if (lockState) {
+    const { lockMap, completedSet, qualifiedSet, lockedContentIds } = lockState;
 
     // A student never receives the material of an item they may not open yet —
     // ordinary content, quiz or assignment, at any level.
@@ -606,7 +606,9 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
     });
   }
 
-  return attachCourseStats(course);
+  // No card stats here: they are read only by the course cards, which come
+  // from GET /courses, and building them costs ~10 queries per request.
+  return course;
 };
 
 const createCourse = async (data, userId) => {

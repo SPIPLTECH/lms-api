@@ -43,6 +43,14 @@ const getPublishedLessonIds = async (courseId) => {
  * and every Content row whose material must be withheld.
  */
 const buildLessonLockMap = async (courseId, studentId) => {
+  // The learning sequence the player walks and the API enforces; read-only.
+  // Started before the lesson list so the two reads overlap. null when it
+  // can't be computed. Required lazily: progress.service sits above this module.
+  const sequencePromise = studentId
+    ? require("../modules/progress/progress.service")
+        .computeStudentSequence(studentId, courseId)
+        .then(({ sequence }) => sequence, () => null)
+    : null;
   const lessonIds = await getPublishedLessonIds(courseId);
 
   const lockMap = new Map();
@@ -58,12 +66,8 @@ const buildLessonLockMap = async (courseId, studentId) => {
     return { lockMap, completedSet, qualifiedSet, lockedContentIds };
   }
 
-  let sequence;
-  try {
-    // The learning sequence the player walks and the API enforces; read-only.
-    // Required lazily: progress.service sits above this module.
-    ({ sequence } = await require("../modules/progress/progress.service").computeStudentSequence(studentId, courseId));
-  } catch {
+  const sequence = await sequencePromise;
+  if (!sequence) {
     // Progress is advisory for rendering a course: if it can't be computed,
     // show the course rather than locking a student out of material they may
     // well have earned. Every write path and every item endpoint enforces the
