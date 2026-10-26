@@ -82,8 +82,27 @@ const isAllowedOrigin = (origin) => {
  * package, so this works for both).
  */
 const corsOriginDelegate = (origin, callback) => {
-  callback(null, isAllowedOrigin(origin));
+  const allowed = isAllowedOrigin(origin);
+  if (!allowed) warnRejectedOrigin(origin);
+  callback(null, allowed);
 };
+
+// A refused origin gets no Access-Control-Allow-Origin header, which the
+// browser reports only as a CORS error on its side — for Socket.io that is
+// every polling request, while REST calls from the same page may still work
+// (REST reflects every origin unless CORS_ALLOWED_ORIGINS is set). Say so
+// here, once per origin, with what to change. Capped so a stream of junk
+// origins cannot grow the set without bound.
+const warnedOrigins = new Set();
+const MAX_WARNED_ORIGINS = 100;
+
+function warnRejectedOrigin(origin) {
+  if (warnedOrigins.has(origin) || warnedOrigins.size >= MAX_WARNED_ORIGINS) return;
+  warnedOrigins.add(origin);
+  console.warn(
+    `[cors] rejected origin ${JSON.stringify(origin)} — add it to FRONTEND_URL (comma-separated) if it is a real frontend`
+  );
+}
 
 module.exports = {
   DEFAULT_ALLOWED_ORIGINS,

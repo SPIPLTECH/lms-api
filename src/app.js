@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
+const compression = require("compression");
 
 const path = require("path");
 
@@ -46,6 +47,7 @@ const sessionRoutes = require("./modules/sessions/session.routes");
 const deviceRoutes = require("./modules/devices/device.routes");
 const playbackRoutes = require("./modules/playback/playback.routes");
 const requestId = require("./middleware/requestId.middleware");
+const { requestTiming } = require("./utils/requestTiming");
 const protectVideoSources = require("./middleware/mediaProtection.middleware");
 const stripResponseSecrets = require("./middleware/responseSecrets.middleware");
 const uploadsHandler = require("./middleware/uploads.middleware");
@@ -57,6 +59,17 @@ app.disable('etag');
 // Correlation id first, so every response — including CORS rejections and
 // errors — can carry it.
 app.use(requestId);
+// Total / database / application time per request (Server-Timing + log line).
+app.use(requestTiming);
+// JSON only. The learning sequence alone is ~490 KB raw (~150 KB gzipped).
+// Everything else is left as it was: Server-Sent Events (AI assistant,
+// adaptive learning) must not be buffered by a compressor, and media under
+// /uploads and /playback/media is served with byte ranges.
+app.use(
+  compression({
+    filter: (req, res) => /^application\/json/i.test(String(res.getHeader("Content-Type") || "")),
+  })
+);
 
 // Every API call from the frontend is cross-origin with an Authorization
 // header, so the browser preflights it. Without Access-Control-Max-Age that
