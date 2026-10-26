@@ -132,7 +132,8 @@ const gradeSubmission = async (req, res, next) => {
         const data = await assignmentService.gradeAssignmentSubmission(
             req.params.assignmentId,
             req.params.submissionId,
-            req.body
+            req.body,
+            req.user.id
         );
         res.json({
             success: true,

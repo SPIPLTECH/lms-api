@@ -1,7 +1,6 @@
 const { GoogleGenAI } = require("@google/genai");
 
 const getApiKey = () => process.env.GEMINI_API_KEY;
-const getModelName = () => process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
 const getModelNames = () => {
   const primary = (process.env.GEMINI_MODEL || "gemini-3.6-flash").trim();
@@ -473,4 +472,4 @@ const generateStream = async ({
   throw classifyGeminiError(lastErr || new Error("All configured Gemini models failed."));
 };
 
-module.exports = { generate, generateStream, getApiKey, getModelName, getModelNames };
+module.exports = { generate, generateStream, getModelNames };

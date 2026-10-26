@@ -141,6 +141,9 @@ const getAssignmentById = async (assignmentId, studentId) => {
         grade: submission?.grade || null,
         feedback: submission?.feedback || null,
         submittedAt: submission?.submittedAt || null,
+        // Criterion marks and feedback when the grade came from auto-evaluation
+        // (or an instructor's review of it); null for hand-typed grades.
+        evaluation: await require("../assignment-evaluation/assignmentEvaluation.service").studentView(submission).catch(() => null),
         // The student's uploaded PDF, so they can see what they turned in.
         submission: submission
             ? {
@@ -251,6 +254,15 @@ const submitAssignment = async (assignmentId, studentId, data) => {
         } catch (err) {
             console.error("Progress rollup recalculation failed after assignment submission:", err);
         }
+    }
+
+    // Auto-evaluation (only for assignments with a marking scheme): the job is
+    // recorded before responding so a restart cannot lose it, and runs in the
+    // background. Submitting never waits for the evaluation or fails because of it.
+    try {
+        await require("../assignment-evaluation/assignmentEvaluation.service").onSubmitted(submission.id);
+    } catch (err) {
+        console.error("Auto-evaluation could not be queued:", err.message);
     }
 
     return submission;
@@ -398,9 +410,25 @@ const getAssignmentSubmissions = async (assignmentId) => {
 
     const { course, module: mod, lesson, topic, ...assignmentFields } = assignment;
     const { enrolledCount, ...breadcrumb } = resolveBreadcrumb({ course, module: mod, lesson, topic });
+    // Auto-evaluation status is extra information: if it cannot be read, the
+    // table still loads exactly as it did before.
+    const evaluation = await require("../assignment-evaluation/assignmentEvaluation.service")
+        .summariesForSubmissions(assignmentId, submissions)
+        .catch((err) => {
+            console.error("Auto-evaluation summaries unavailable:", err.message);
+            return { rubricEnabled: false, markStep: null, summaries: new Map() };
+        });
 
     return {
-        assignment: { ...assignmentFields, ...breadcrumb, enrolledCount },
+        assignment: {
+            ...assignmentFields,
+            ...breadcrumb,
+            enrolledCount,
+            autoEvaluation: {
+                enabled: evaluation.rubricEnabled,
+                markStep: evaluation.markStep,
+            },
+        },
         submissions: submissions.map((s) => ({
             id: s.id,
             studentId: s.studentId,
@@ -414,7 +442,8 @@ const getAssignmentSubmissions = async (assignmentId) => {
             fileName: s.fileName || null,
             fileSize: s.fileSize || null,
             fileType: s.fileType || null,
-            textAnswer: s.textAnswer || null
+            textAnswer: s.textAnswer || null,
+            evaluation: evaluation.summaries.get(s.id) || null
         }))
     };
 };
@@ -424,7 +453,7 @@ const getAssignmentSubmissions = async (assignmentId) => {
  * (verifyAssignmentOwnership) has already run; the submission must belong to
  * this assignment, so a submissionId from another assignment is a 404.
  */
-const gradeAssignmentSubmission = async (assignmentId, submissionId, { grade, feedback }) => {
+const gradeAssignmentSubmission = async (assignmentId, submissionId, { grade, feedback }, actorId = null) => {
     const existing = await prisma.assignmentSubmission.findFirst({
         where: { id: submissionId, assignmentId },
         select: { id: true }
@@ -440,6 +469,13 @@ const gradeAssignmentSubmission = async (assignmentId, submissionId, { grade, fe
         where: { id: submissionId },
         data: { grade, feedback: feedback || null, status: "Graded" }
     });
+
+    // A hand grade replaces an auto-evaluated one: its breakdown is no longer
+    // shown to the student, and the decision is logged. Only does anything
+    // for submissions that were evaluated; never fails the grade itself.
+    await require("../assignment-evaluation/assignmentEvaluation.service")
+        .onHandGraded(submissionId, actorId)
+        .catch((err) => console.error("Auto-evaluation could not record the hand grade:", err.message));
 
     return {
         id: updated.id,
@@ -514,6 +550,13 @@ const updateAssignment = async (assignmentId, data) => {
         throw error;
     }
 
+    // With an auto-evaluation marking scheme the assignment's marks are the
+    // scheme's total, so they cannot be changed here on their own (409).
+    if (data.marks !== undefined && data.marks !== existing.marks) {
+        await require("../assignment-evaluation/assignmentEvaluation.service")
+            .assertMarksEditable(assignmentId, data.marks === null ? null : parseInt(data.marks));
+    }
+
     return await prisma.$transaction(async (tx) => {
         const updated = await tx.assignment.update({
             where: { id: assignmentId },
@@ -578,5 +621,4 @@ module.exports = {
     createAssignment,
     updateAssignment,
     deleteAssignment,
-    placeAssignmentInSequence,
 };

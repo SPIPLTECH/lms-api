@@ -30,18 +30,6 @@ function isSafePackagePath(pkgPath) {
   return true;
 }
 
-/**
- * Validates course JSON in either the template or the V2 spelling. Every
- * level and element is optional — see flexibleCourseJson.service.js.
- *
- * @param {Object} courseJson Parsed course.json object
- * @returns {{ isValid: boolean, errors: Array<string>, warnings: Array<string> }}
- */
-function validateV2Manifest(courseJson) {
-  const { isValid, errors, warnings } = parseCourseJson(courseJson);
-  return { isValid, errors, warnings };
-}
-
 /** Calls `visit(entity, level)` for the course and every module, lesson and topic of a canonical course. */
 function forEachLevel(canonical, visit) {
   const walk = (entity, level) => {
@@ -209,6 +197,7 @@ async function importV2Manifest(canonicalJson, instructorId) {
         tags: Array.isArray(metadata.tags) ? metadata.tags : [],
         certificatesEnabled: settings.certificatesEnabled ?? false,
         discussionEnabled: settings.discussionEnabled ?? true,
+        sequentialLearning: settings.sequentialLearning ?? true,
         estimatedLearningHours: metadata.estimatedLearningHours ?? null,
         creatorId: instructorId
       }
@@ -428,7 +417,6 @@ async function importV2Job(job, instructorId) {
 
 module.exports = {
   isSafePackagePath,
-  validateV2Manifest,
   prepareV2Assets,
   processV2Package,
   importV2Manifest,

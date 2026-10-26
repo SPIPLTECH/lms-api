@@ -136,8 +136,6 @@ const isEvaluatorStudent = async (studentProfileId) => {
 
 module.exports = {
   EVALUATOR_ACCESS_MS,
-  EVALUATOR_STATES,
-  BLOCK_CODES,
   expiryFor,
   evaluatorState,
   isAlwaysAllowedPath,

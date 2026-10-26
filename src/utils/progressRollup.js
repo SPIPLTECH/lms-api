@@ -188,7 +188,7 @@ async function loadPublishedHierarchy(client, courseId) {
   const published = (level) => ({ where: { isPublished: true, ...IN_COURSE[level](courseId) }, orderBy: ORDERED });
 
   const [course, modules, lessons, topics, subTopics, concepts, contents] = await Promise.all([
-    client.course.findUnique({ where: { id: courseId }, select: { id: true, title: true, status: true } }),
+    client.course.findUnique({ where: { id: courseId }, select: { id: true, title: true, status: true, sequentialLearning: true } }),
     client.module.findMany({ ...published('module'), select: CONTAINER_SELECT }),
     client.lesson.findMany({ ...published('lesson'), select: { ...CONTAINER_SELECT, moduleId: true } }),
     client.topic.findMany({ ...published('topic'), select: { ...CONTAINER_SELECT, lessonId: true } }),
@@ -246,7 +246,7 @@ async function loadPublishedHierarchy(client, courseId) {
 async function computeCourseProgress(studentId, courseId, tx = null, options = {}) {
   const client = tx || prisma;
   const includeTree = options.includeTree === true;
-  const persist = options.persist !== false;
+  let persist = options.persist !== false;
 
   // 1. The live published hierarchy, every level with its own Content rows.
   const course = await loadPublishedHierarchy(client, courseId);
@@ -254,6 +254,10 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
   if (!course) {
     throw new Error(`Course with ID ${courseId} not found`);
   }
+
+  // A course with sequential learning off keeps no progress: the roll-up is
+  // still computed for whoever asks, but nothing is written.
+  if (course.sequentialLearning === false) persist = false;
 
   // 2. Collect every reachable item and container id. Unpublished quiz/
   // assignment items are dropped from each container here, once.
@@ -947,17 +951,7 @@ async function recomputeCourseProgress(studentId, courseId, tx = null, options =
   return runExclusive(`${studentId}:${courseId}`, () => computeCourseProgress(studentId, courseId, tx, options));
 }
 
-/**
- * Ensures progress is initialized and computed.
- */
-async function ensureProgressInitialized(studentId, courseId, tx = null) {
-  return recomputeCourseProgress(studentId, courseId, tx);
-}
-
 module.exports = {
-  OWN_ITEMS_ONLY,
-  isVisibleItem,
   recomputeCourseProgress,
-  ensureProgressInitialized,
   containerRowChanged
 };

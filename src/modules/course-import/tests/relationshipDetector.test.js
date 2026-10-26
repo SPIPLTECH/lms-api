@@ -2,9 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   normalizeToken,
-  buildSectionMembers,
-  buildFileMembers,
-  detectRelationships
+  detectRelationships,
 } = require("../services/relationshipDetector.service");
 
 test("1. Token Normalization - Day 1, DAY 1, Day1, Days 1 normalize to day:1", () => {

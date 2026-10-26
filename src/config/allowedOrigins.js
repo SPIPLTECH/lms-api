@@ -105,8 +105,6 @@ function warnRejectedOrigin(origin) {
 }
 
 module.exports = {
-  DEFAULT_ALLOWED_ORIGINS,
-  configuredOrigins,
   lanOriginsAllowed,
   isAllowedOrigin,
   corsOriginDelegate,

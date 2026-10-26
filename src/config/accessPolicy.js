@@ -30,6 +30,5 @@ const SINGLE_PLAYBACK_ROLES = new Set(["STUDENT"]);
 const requiresPlaybackLease = (role) => SINGLE_PLAYBACK_ROLES.has(role);
 
 module.exports = {
-  SINGLE_PLAYBACK_ROLES,
   requiresPlaybackLease,
 };

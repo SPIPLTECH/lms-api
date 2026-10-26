@@ -205,7 +205,6 @@ const resolveBreadcrumb = (row) => {
 
 module.exports = {
     BREADCRUMB_INCLUDE,
-    COURSE_NODE,
     PARENT_FIELDS,
     COURSE_ID_INCLUDE,
     resolveCourseId,

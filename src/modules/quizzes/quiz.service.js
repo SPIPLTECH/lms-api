@@ -207,6 +207,45 @@ const formatAnswerForDisplay = (value) => {
   return String(value);
 };
 
+const shuffled = (list) => {
+  const copy = [...list];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+};
+
+/**
+ * Question.options as a student may see them wherever the answer key is
+ * withheld (a Final or Qualifying attempt, a retakeable result). Everything
+ * that points at the answer goes:
+ *
+ *  - each option object is reduced to its bare text — `isCorrect` names the
+ *    answer outright, a `misconceptionTag` or `explanation` only ever sits on
+ *    a wrong option, and an authored `id` (opt-1, opt-2…) gives the authored
+ *    order away;
+ *  - the order is shuffled — options are often authored correct-first,
+ *    ARRANGE_TOKENS options ARE the correct order, and MATCH_PAIRS' right
+ *    column is aligned with its left.
+ *
+ * Nothing downstream needs the stored order: the attempt UI shuffles again
+ * for display, and answers are submitted and graded as option text.
+ */
+const withheldOptions = (options) => {
+  if (Array.isArray(options)) {
+    return shuffled(options.map((opt) => (opt && typeof opt === "object" ? String(opt.optionText ?? opt.text ?? "") : opt)));
+  }
+  if (options && typeof options === "object") {
+    const safe = { ...options };
+    for (const column of ["right", "columnB"]) {
+      if (Array.isArray(safe[column])) safe[column] = shuffled(safe[column]);
+    }
+    return safe;
+  }
+  return options;
+};
+
 const calculateSubmissionResult = (quiz, answers = []) => {
   const rawQuestions = quiz.quizQuestions ? quiz.quizQuestions.map(qq => ({
     ...qq.question,
@@ -424,13 +463,24 @@ const getQuizById = async (
   const currentAttemptNumber = attemptsUsed + 1;
   const hintsUnlocked = quiz.quizTag === QUALIFYING_TAG && currentAttemptNumber >= 2;
 
+  // A Self-Test is practice — unlimited attempts, done once attempted — and
+  // the student checks each answer as they go, seeing the correct one, why
+  // it is right and why each other option is wrong. So its answer key
+  // travels with the questions. Every other quiz keeps it back.
+  const revealAnswers = quiz.quizTag === "SELF_TEST";
+
   // Students attempting the quiz should not receive the answer key up front —
   // nor a hint they have not earned. Withheld here rather than hidden in the
   // client: a hint that reached the browser on a first attempt would be
   // readable in the network response however the UI chose to render it.
+  // That includes anything in the options that points at the answer — see
+  // withheldOptions.
   if (role === "STUDENT" || role === "GUEST") {
     allQuestions = allQuestions.map(({ correctAnswer, explanation, hint, ...rest }) => ({
       ...rest,
+      ...(revealAnswers
+        ? { correctAnswer, explanation }
+        : { options: withheldOptions(rest.options) }),
       // `hasHint` travels regardless, so the attempt UI can tell "there is no
       // hint for this question" from "you cannot see it yet" without being
       // told what the hint says.
@@ -455,6 +505,9 @@ const getQuizById = async (
   return {
     ...(isStudentOrGuest ? quizFields : quiz),
     questions: allQuestions,
+    // Tells the attempt UI the answer key above is there to be checked
+    // against, so it offers "Check Answer" — decided here, like hints.
+    ...(isStudentOrGuest && { revealAnswers }),
     ...(attemptStatus && {
       attemptStatus,
       // What the attempt UI needs to render the hint control, decided here.
@@ -1439,28 +1492,32 @@ const submitQuiz = async (
 /**
  * Whether this result may show the answer key.
  *
- * For every ordinary quiz: yes. The attempt is over and reviewing the answers
- * is the point of a result page.
+ * For a Self-Test: yes. It is practice, and its answer key was already
+ * shown answer by answer during the attempt.
  *
- * For a QUALIFYING test it is yes ONLY once the student can no longer change
- * the outcome — they passed, or they are out of attempts. While a retake is
- * still available, handing over the answer key would let a student fail
- * attempt 1, read every correct answer off their own result page, and score
- * 100% on attempt 2. That is qualification forged through a legitimate
- * endpoint: the lesson gets skipped without the knowledge the test exists to
- * establish, and it makes the attempt-2 hint rule pointless, since the
- * answers themselves were already handed over.
+ * For any graded quiz — a QUALIFYING test or a FINAL — it is yes ONLY once
+ * the student can no longer change the outcome: they passed, or they are out
+ * of attempts. While a retake is still available, handing over the answer key
+ * would let a student fail attempt 1, read every correct answer off their own
+ * result page, and score 100% on attempt 2. For a qualifying test that is
+ * qualification forged through a legitimate endpoint (and it makes the
+ * attempt-2 hint rule pointless); for a Final with more than one attempt it
+ * is a forged grade. A Final with the default single attempt is out of
+ * attempts the moment it is submitted, so its result shows the key as before.
  *
  * Their own answers, score and per-question correctness are still shown —
  * the student learns exactly what they got wrong, just not what was right.
  */
 const mayRevealAnswerKey = ({ quiz, passed, canAttempt }) => {
-  if (!quiz || quiz.quizTag !== QUALIFYING_TAG) return true;
+  if (!quiz || quiz.quizTag === "SELF_TEST") return true;
   return passed === true || canAttempt !== true;
 };
 
 /** Question fields that give the answer away, stripped as a set. */
-const stripAnswerKey = ({ correctAnswer, explanation, hint, ...rest }) => rest;
+const stripAnswerKey = ({ correctAnswer, explanation, hint, ...rest }) => ({
+  ...rest,
+  options: withheldOptions(rest.options)
+});
 
 /** One attempt as it appears in an attempt-history list. */
 const toAttemptSummary = (attempt) => ({

@@ -1,6 +1,6 @@
 const ApiError = require("../../utils/ApiError");
 const prisma = require("../../config/database");
-const { claimContainerOrder, releaseContainerOrder, moveContainers } = require("../contents/contentOrder.util");
+const { claimContainerOrder, releaseContainerOrder } = require("../contents/contentOrder.util");
 
 const getSubTopics = async (topicId, role, userId) => {
   const where = {};
@@ -154,32 +154,10 @@ const deleteSubTopic = async (subTopicId) => {
   });
 };
 
-/**
- * Moves subtopics within their topic's learning sequence, which they share
- * with the topic's Content rows: each listed subtopic goes to its requested
- * position, everything else keeps its relative order, and the sequence stays
- * 1..n. A subtopic of another topic is refused.
- */
-const reorderSubTopics = async (topicId, subTopics) => {
-  const existing = await prisma.subTopic.findMany({
-    where: { topicId },
-    select: { id: true }
-  });
-  const validIds = new Set(existing.map((row) => row.id));
-  if (!subTopics.every((row) => validIds.has(row.id))) {
-    throw new ApiError(403, "One or more subtopics do not belong to this topic.");
-  }
-
-  return prisma.$transaction((tx) =>
-    moveContainers("subTopic", topicId, subTopics.map(({ id, order }) => ({ id, order })), tx)
-  );
-};
-
 module.exports = {
   getSubTopics,
   getSubTopicById,
   createSubTopic,
   updateSubTopic,
   deleteSubTopic,
-  reorderSubTopics,
 };

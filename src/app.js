@@ -24,19 +24,15 @@ const enrollmentRoutes = require("./modules/enrollments/enrollment.routes");
 const quizRoutes = require("./modules/quizzes/quiz.routes");
 const questionRoutes = require("./modules/questions/question.routes");
 const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
-const reviewRoutes = require("./modules/reviews/review.routes");
 const certificateRoutes = require("./modules/certificates/certificate.routes");
 const adminRoutes = require("./modules/admin/admin.route");
 const stickyNoteRoutes = require("./modules/sticky-note/sticky-note.routes");
 const noteRoutes = require("./modules/notes/note.routes");
-const bookmarkRoutes = require("./modules/bookmarks/bookmark.routes");
 const achievementRoutes = require("./modules/achievements/achievement.routes");
 const assignmentRoutes = require("./modules/assignments/assignment.routes");
+const assignmentEvaluationRoutes = require("./modules/assignment-evaluation/assignmentEvaluation.routes");
 const resultsRoutes = require("./modules/results/results.routes");
 const lessonQueryRoutes = require("./modules/lesson-queries/lessonQuery.routes");
-const discussionRoutes = require("./modules/discussions/discussion.routes");
-const examRoutes = require("./modules/exams/exam.routes");
-const lessonNoteRoutes = require("./modules/lesson-notes/lessonNote.routes");
 
 const notificationRoutes = require("./modules/notifications/notification.routes");
 const fileRoutes = require("./modules/files/file.routes");
@@ -44,7 +40,6 @@ const courseImportRoutes = require("./modules/course-import/routes");
 const aiAssistantRoutes = require("./modules/ai-assistant/aiAssistant.routes");
 const progressRoutes = require("./modules/progress/progress.routes");
 const sessionRoutes = require("./modules/sessions/session.routes");
-const deviceRoutes = require("./modules/devices/device.routes");
 const playbackRoutes = require("./modules/playback/playback.routes");
 const requestId = require("./middleware/requestId.middleware");
 const { requestTiming } = require("./utils/requestTiming");
@@ -55,6 +50,11 @@ const { redactLoggedUrl } = require("./utils/logRedaction");
 const evaluatorRoutes = require("./modules/evaluators/evaluator.routes");
 const app = express();
 app.disable('etag');
+// Render terminates TLS at its proxy and forwards with X-Forwarded-For. Trust
+// that one hop so req.ip is the client, not the proxy — otherwise every
+// request shares the proxy's IP and the rate limiters throttle the whole site
+// as one client.
+app.set('trust proxy', 1);
 
 // Correlation id first, so every response — including CORS rejections and
 // errors — can carry it.
@@ -167,21 +167,19 @@ app.use("/enrollments", enrollmentRoutes);
 app.use("/quizzes", quizRoutes);
 app.use("/questions", questionRoutes);
 app.use("/dashboard", dashboardRoutes);
-app.use("/reviews", reviewRoutes);
 app.use("/certificates", certificateRoutes);
 app.use("/admin", adminRoutes);
 app.use("/sticky-notes", stickyNoteRoutes);
 app.use("/notifications", notificationRoutes);
 app.use("/files", fileRoutes);
 app.use("/notes", noteRoutes);
-app.use("/bookmarks", bookmarkRoutes);
 app.use("/achievements", achievementRoutes);
 app.use("/assignments", assignmentRoutes);
+// Auto-evaluation: marking schemes and evaluations for each assignment.
+app.use("/assignments", assignmentEvaluationRoutes.assignmentRouter);
+app.use("/assignment-evaluation", assignmentEvaluationRoutes.synonymRouter);
 app.use("/results", resultsRoutes);
 app.use("/lesson-queries", lessonQueryRoutes);
-app.use("/discussions", discussionRoutes);
-app.use("/exams", examRoutes);
-app.use("/lesson-notes", lessonNoteRoutes);
 // The 12 AI agent modules (observation, student-state, assessment,
 // recommendation, motivation, teacher-insights, analytics, career,
 // learning-path, placement, admin-intelligence, mentor) were removed from
@@ -193,17 +191,12 @@ app.use("/course-import", courseImportRoutes);
 app.use("/api/ai", courseImportRoutes);
 app.use("/progress", progressRoutes);
 app.use("/sessions", sessionRoutes);
-app.use("/devices", deviceRoutes);
 app.use("/playback", playbackRoutes);
 // Temporary evaluator accounts — registration, access status, feedback check.
 app.use("/evaluators", evaluatorRoutes);
 app.use(
   "/learner-model",
   require("./modules/learner-model/learnerModel.routes")
-);
-app.use(
-  "/adaptive-learning",
-  require("./modules/adaptive-learning/adaptiveLearning.routes")
 );
 app.use(errorHandler);
 

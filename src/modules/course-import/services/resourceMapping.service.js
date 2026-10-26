@@ -382,6 +382,5 @@ function mapResources({
 
 module.exports = {
   classifyResourceRole,
-  findDaySectionsInBlocks,
   mapResources
 };

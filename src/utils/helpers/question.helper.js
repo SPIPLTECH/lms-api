@@ -3,10 +3,12 @@
 // =====================================
 
 // A single option entry is either a plain string (legacy — never carries a
-// misconception tag) or a richer { optionText, isCorrect, misconceptionTag }
-// object. Coercing every entry via String(opt) — the old behavior — turns
-// an object option into the literal text "[object Object]", silently
-// destroying any authored tag. This preserves the object shape instead.
+// misconception tag) or a richer { optionText, isCorrect, misconceptionTag,
+// explanation } object. Coercing every entry via String(opt) — the old
+// behavior — turns an object option into the literal text "[object Object]",
+// silently destroying any authored tag. This preserves the object shape
+// instead. `explanation` is why that option is wrong, shown to a student on a
+// Self-Test once they check their answer.
 const normalizeOption = (opt) => {
     if (opt && typeof opt === "object" && !Array.isArray(opt)) {
         const optionText = String(opt.optionText ?? opt.text ?? "").trim();
@@ -18,6 +20,10 @@ const normalizeOption = (opt) => {
         }
         if (opt.misconceptionTag !== undefined && opt.misconceptionTag !== null && String(opt.misconceptionTag).trim() !== "") {
             normalized.misconceptionTag = String(opt.misconceptionTag).trim();
+        }
+        const explanation = opt.explanation !== undefined && opt.explanation !== null ? String(opt.explanation).trim() : "";
+        if (explanation) {
+            normalized.explanation = explanation;
         }
         return normalized;
     }
@@ -62,7 +68,9 @@ const normalizeOptions = (row) => {
         }
     }
 
-    // Case 3: optionA, optionB... or option1, option2...
+    // Case 3: optionA, optionB... or option1, option2... — each optionally
+    // paired with an optionA_explanation (why that option is wrong), which
+    // makes the option an object rather than a plain string.
     const options = [];
 
     const optionKeys = [
@@ -76,7 +84,10 @@ const normalizeOptions = (row) => {
             row[key] !== null &&
             String(row[key]).trim() !== ""
         ) {
-            options.push(String(row[key]).trim());
+            const optionText = String(row[key]).trim();
+            const reason = row[`${key}_explanation`];
+            const explanation = reason !== undefined && reason !== null ? String(reason).trim() : "";
+            options.push(explanation ? { optionText, explanation } : optionText);
         }
     });
 
@@ -93,12 +104,33 @@ const normalizeOptions = (row) => {
 // Full Option Text
 // =====================================
 
+// Compares answer text with option text the way people write answer keys:
+// ignoring case and repeated spaces.
+const answerKey = (value) => String(value).trim().replace(/\s+/g, " ").toLowerCase();
+
+const findOptionByText = (answerStr, options) => {
+    if (!Array.isArray(options)) return null;
+    const key = answerKey(answerStr);
+    const match = options.find((opt) => answerKey(optionDisplayText(opt)) === key);
+    return match === undefined ? null : optionDisplayText(match);
+};
+
+// "b", "(b)", "b)", "B.", "Option B", "option 2" — the letter/number forms an
+// answer key is written in, beyond the exact keys in answerMap below.
+const LETTER_ANSWER = /^(?:option\s*)?\(?([a-h])\)?\.?$/i;
+const NUMBER_ANSWER = /^(?:option\s*)?\(?([1-8])\)?\.?$/i;
+
 const normalizeSingleAnswer = (ans, options) => {
     if (ans === undefined || ans === null) return "";
     if (typeof ans === "boolean") return ans ? "True" : "False";
 
     const answerStr = String(ans).trim();
     if (!answerStr) return "";
+
+    // The option's own text wins over any letter/number reading: with
+    // options "3", "4", "5" an answer of "3" means "3", not the third option.
+    const byText = findOptionByText(answerStr, options);
+    if (byText !== null) return byText;
 
     const answerMap = {
         A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7,
@@ -115,6 +147,13 @@ const normalizeSingleAnswer = (ans, options) => {
             // display text either way.
             return optionDisplayText(options[idx]) || options[idx];
         }
+    }
+
+    const letter = answerStr.match(LETTER_ANSWER);
+    const number = answerStr.match(NUMBER_ANSWER);
+    const idx = letter ? letter[1].toUpperCase().charCodeAt(0) - 65 : number ? Number(number[1]) - 1 : -1;
+    if (idx >= 0 && Array.isArray(options) && options[idx] !== undefined) {
+        return optionDisplayText(options[idx]) || options[idx];
     }
 
     return answerStr;
@@ -135,9 +174,13 @@ const normalizeCorrectAnswer = (row, options) => {
         return raw.map((a) => normalizeSingleAnswer(a, options));
     }
 
-    // If string representing JSON array or comma/pipe separated values
+    // If string representing JSON array or comma/semicolon/pipe separated values
     if (typeof raw === "string" && raw.trim()) {
         const trimmed = raw.trim();
+        // An option whose own text contains a comma ("Paris, France") is one answer.
+        if (findOptionByText(trimmed, options) !== null) {
+            return normalizeSingleAnswer(trimmed, options);
+        }
         if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
             try {
                 const parsed = JSON.parse(trimmed);
@@ -154,6 +197,10 @@ const normalizeCorrectAnswer = (row, options) => {
         }
         if (trimmed.includes("|")) {
             const parts = trimmed.split("|").map((s) => s.trim()).filter(Boolean);
+            return parts.map((p) => normalizeSingleAnswer(p, options));
+        }
+        if (trimmed.includes(";")) {
+            const parts = trimmed.split(";").map((s) => s.trim()).filter(Boolean);
             return parts.map((p) => normalizeSingleAnswer(p, options));
         }
     }
@@ -246,7 +293,5 @@ const normalizeQuestion = (row) => {
 };
 
 module.exports = {
-    normalizeOptions,
-    normalizeCorrectAnswer,
     normalizeQuestion,
 };

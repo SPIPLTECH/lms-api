@@ -65,24 +65,10 @@ const deleteTopic = async (req, res, next) => {
   }
 };
 
-const reorderTopics = async (req, res, next) => {
-  try {
-    const result = await topicService.reorderTopics(
-      req.body.lessonId,
-      req.body.topics
-    );
-
-    res.json(result);
-  } catch (error) {
-    next(error);
-  }
-};
-
 module.exports = {
   getTopics,
   getTopicById,
   createTopic,
   updateTopic,
   deleteTopic,
-  reorderTopics,
 };

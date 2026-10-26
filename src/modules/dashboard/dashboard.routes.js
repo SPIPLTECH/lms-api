@@ -13,14 +13,6 @@ router.get(
   dashboardController.getAdminDashboard
 );
 
-// Teacher dashboard
-router.get(
-  "/instructor",
-  authMiddleware,
-  checkRole(["INSTRUCTOR"]),
-  dashboardController.getInstructorDashboard
-);
-
 // Student dashboard
 router.get(
   "/student",

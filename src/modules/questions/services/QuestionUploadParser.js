@@ -367,6 +367,10 @@ class QuestionUploadParser {
             id: `opt-${oIdx + 1}`,
             optionText: typeof opt === "object" ? String(opt.optionText || opt.text || "") : String(opt),
             isCorrect: typeof opt === "object" ? Boolean(opt.isCorrect) : false,
+            // Why this option is wrong, kept when the file supplies one.
+            ...(typeof opt === "object" && opt?.explanation && String(opt.explanation).trim()
+              ? { explanation: String(opt.explanation).trim() }
+              : {}),
           }));
         } else {
           const foundOpts = QuestionUploadParser.extractOptionCells(row);

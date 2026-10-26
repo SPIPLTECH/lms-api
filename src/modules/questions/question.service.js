@@ -212,11 +212,20 @@ const attachQuestionsToQuiz = async (quizId, questionIds) => {
     });
     let nextOrder = (existingMax._max.order || 0) + 1;
 
+    // The quiz scores a question by its QuizQuestion.marks, which defaults to
+    // 1 — so carry the question's own marks onto the link, or a 2-mark
+    // question created from the composer or an import is scored as 1.
+    const marksById = new Map(
+        (await prisma.question.findMany({ where: { id: { in: questionIds } }, select: { id: true, marks: true } }))
+            .map((q) => [q.id, q.marks])
+    );
+
     await prisma.quizQuestion.createMany({
         data: questionIds.map((questionId) => ({
             quizId,
             questionId,
             order: nextOrder++,
+            ...(marksById.get(questionId) ? { marks: marksById.get(questionId) } : {}),
         })),
         skipDuplicates: true,
     });
@@ -318,10 +327,6 @@ const bulkCreateQuestions = async (questionsPayload, quizId = null, userId = nul
 // Import Questions
 // =========================
 const importQuestions = async (file, quizId = null, userId = null) => {
-    if (quizId) {
-        await verifyQuizExists(quizId);
-    }
-
     const quiz = await verifyQuizExists(quizId);
 
     const { questions, report } = await importService.parseFile(file, quizId);

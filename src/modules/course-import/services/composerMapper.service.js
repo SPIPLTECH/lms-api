@@ -81,4 +81,4 @@ const toContentPayload = (block, { topicId, order }) => {
   };
 };
 
-module.exports = { toContentPayload, BLOCK_TO_CONTENT_TYPE, getEffectiveBlockType };
+module.exports = { toContentPayload, };

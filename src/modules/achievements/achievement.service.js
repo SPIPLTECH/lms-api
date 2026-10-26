@@ -58,34 +58,6 @@ const createAchievement = async (data) => {
   });
 };
 
-const awardAchievement = async (studentId, achievementId) => {
-  // Check both exist
-  const [student, achievement] = await Promise.all([
-    prisma.studentProfile.findUnique({ where: { id: studentId } }),
-    prisma.achievement.findUnique({ where: { id: achievementId } }),
-  ]);
-
-  if (!student) {
-    const error = new Error("Student not found");
-    error.statusCode = 404;
-    throw error;
-  }
-
-  if (!achievement) {
-    const error = new Error("Achievement not found");
-    error.statusCode = 404;
-    throw error;
-  }
-
-  // Upsert to avoid duplicates
-  return prisma.studentAchievement.upsert({
-    where: { studentId_achievementId: { studentId, achievementId } },
-    update: {},
-    create: { studentId, achievementId },
-    include: { achievement: true },
-  });
-};
-
 /**
  * Auto-check rules and award unlocked achievements for the given student.
  * Called internally after key events (quiz submit, lesson complete, note create, etc.)
@@ -143,6 +115,5 @@ module.exports = {
   getAchievements,
   getStudentAchievements,
   createAchievement,
-  awardAchievement,
   checkAndAwardAchievements,
 };

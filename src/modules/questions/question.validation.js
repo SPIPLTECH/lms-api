@@ -7,13 +7,14 @@ const MISCONCEPTION_TYPES = Object.keys(MISCONCEPTION_TAXONOMY);
 // object. `misconceptionTag`, when present, is validated against the
 // controlled taxonomy right here — an unknown/invented type is rejected with
 // a clear 400 at authoring time rather than silently accepted and only
-// caught later at scoring time.
+// caught later at scoring time. `explanation` is why that option is wrong.
 const optionSchema = Joi.alternatives().try(
   Joi.string().allow(""),
   Joi.object({
     optionText: Joi.string().required(),
     isCorrect: Joi.boolean().optional(),
     misconceptionTag: Joi.string().valid(...MISCONCEPTION_TYPES).optional(),
+    explanation: Joi.string().allow("", null).optional(),
   })
 );
 

@@ -4,7 +4,6 @@ const assert = require("node:assert");
 const prisma = require("../src/config/database");
 const { recomputeCourseProgress } = require("../src/utils/progressRollup");
 const progressService = require("../src/modules/progress/progress.service");
-const quizService = require("../src/modules/quizzes/quiz.service");
 const assignmentService = require("../src/modules/assignments/assignment.service");
 
 test("Comprehensive Multi-Entity Progress Rollup & Analytics Engine Tests", async (t) => {
@@ -260,17 +259,6 @@ test("Comprehensive Multi-Entity Progress Rollup & Analytics Engine Tests", asyn
       where: { studentId_topicId: { studentId: studentProfileId, topicId: "top_multi_1" } }
     });
     assert.strictEqual(tp1.completed, false, "Topic 1 must revert to incomplete");
-  });
-
-  await t.test("7. INSTRUCTOR ANALYTICS API: Returns read-only course overview and student progress table", async () => {
-    const analytics = await progressService.getInstructorCourseProgress(courseId);
-    assert.strictEqual(analytics.overview.totalStudents, 1);
-    assert.strictEqual(analytics.overview.completedStudents, 0);
-    assert.strictEqual(analytics.overview.inProgressStudents, 1);
-    assert.strictEqual(analytics.overview.avgProgressPercent, 75);
-    assert.strictEqual(analytics.students.length, 1);
-    assert.strictEqual(analytics.students[0].progressPercent, 75);
-    assert.strictEqual(analytics.students[0].status, "In Progress");
   });
 
   await t.test("8. VISITED TRACKING: Visited state can exist independently of Completed state across items and containers", async () => {

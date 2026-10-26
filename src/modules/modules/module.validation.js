@@ -13,18 +13,7 @@ const updateModuleSchema = Joi.object({
   isPublished: Joi.boolean().optional()
 });
 
-const reorderModulesSchema = Joi.object({
-  courseId: Joi.string().required(),
-  modules: Joi.array().items(
-    Joi.object({
-      id: Joi.string().required(),
-      order: Joi.number().integer().min(0).required()
-    })
-  ).min(1).required()
-});
-
 module.exports = {
   createModuleSchema,
   updateModuleSchema,
-  reorderModulesSchema
 };

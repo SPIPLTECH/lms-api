@@ -27,8 +27,14 @@ const upload = multer({
 // Question Repository Routes
 // =========================
 
+// The read routes below return whole Question rows — correctAnswer,
+// explanation, hint and option flags included — so they are for the people
+// who author questions. A student reads a quiz's questions only through
+// GET /quizzes/:quizId, which withholds the answer key.
+const AUTHORS = ["ADMIN", "INSTRUCTOR"];
+
 // GET /questions - Paginated search and filter repository questions
-router.get("/", verifyToken, requireContentAccess, controller.getQuestions);
+router.get("/", verifyToken, checkRole(AUTHORS), requireContentAccess, controller.getQuestions);
 
 // POST /questions/upload - Bulk file upload (Excel, CSV, JSON)
 router.post(
@@ -39,11 +45,8 @@ router.post(
   controller.uploadQuestions
 );
 
-// GET /questions/question/:questionId - Single question details & quiz usage
-router.get("/question/:questionId", verifyToken, requireContentAccess, controller.getQuestionById);
-
 // GET /questions/quiz/:quizId - Questions by Quiz ID
-router.get("/quiz/:quizId", verifyToken, requireContentAccess, controller.getQuestionsByQuizId);
+router.get("/quiz/:quizId", verifyToken, checkRole(AUTHORS), requireContentAccess, controller.getQuestionsByQuizId);
 
 // POST /questions - Manual single question creation
 router.post(
@@ -70,6 +73,17 @@ router.post(
   checkRole(["ADMIN", "INSTRUCTOR"]),
   importUpload.single("file"),
   controller.importQuestionsFile
+);
+
+// POST /questions/import/preview - Parse an uploaded file and return its
+// questions for review in the composer's quiz editor. Writes nothing; the
+// chosen questions are saved with the quiz.
+router.post(
+  "/import/preview",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  importUpload.single("file"),
+  controller.previewImportFile
 );
 
 // POST /questions/:questionId/archive - Archive question
@@ -106,6 +120,6 @@ router.delete(
 );
 
 // Fallback GET /questions/:quizId
-router.get("/:quizId", verifyToken, requireContentAccess, controller.getQuestionsByQuizId);
+router.get("/:quizId", verifyToken, checkRole(AUTHORS), requireContentAccess, controller.getQuestionsByQuizId);
 
 module.exports = router;

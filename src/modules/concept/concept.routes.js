@@ -14,7 +14,6 @@ const validate = require("../../middleware/joiValidation.middleware");
 const {
   createConceptSchema,
   updateConceptSchema,
-  reorderConceptsSchema,
 } = require("./concept.validation");
 const requireContentAccess = require("../../middleware/contentAccess.middleware");
 
@@ -24,16 +23,6 @@ router.get(
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
   requireContentAccess,
   conceptController.getConcepts
-);
-
-// Must stay above GET /:conceptId, which would otherwise capture "reorder".
-router.patch(
-  "/reorder",
-  verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  validate(reorderConceptsSchema),
-  verifySubTopicOwnership.fromBody,
-  conceptController.reorderConcepts
 );
 
 router.get(

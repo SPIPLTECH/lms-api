@@ -23,17 +23,6 @@ const passwordResetRateLimiter = rateLimit({
   }
 });
 
-const llmRateLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 20, // Limit each IP to 20 LLM generate requests per windowMs
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    success: false,
-    message: "Too many LLM requests from this IP, please try again shortly."
-  }
-});
-
 // AI Assistant. Two tiers, because the cost profile differs sharply:
 //
 // - Guest traffic is unauthenticated, so the only handle is the IP. It is
@@ -89,15 +78,6 @@ const sessionStatusRateLimiter = rateLimit({
   message: { success: false, message: "Too many session status requests, please try again shortly." }
 });
 
-const deviceRegisterRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: perUser("device"),
-  message: { success: false, message: "Too many device registration requests, please try again shortly." }
-});
-
 const playbackStartRateLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
   max: 60,
@@ -110,11 +90,9 @@ const playbackStartRateLimiter = rateLimit({
 module.exports = {
   refreshRateLimiter,
   sessionStatusRateLimiter,
-  deviceRegisterRateLimiter,
   playbackStartRateLimiter,
   authRateLimiter,
   passwordResetRateLimiter,
-  llmRateLimiter,
   aiAssistantGuestRateLimiter,
   aiAssistantUserRateLimiter
 };

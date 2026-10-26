@@ -3,35 +3,17 @@ const router = express.Router();
 
 const progressController = require('./progress.controller');
 const verifyToken = require('../../middleware/auth.middleware');
-const checkRole = require('../../middleware/role.middleware');
 const validate = require('../../middleware/joiValidation.middleware');
-const verifyCourseOwnership = require('../../middleware/courseOwnership.middleware');
-const { completeContentSchema, completeLessonSchema, markVisitedSchema } = require('./progress.validation');
+const { completeContentSchema, markVisitedSchema } = require('./progress.validation');
 const requireContentAccess = require('../../middleware/contentAccess.middleware');
 
 router.use(verifyToken);
-
-// Ownership check is required in addition to the role check: without it any
-// INSTRUCTOR could read every student's progress in a course they don't own.
-router.get(
-  '/instructor/courses/:courseId',
-  checkRole(['INSTRUCTOR', 'ADMIN']),
-  verifyCourseOwnership,
-  progressController.getInstructorProgress
-);
 
 router.post(
   '/content-complete',
   requireContentAccess,
   validate(completeContentSchema),
   progressController.markContentComplete
-);
-
-router.post(
-  '/complete',
-  requireContentAccess,
-  validate(completeLessonSchema),
-  progressController.markLessonComplete
 );
 
 router.post(
@@ -54,9 +36,5 @@ router.get('/learning-sequence', requireContentAccess, progressController.getLea
 // Per-course progress summary — course content; gated while another device
 // holds the playback lease.
 router.get('/courses/:courseId', requireContentAccess, progressController.getCourseProgress);
-
-// Overall progress across all enrolled courses — exposes enrolled-course
-// content; gated while another device holds the playback lease.
-router.get('/', requireContentAccess, progressController.getOverallProgress);
 
 module.exports = router;

@@ -42,23 +42,6 @@ const createAchievement = async (req, res, next) => {
   }
 };
 
-const awardAchievement = async (req, res, next) => {
-  try {
-    const result = await achievementService.awardAchievement(
-      req.params.studentProfileId,
-      req.params.achievementId
-    );
-
-    res.status(201).json({
-      success: true,
-      message: "Achievement awarded successfully",
-      data: result,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 const checkAndAwardAchievements = async (req, res, next) => {
   try {
     const student = await prisma.studentProfile.findUnique({
@@ -85,6 +68,5 @@ module.exports = {
   getAchievements,
   getMyAchievements,
   createAchievement,
-  awardAchievement,
   checkAndAwardAchievements,
 };

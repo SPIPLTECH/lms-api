@@ -375,7 +375,5 @@ module.exports = {
   stopPlayback,
   getStatus,
   isPlaybackHeldElsewhere,
-  authorizeMedia,
   serveMedia,
-  STOP_REASONS,
 };

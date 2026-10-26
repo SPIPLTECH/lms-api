@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { buildCanonicalCourse, deriveCourseMetadata, mapCanonicalContents } = require("../services/canonicalCourseMapper.service");
+const { buildCanonicalCourse, mapCanonicalContents } = require("../services/canonicalCourseMapper.service");
 
 test("1. Course construction with metadata and modules", () => {
   const meta = { title: "C-CAT Prep", code: "CCAT-01" };

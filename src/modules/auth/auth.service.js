@@ -81,7 +81,6 @@ const recordLoginFailure = (userId, reasonCode, authMethod) =>
     metadata: { authMethod }
   });
 
-
 /**
  * Register User
  */
@@ -666,7 +665,6 @@ module.exports = {
   register,
   login,
   loginWithGoogle,
-  generateAccessToken,
   logout,
   forgotPassword,
   verifyResetOtp,

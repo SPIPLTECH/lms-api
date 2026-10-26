@@ -354,10 +354,6 @@ function detectTopicsForCourse({ lessonGroupingResult = {}, blocksByFile = {} } 
 }
 
 module.exports = {
-  cleanHeadingText,
-  parseHeading,
-  isDayLessonHeading,
-  isDocumentTitleHeading,
   inspectTopicHeading,
   detectTopicsForSection,
   detectTopicsForCourse

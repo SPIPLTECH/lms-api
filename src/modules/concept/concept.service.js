@@ -1,6 +1,6 @@
 const ApiError = require("../../utils/ApiError");
 const prisma = require("../../config/database");
-const { claimContainerOrder, releaseContainerOrder, moveContainers } = require("../contents/contentOrder.util");
+const { claimContainerOrder, releaseContainerOrder } = require("../contents/contentOrder.util");
 
 const getConcepts = async (subTopicId, role, userId) => {
   const where = {};
@@ -130,32 +130,10 @@ const deleteConcept = async (conceptId) => {
   });
 };
 
-/**
- * Moves concepts within their subtopic's learning sequence, which they share
- * with the subtopic's Content rows: each listed concept goes to its requested
- * position, everything else keeps its relative order, and the sequence stays
- * 1..n. A concept of another subtopic is refused.
- */
-const reorderConcepts = async (subTopicId, concepts) => {
-  const existing = await prisma.concept.findMany({
-    where: { subTopicId },
-    select: { id: true }
-  });
-  const validIds = new Set(existing.map((row) => row.id));
-  if (!concepts.every((row) => validIds.has(row.id))) {
-    throw new ApiError(403, "One or more concepts do not belong to this subtopic.");
-  }
-
-  return prisma.$transaction((tx) =>
-    moveContainers("concept", subTopicId, concepts.map(({ id, order }) => ({ id, order })), tx)
-  );
-};
-
 module.exports = {
   getConcepts,
   getConceptById,
   createConcept,
   updateConcept,
   deleteConcept,
-  reorderConcepts,
 };

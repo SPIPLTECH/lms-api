@@ -2,9 +2,6 @@ const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
 const ApiError = require("../../utils/ApiError");
 const { buildLessonLockMap } = require("../../utils/dripAccess");
-// const verifyToken = require(
-//   "../../middleware/auth.middleware"
-// );
 
 /**
  * Batched stats block for the course card / workspace overview — one set of
@@ -317,7 +314,6 @@ const getCourses = async (
   };
   // Student should see only published courses
 
-
   const commonInclude = {
     creator: {
       select: {
@@ -361,52 +357,6 @@ const getCourses = async (
   ]);
 
   return { courses: await attachCourseStats(courses), total };
-};
-
-/**
- * Summary counts for the instructor's own courses.
- *
- * Backs both the My Courses summary cards and the instructor dashboard's KPI
- * strip. Every value here is computed by the database and returns a single
- * number — nothing loads a list in order to take its `.length`.
- *
- * `students` is a COUNT(DISTINCT) rather than a groupBy/findMany, because a
- * groupBy would still return one row per student (248 rows to display "248").
- * Prisma has no first-class distinct-count, so this is the one place raw SQL
- * is the right tool; the instructor id is parameterised, never interpolated.
- */
-const getCourseStatusCounts = async (instructorId) => {
-  const [total, published, draft, archived, activeQuizzes, lessons, studentRows] =
-    await Promise.all([
-      prisma.course.count({ where: { creatorId: instructorId } }),
-      prisma.course.count({ where: { creatorId: instructorId, status: "PUBLISHED" } }),
-      prisma.course.count({ where: { creatorId: instructorId, status: "DRAFT" } }),
-      prisma.course.count({ where: { creatorId: instructorId, status: "ARCHIVED" } }),
-      prisma.quiz.count({
-        where: { isPublished: true, course: { creatorId: instructorId } },
-      }),
-      // Lessons hang off the course through Module, so the filter walks
-      // lesson -> module -> course rather than counting a fetched list.
-      prisma.lesson.count({
-        where: { module: { course: { creatorId: instructorId } } },
-      }),
-      prisma.$queryRaw`
-        SELECT COUNT(DISTINCT e."studentId")::int AS count
-        FROM "Enrollment" e
-        JOIN "Course" c ON c."id" = e."courseId"
-        WHERE c."creatorId" = ${instructorId}
-      `,
-    ]);
-
-  return {
-    total,
-    published,
-    draft,
-    archived,
-    activeQuizzes,
-    lessons,
-    students: Number(studentRows?.[0]?.count ?? 0),
-  };
 };
 
 /**
@@ -1110,354 +1060,6 @@ const updateStatus = async (courseId, status, userId, userRole) => {
 };
 
 /**
- * Deep-clones a course's structure (modules -> lessons -> contents) into a
- * new DRAFT course. Enrollments, submissions, reviews, and certificates are
- * intentionally NOT copied — a duplicate is a fresh course, not a snapshot
- * of another course's student data.
- */
-/**
- * The Content columns a duplicate copies, minus the parent id (the caller
- * supplies whichever of the six parents applies). Matches the field list the
- * four existing levels already inline above.
- */
-const copyContentFields = (content) => ({
-  type: content.type,
-  title: content.title,
-  videoUrl: content.videoUrl,
-  fileUrl: content.fileUrl,
-  htmlContent: content.htmlContent,
-  externalUrl: content.externalUrl,
-  duration: content.duration,
-  data: content.data
-});
-
-const SINGLE_PARENT = { courseId: null, moduleId: null, lessonId: null, topicId: null, subTopicId: null, conceptId: null };
-
-/**
- * Copies one container's Content rows into its duplicate at the SAME
- * positions — a container's Content rows and its child containers share one
- * sequence, and the child containers are copied with their own orders too:
- *   - ordinary content is copied as is;
- *   - an assignment item is copied as a new Assignment with its own
- *     Content(type=ASSIGNMENT) row — assignments were always duplicated as
- *     part of the content (the lesson composer's assignment blocks), and an
- *     assignment row must never point at the source course's assignment;
- *   - quizzes are not duplicated, exactly as before (a quiz carries its own
- *     question bank links and attempt history and is rebuilt deliberately).
- */
-const copyContentSequence = async (tx, rows, parent) => {
-  const parentData = { ...SINGLE_PARENT, ...parent };
-  const plain = [];
-  for (const content of rows) {
-    const order = content.order;
-    if (content.type === "QUIZ") continue;
-    if (content.type === "ASSIGNMENT") {
-      if (!content.assignment) continue;
-      const a = content.assignment;
-      const copy = await tx.assignment.create({
-        data: {
-          title: a.title,
-          description: a.description,
-          dueDate: a.dueDate,
-          totalQuestions: a.totalQuestions,
-          estimatedTime: a.estimatedTime,
-          resources: a.resources,
-          marks: a.marks,
-          assessmentType: a.assessmentType,
-          attachments: a.attachments ?? undefined,
-          isPublished: a.isPublished,
-          ...parentData
-        }
-      });
-      await tx.content.create({
-        data: { type: "ASSIGNMENT", title: content.title, order, assignmentId: copy.id, ...parentData }
-      });
-      continue;
-    }
-    plain.push({ ...copyContentFields(content), order, ...parentData });
-  }
-  if (plain.length > 0) await tx.content.createMany({ data: plain });
-};
-
-const duplicateCourse = async (courseId, instructorId) => {
-  const contentsWithAssignments = { orderBy: { order: "asc" }, include: { assignment: true } };
-  const source = await prisma.course.findUnique({
-    where: { id: courseId },
-    include: {
-      contents: contentsWithAssignments,
-      modules: {
-        orderBy: { order: "asc" },
-        include: {
-          contents: contentsWithAssignments,
-          lessons: {
-            orderBy: { order: "asc" },
-            include: {
-              contents: contentsWithAssignments,
-              topics: {
-                orderBy: { order: "asc" },
-                include: {
-                  contents: contentsWithAssignments,
-                  subTopics: {
-                    orderBy: { order: "asc" },
-                    include: {
-                      contents: contentsWithAssignments,
-                      concepts: {
-                        orderBy: { order: "asc" },
-                        include: { contents: contentsWithAssignments }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  });
-
-  if (!source) {
-    const error = new Error("Course not found");
-    error.statusCode = 404;
-    throw error;
-  }
-
-  return prisma.$transaction(async (tx) => {
-    const newCourse = await tx.course.create({
-      data: {
-        title: `${source.title} (Copy)`,
-        description: source.description,
-        category: source.category,
-        level: source.level,
-        thumbnailUrl: source.thumbnailUrl,
-        status: "DRAFT",
-        creatorId: instructorId,
-        visibility: source.visibility,
-        language: source.language,
-        tags: source.tags,
-        certificatesEnabled: source.certificatesEnabled,
-        discussionEnabled: source.discussionEnabled,
-
-        estimatedLearningHours: source.estimatedLearningHours
-      }
-    });
-
-    await copyContentSequence(tx, source.contents, { courseId: newCourse.id });
-
-    for (const module of source.modules) {
-      const newModule = await tx.module.create({
-        data: {
-          title: module.title,
-          description: module.description,
-          order: module.order,
-          isPublished: false,
-          courseId: newCourse.id
-        }
-      });
-      await copyContentSequence(tx, module.contents, { moduleId: newModule.id });
-
-      for (const lesson of module.lessons) {
-        const newLesson = await tx.lesson.create({
-          data: {
-            title: lesson.title,
-            description: lesson.description,
-            order: lesson.order,
-            isPublished: false,
-            moduleId: newModule.id
-          }
-        });
-        await copyContentSequence(tx, lesson.contents, { lessonId: newLesson.id });
-
-        for (const topic of lesson.topics) {
-          const newTopic = await tx.topic.create({
-            data: {
-              title: topic.title,
-              description: topic.description,
-              order: topic.order,
-              isPublished: false,
-              lessonId: newLesson.id
-            }
-          });
-          await copyContentSequence(tx, topic.contents, { topicId: newTopic.id });
-
-          // SubTopics and their Concepts. Without this a duplicate would
-          // silently drop everything below Topic -- no error, just a course
-          // missing whole branches.
-          for (const subTopic of topic.subTopics || []) {
-            const newSubTopic = await tx.subTopic.create({
-              data: {
-                title: subTopic.title,
-                description: subTopic.description,
-                order: subTopic.order,
-                isPublished: false,
-                topicId: newTopic.id
-              }
-            });
-            await copyContentSequence(tx, subTopic.contents, { subTopicId: newSubTopic.id });
-
-            for (const concept of subTopic.concepts || []) {
-              const newConcept = await tx.concept.create({
-                data: {
-                  title: concept.title,
-                  description: concept.description,
-                  order: concept.order,
-                  isPublished: false,
-                  subTopicId: newSubTopic.id
-                }
-              });
-              await copyContentSequence(tx, concept.contents, { conceptId: newConcept.id });
-            }
-          }
-        }
-      }
-    }
-
-    return newCourse;
-  });
-};
-
-const getCourseStudents = async (courseId) => {
-  const enrollments = await prisma.enrollment.findMany({
-    where: {
-      courseId
-    },
-    include: {
-      student: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true
-            }
-          }
-        }
-      }
-    }
-  });
-
-  const studentIds = enrollments.map((e) => e.studentId);
-
-  const lessons = await prisma.lesson.findMany({
-    where: { module: { courseId } },
-    select: { id: true }
-  });
-  const lessonIds = lessons.map((l) => l.id);
-
-  const [progressRows, submissionRows] = await Promise.all([
-    lessonIds.length > 0 && studentIds.length > 0
-      ? prisma.lessonProgress.findMany({
-          where: { studentId: { in: studentIds }, lessonId: { in: lessonIds }, completed: true },
-          select: { studentId: true }
-        })
-      : [],
-    studentIds.length > 0
-      ? prisma.quizSubmission.findMany({
-          where: { studentId: { in: studentIds }, quiz: { courseId } },
-          select: { studentId: true, percentage: true }
-        })
-      : []
-  ]);
-
-  const completedCountByStudent = {};
-  progressRows.forEach((p) => {
-    completedCountByStudent[p.studentId] = (completedCountByStudent[p.studentId] || 0) + 1;
-  });
-
-  const scoresByStudent = {};
-  submissionRows.forEach((s) => {
-    if (!scoresByStudent[s.studentId]) scoresByStudent[s.studentId] = [];
-    scoresByStudent[s.studentId].push(s.percentage);
-  });
-
-  return enrollments.map((enrollment) => {
-    const studentId = enrollment.studentId;
-    const completed = completedCountByStudent[studentId] || 0;
-    const progress = lessonIds.length > 0 ? Math.round((completed / lessonIds.length) * 100) : 0;
-
-    const scores = scoresByStudent[studentId] || [];
-    const avgGrade =
-      scores.length > 0 ? Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length) : null;
-
-    return {
-      id: enrollment.student.user.id,
-      studentProfileId: enrollment.studentId,
-      name: enrollment.student.user.name,
-      email: enrollment.student.user.email,
-      enrolledAt: enrollment.enrolledAt,
-      progress,
-      avgGrade
-    };
-  });
-};
-
-/**
- * Exports a full 5-layer course into a portable ZIP package containing course.json and physical assets.
- * 
- * @param {string} courseId Database course ID
- * @returns {Promise<{ filePath: string, filename: string, totalEntries: number }>}
- */
-const exportCourse = async (courseId) => {
-  const { collectCourseAssets } = require("../import/collectors/assetCollector");
-  const { mapCourseToPackageData } = require("../import/mappers/courseMapper");
-  const { buildCoursePackage } = require("../import/builders/packageBuilder");
-
-  const course = await prisma.course.findUnique({
-    where: { id: courseId },
-    include: {
-      modules: {
-        orderBy: { order: "asc" },
-        include: {
-          lessons: {
-            orderBy: { order: "asc" },
-            include: {
-              topics: {
-                orderBy: { order: "asc" },
-                // Quiz/assignment items are not part of the package format
-                // (quizzes and assignments were never exported); their
-                // Content rows carry no material of their own.
-                include: { contents: { where: { type: { notIn: ["QUIZ", "ASSIGNMENT"] } }, orderBy: { order: "asc" } } }
-              }
-            }
-          }
-        }
-      }
-    }
-  });
-
-  if (!course) {
-    const error = new Error("Course not found");
-    error.statusCode = 404;
-    throw error;
-  }
-
-  // 1. Run Asset Collector
-  const assetCollection = collectCourseAssets(course);
-  if (!assetCollection.success) {
-    const errorMsg = Array.isArray(assetCollection.errors) && assetCollection.errors.length > 0
-      ? assetCollection.errors.join("; ")
-      : "Missing course assets on disk.";
-    const error = new Error(`Asset collection failed: ${errorMsg}`);
-    error.statusCode = 400;
-    error.details = assetCollection;
-    throw error;
-  }
-
-  // 2. Map course to canonical JSON v2 using collision-safe assetMap
-  const courseJson = mapCourseToPackageData(course, { assetMap: assetCollection.assetMap });
-
-  // 3. Build portable ZIP package
-  const packageResult = buildCoursePackage({ courseJson, assetCollection });
-  if (!packageResult.success) {
-    const error = new Error(`Package creation failed: ${packageResult.errors.join("; ")}`);
-    error.statusCode = 500;
-    throw error;
-  }
-
-  return packageResult;
-};
-
-/**
  * Restores an archived course (ARCHIVED -> DRAFT). Admin-only lifecycle action.
  */
 const restoreCourse = async (courseId, userId, userRole) => {
@@ -1526,21 +1128,119 @@ const trackCourseView = async (courseId, instructorId) => {
   }
 };
 
+// An assignment may hang off any of the six levels, and courseId is set only
+// on course-level rows, so the course is reached through whichever parent a
+// row has.
+const assignmentsOfCourse = (courseId) => [
+  { courseId },
+  { module: { courseId } },
+  { lesson: { module: { courseId } } },
+  { topic: { lesson: { module: { courseId } } } },
+  { subTopic: { topic: { lesson: { module: { courseId } } } } },
+  { concept: { subTopic: { topic: { lesson: { module: { courseId } } } } } },
+];
+
+const MARKETING_REVIEWS_LIMIT = 10;
+
+/**
+ * Public course summary for the marketing site: the course card fields, live
+ * counts and the latest reviews. Read straight from the course tables, so
+ * nothing is stored twice and no number goes stale. Only a PUBLISHED course
+ * that is not PRIVATE is returned; anything else is null (404). Counts cover
+ * published material only, as a student sees it; qualifying tests are not
+ * counted as quizzes.
+ */
+const getCourseMarketingInfo = async (courseId) => {
+  const [course, lessonsCount, assignmentsCount, ratings, reviews] = await Promise.all([
+    prisma.course.findFirst({
+      where: { id: courseId, status: "PUBLISHED", visibility: { not: "PRIVATE" } },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        thumbnailUrl: true,
+        level: true,
+        category: true,
+        language: true,
+        estimatedLearningHours: true,
+        certificatesEnabled: true,
+        creator: { select: { name: true } },
+        _count: {
+          select: {
+            modules: { where: { isPublished: true } },
+            enrollments: true,
+            quizzes: { where: { isPublished: true, quizTag: { not: "QUALIFYING" } } },
+          },
+        },
+      },
+    }),
+    prisma.lesson.count({
+      where: { isPublished: true, module: { courseId, isPublished: true } },
+    }),
+    prisma.assignment.count({
+      where: { isPublished: true, OR: assignmentsOfCourse(courseId) },
+    }),
+    prisma.review.aggregate({
+      where: { courseId },
+      _avg: { rating: true },
+      _count: { _all: true },
+    }),
+    prisma.review.findMany({
+      where: { courseId },
+      orderBy: { createdAt: "desc" },
+      take: MARKETING_REVIEWS_LIMIT,
+      select: {
+        id: true,
+        rating: true,
+        review: true,
+        createdAt: true,
+        student: { select: { user: { select: { name: true, avatar: true } } } },
+      },
+    }),
+  ]);
+
+  if (!course) return null;
+
+  return {
+    courseId: course.id,
+    courseName: course.title,
+    instructorName: course.creator?.name ?? null,
+    courseOverview: course.description,
+    thumbnailUrl: course.thumbnailUrl,
+    level: course.level,
+    category: course.category,
+    language: course.language,
+    durationHours: course.estimatedLearningHours,
+    certificateAvailable: course.certificatesEnabled,
+    totalModules: course._count.modules,
+    totalLessons: lessonsCount,
+    studentsEnrolled: course._count.enrollments,
+    avgRating: ratings._avg.rating ? parseFloat(ratings._avg.rating.toFixed(1)) : 0,
+    totalReviews: ratings._count._all,
+    interactiveQuizzes: course._count.quizzes,
+    assignedWorksheets: assignmentsCount,
+    studentReviews: reviews.map((r) => ({
+      reviewId: r.id,
+      rating: r.rating,
+      comment: r.review,
+      studentName: r.student?.user?.name ?? null,
+      studentAvatar: r.student?.user?.avatar ?? null,
+      createdAt: r.createdAt,
+    })),
+  };
+};
+
 module.exports = {
   getCourses,
   getCourseById,
+  getCourseMarketingInfo,
   createCourse,
   updateCourse,
   updateStatus,
   deleteCourse,
   publishCourse,
   unpublishCourse,
-  archiveCourse,
   restoreCourse,
-  duplicateCourse,
-  getCourseStudents,
-  getCourseStatusCounts,
-  exportCourse,
   trackCourseView,
   validateCourseForPublish
 };

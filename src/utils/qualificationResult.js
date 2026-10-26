@@ -261,6 +261,5 @@ const buildQualificationOutcome = async (quiz, attempt, tx = null, context = {})
 
 module.exports = {
   summarizeWeakConcepts,
-  resolveRecommendedContent,
   buildQualificationOutcome
 };

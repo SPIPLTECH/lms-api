@@ -66,6 +66,5 @@ const calculateBktUpdate = ({ priorMastery, isCorrect, kc, attemptsCount = 1 }) 
 };
 
 module.exports = {
-  clampProbability,
   calculateBktUpdate,
 };

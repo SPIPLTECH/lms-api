@@ -28,7 +28,6 @@ const {
   createCourseSchema,
   updateCourseSchema,
   updateCourseStatusSchema,
-  sendAnnouncementSchema
 } = require("./course.validation");
 // Public read — optionalToken allows unauthenticated (GUEST) access.
 // The service layer already filters: guests/students see only PUBLISHED courses;
@@ -46,13 +45,6 @@ router.get(
   controller.getCourses
 );
 
-router.get(
-  "/stats/mine",
-  verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  controller.getCourseStatusCounts
-);
-
 // Public read — optionalToken allows unauthenticated access for course preview.
 // Students/guests only receive PUBLISHED course data; the service enforces this.
 router.get(
@@ -61,6 +53,14 @@ router.get(
   // The full tree is course content; ?include=meta (title, card data) is not.
   contentAccess({ skip: (req) => req.query.include === "meta" }),
   controller.getCourseById
+);
+
+// Public, no token: the marketing site's course summary (card fields, live
+// counts, latest reviews). Only PUBLISHED, non-PRIVATE courses; the service
+// returns null (404) for anything else.
+router.get(
+  "/:courseId/marketing",
+  controller.getCourseMarketingInfo
 );
 
 router.post(
@@ -109,15 +109,6 @@ router.post(
 );
 
 router.post(
-  "/:courseId/archive",
-  verifyToken,
-  checkRole([
-    "ADMIN"
-  ]),
-  controller.archiveCourse
-);
-
-router.post(
   "/:courseId/restore",
   verifyToken,
   checkRole([
@@ -148,32 +139,6 @@ router.delete(
   verifyCourseOwnership,
   controller.deleteCourse
 );
-router.post(
-  "/:courseId/duplicate",
-  verifyToken,
-  checkRole([
-    "ADMIN",
-    "INSTRUCTOR"
-  ]),
-  verifyCourseOwnership,
-  controller.duplicateCourse
-);
-
-router.get(
-  "/:courseId/students",
-  verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  verifyCourseOwnership,
-  controller.getCourseStudents
-);
-
-router.get(
-  "/:courseId/export",
-  verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  verifyCourseOwnership,
-  controller.exportCourse
-);
 
 router.patch(
   "/:courseId/view",
@@ -181,15 +146,6 @@ router.patch(
   checkRole(["INSTRUCTOR"]),
   verifyCourseOwnership,
   controller.trackCourseView
-);
-
-router.post(
-  "/:courseId/announcements",
-  verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  verifyCourseOwnership,
-  validate(sendAnnouncementSchema),
-  controller.sendAnnouncement
 );
 
 module.exports = router;

@@ -38,8 +38,6 @@ const BKT_THRESHOLDS = {
 };
 
 module.exports = {
-  DEFAULT_BKT_PARAMS,
-  KC_PARAM_OVERRIDES,
   getBktParamsForKc,
   BKT_THRESHOLDS,
 };

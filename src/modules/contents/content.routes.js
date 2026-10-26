@@ -23,7 +23,7 @@ const verifyContentParentOwnership = require(
   "../../middleware/contentParentOwnership.middleware"
 );
 
-const { upload, sanitizeSvgUpload } = require(
+const { upload } = require(
   "../../middleware/upload.middleware"
 );
 const validate = require("../../middleware/joiValidation.middleware");
@@ -31,40 +31,8 @@ const {
   createContentSchema,
   updateContentSchema,
   reorderContentsSchema,
-  swapSequenceOrderSchema
 } = require("./content.validation");
 const requireContentAccess = require("../../middleware/contentAccess.middleware");
-
-// File upload endpoint for DOCUMENT / PRESENTATION content
-router.post(
-  "/upload-file",
-  verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  upload.single("file"),
-  sanitizeSvgUpload,
-  (req, res) => {
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "No file uploaded."
-      });
-    }
-
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
-    const relativePath = req.file.path
-      .replace(/\\/g, "/")
-      .split("uploads/")[1];
-
-    const fileUrl = `${baseUrl}/uploads/${relativePath}`;
-
-    return res.status(200).json({
-      success: true,
-      fileUrl,
-      originalName: req.file.originalname,
-      size: req.file.size,
-    });
-  }
-);
 
 // THE reorder for a learning sequence: ordinary content, quizzes and
 // assignments are all Content rows, so this one endpoint orders all of them.
@@ -78,21 +46,6 @@ router.patch(
   ]),
   validate(reorderContentsSchema),
   controller.reorderContents
-);
-
-// Trades the positions of two items of one parent, of any kind (a Content
-// with a Lesson, a Quiz with a Topic, …). Must stay above the /:contentId
-// routes, which would otherwise capture "swap-order". Ownership is checked in
-// the service.
-router.patch(
-  "/swap-order",
-  verifyToken,
-  checkRole([
-    "ADMIN",
-    "INSTRUCTOR"
-  ]),
-  validate(swapSequenceOrderSchema),
-  controller.swapSequenceOrder
 );
 
 router.get(

@@ -38,7 +38,7 @@ const fakePrisma = {
       }
       const id = nextId("user");
       const studentProfile = { id: nextId("sp"), ...data.studentProfile.create };
-      db.users.set(id, { id, email: data.email, password: data.password, role: data.role, name: data.name, studentProfile });
+      db.users.set(id, { id, email: data.email, password: data.password, role: data.role, name: data.name, isVerified: data.isVerified, otp: data.otp, studentProfile });
       db.access.set(id, { id: nextId("ea"), userId: id, feedbackCompletedAt: null, feedbackSubmissionId: null, ...data.evaluatorAccess.create });
       return { id, email: data.email, studentProfile: { id: studentProfile.id } };
     },
@@ -121,6 +121,7 @@ const { verifyToken, optionalToken } = require("../src/middleware/auth.middlewar
 const evaluatorService = require("../src/modules/evaluators/evaluator.service");
 const feedbackSite = require("../src/modules/evaluators/feedbackSite.client");
 const { registerEvaluatorSchema } = require("../src/modules/evaluators/evaluator.validation");
+const emailVerification = require("../src/modules/evaluators/emailVerification");
 
 const SECTION_A = "course_section_a";
 const SECTION_B = "course_section_b";
@@ -132,6 +133,15 @@ const configure = () => {
   process.env.EVALUATOR_FEEDBACK_ADMIN_PASSWORD = "secret";
   delete process.env.EVALUATOR_FEEDBACK_API_URL;
 };
+// Steps 1-2 of registration (send + verify the code), returning the token step 3 needs.
+const verifiedToken = async (email) => {
+  const { challenge } = await evaluatorService.sendEmailCode(email);
+  const otp = sentMail.at(-1).html.match(/<h1>(\d{6})<\/h1>/)[1];
+  return evaluatorService.verifyEmailCode({ email, otp, challenge }).verificationToken;
+};
+const registerVerified = async (data) =>
+  evaluatorService.registerEvaluator({ ...data, emailVerificationToken: await verifiedToken(data.email) });
+
 const publishCourses = () => {
   db.courses.set(SECTION_A, { id: SECTION_A, status: "PUBLISHED" });
   db.courses.set(SECTION_B, { id: SECTION_B, status: "PUBLISHED" });
@@ -271,22 +281,33 @@ test("registration input cannot choose a role or evaluator fields", () => {
       role: "ADMIN",
       expiresAt: "2099-01-01",
       feedbackCompletedAt: "2026-01-01",
+      isVerified: true,
+      emailVerificationToken: "token",
     },
     { stripUnknown: true }
   );
   assert.equal(error, undefined);
-  assert.deepEqual(Object.keys(value).sort(), ["email", "name", "password"]);
+  assert.deepEqual(Object.keys(value).sort(), ["email", "emailVerificationToken", "name", "password"]);
 });
 
 test("registration creates a STUDENT evaluator enrolled in both courses with a 48h expiry", async () => {
   configure();
   publishCourses();
   const before = Date.now();
-  const result = await evaluatorService.registerEvaluator({ name: "Eva", email: "eva1@example.com", password: "longenough1" });
+  const token = await verifiedToken("eva1@example.com");
+  const mailCount = sentMail.length;
+  const result = await evaluatorService.registerEvaluator({
+    name: "Eva",
+    email: "eva1@example.com",
+    password: "longenough1",
+    emailVerificationToken: token,
+  });
   const after = Date.now();
 
   const user = [...db.users.values()].find((u) => u.email === "eva1@example.com");
   assert.equal(user.role, "STUDENT");
+  assert.equal(user.isVerified, true, "created already verified");
+  assert.equal(user.otp, undefined, "no OTP stored");
   assert.notEqual(user.password, "longenough1", "password is hashed");
 
   const access = db.access.get(user.id);
@@ -297,16 +318,15 @@ test("registration creates a STUDENT evaluator enrolled in both courses with a 4
 
   const courses = db.enrollments.filter((e) => e.studentId === user.studentProfile.id).map((e) => e.courseId).sort();
   assert.deepEqual(courses, [SECTION_A, SECTION_B]);
-  assert.equal(result.emailSent, true);
-  assert.equal(sentMail.at(-1).to, "eva1@example.com");
+  assert.equal(sentMail.length, mailCount, "no second email after verification");
 });
 
 test("registering the same email again is refused, so the period cannot restart", async () => {
   configure();
   publishCourses();
   await assert.rejects(
-    evaluatorService.registerEvaluator({ name: "Eva", email: "eva1@example.com", password: "longenough1" }),
-    (error) => error.code === "P2002"
+    evaluatorService.sendEmailCode("eva1@example.com"),
+    (error) => error.statusCode === 409 && error.code === "EMAIL_TAKEN"
   );
 });
 
@@ -318,7 +338,7 @@ test("a missing or unpublished course fails registration and creates nothing", a
   const enrollmentsBefore = db.enrollments.length;
 
   await assert.rejects(
-    evaluatorService.registerEvaluator({ name: "Eve", email: "eve@example.com", password: "longenough1" }),
+    registerVerified({ name: "Eve", email: "eve@example.com", password: "longenough1" }),
     (error) => error.statusCode === 503 && error.code === "EVALUATOR_COURSES_UNAVAILABLE"
   );
   assert.equal(db.users.size, usersBefore);
@@ -330,7 +350,7 @@ test("registration is closed unless explicitly enabled and configured", async ()
   configure();
   process.env.EVALUATOR_REGISTRATION_ENABLED = "false";
   await assert.rejects(
-    evaluatorService.registerEvaluator({ name: "X", email: "x@example.com", password: "longenough1" }),
+    evaluatorService.sendEmailCode("x@example.com"),
     (error) => error.statusCode === 404
   );
   assert.equal(evaluatorService.registrationInfo().open, false);
@@ -338,11 +358,82 @@ test("registration is closed unless explicitly enabled and configured", async ()
   configure();
   delete process.env.EVALUATOR_FEEDBACK_URL;
   await assert.rejects(
-    evaluatorService.registerEvaluator({ name: "X", email: "x@example.com", password: "longenough1" }),
+    evaluatorService.sendEmailCode("x@example.com"),
     (error) => error.statusCode === 503
   );
   configure();
   assert.equal(evaluatorService.registrationInfo().open, true);
+});
+
+// ------------------------------------------- email verification (no writes)
+test("sending and checking a code writes nothing to the database", async () => {
+  configure();
+  publishCourses();
+  const usersBefore = db.users.size;
+  const { challenge } = await evaluatorService.sendEmailCode("vera@example.com");
+  assert.equal(sentMail.at(-1).to, "vera@example.com");
+  assert.ok(!challenge.includes(sentMail.at(-1).html.match(/<h1>(\d{6})<\/h1>/)[1]), "code is not in the challenge");
+  await assert.rejects(
+    async () => evaluatorService.verifyEmailCode({ email: "vera@example.com", otp: "000000", challenge }),
+    (error) => error.code === "EMAIL_OTP_WRONG" || error.code === "EMAIL_OTP_LOCKED"
+  );
+  assert.equal(db.users.size, usersBefore);
+});
+
+test("a correct code gives a token for that email only, usable once", async () => {
+  configure();
+  const { challenge } = await evaluatorService.sendEmailCode("vic@example.com");
+  const otp = sentMail.at(-1).html.match(/<h1>(\d{6})<\/h1>/)[1];
+
+  assert.throws(
+    () => evaluatorService.verifyEmailCode({ email: "other@example.com", otp, challenge }),
+    (error) => error.code === "EMAIL_OTP_INVALID"
+  );
+  const { verificationToken } = evaluatorService.verifyEmailCode({ email: "VIC@example.com", otp, challenge });
+  assert.ok(verificationToken);
+  assert.throws(
+    () => evaluatorService.verifyEmailCode({ email: "vic@example.com", otp, challenge }),
+    (error) => error.code === "EMAIL_OTP_USED"
+  );
+  assert.doesNotThrow(() => emailVerification.assertVerified("vic@example.com", verificationToken));
+  assert.throws(() => emailVerification.assertVerified("eve@example.com", verificationToken), (error) => error.statusCode === 400);
+});
+
+test("wrong codes lock the challenge after the attempt limit", async () => {
+  configure();
+  const { challenge } = await evaluatorService.sendEmailCode("lock@example.com");
+  const otp = sentMail.at(-1).html.match(/<h1>(\d{6})<\/h1>/)[1];
+  const wrong = otp === "111111" ? "222222" : "111111";
+  for (let i = 0; i < emailVerification.MAX_ATTEMPTS; i++) {
+    assert.throws(() => evaluatorService.verifyEmailCode({ email: "lock@example.com", otp: wrong, challenge }));
+  }
+  assert.throws(
+    () => evaluatorService.verifyEmailCode({ email: "lock@example.com", otp, challenge }),
+    (error) => error.code === "EMAIL_OTP_LOCKED"
+  );
+});
+
+test("registration without a valid verification token creates nothing", async () => {
+  configure();
+  publishCourses();
+  const usersBefore = db.users.size;
+  for (const emailVerificationToken of [undefined, "garbage", makeUser().token]) {
+    await assert.rejects(
+      evaluatorService.registerEvaluator({ name: "Nov", email: "nov@example.com", password: "longenough1", emailVerificationToken }),
+      (error) => error.statusCode === 400
+    );
+  }
+  assert.equal(db.users.size, usersBefore + 1, "only makeUser's fixture was added");
+});
+
+test("a verification token is not accepted as a session token", async () => {
+  configure();
+  const token = await verifiedToken("sess@example.com");
+  const req = { headers: { authorization: `Bearer ${token}` }, originalUrl: "/courses", path: "/courses" };
+  let status = 0;
+  const res = { status: (code) => ((status = code), res), json: () => res };
+  await verifyToken(req, res, () => assert.fail("must not pass"));
+  assert.equal(status, 401);
 });
 
 // -------------------------------------------------- feedback verification
@@ -467,14 +558,6 @@ test("an unreachable or unconfigured feedback site is a 503, never a completion"
   delete process.env.EVALUATOR_FEEDBACK_ADMIN_PASSWORD;
   await assert.rejects(evaluatorService.checkFeedback(id), (error) => error.code === "FEEDBACK_SITE_UNAVAILABLE");
   assert.equal(db.access.get(id).feedbackCompletedAt, null);
-});
-
-test("admin confirmation records who confirmed it", async () => {
-  configure();
-  const { id } = makeUser();
-  const result = await evaluatorService.adminConfirmFeedback(db.users.get(id).email, "admin_1");
-  assert.equal(result.state, "ACTIVE");
-  assert.equal(db.access.get(id).feedbackVerifiedBy, "ADMIN:admin_1");
 });
 
 test("non-evaluators get a 404 from the evaluator endpoints and null in their profile", async () => {

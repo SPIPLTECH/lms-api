@@ -125,13 +125,6 @@ function sequenceMembers(parentField, parentId) {
   return members;
 }
 
-/** The parent whose sequence a container belongs to. */
-function containerParent(kind, row) {
-  const parentField = CONTAINER_PARENT_FIELD[kind];
-  if (!parentField) throw new Error(`Unknown container kind: ${kind}`);
-  return { parentField, parentId: row?.[parentField] };
-}
-
 /**
  * Serializes changes to one parent's sequence until the surrounding
  * transaction ends. A no-op for a client without raw query support (the
@@ -338,108 +331,19 @@ const claimContainerOrder = (kind, parentId, requestedOrder, client) =>
 const releaseContainerOrder = (kind, parentId, removedOrder, client) =>
   releaseSequenceOrder(CONTAINER_PARENT_FIELD[kind], parentId, removedOrder, client);
 
-/** Reorders containers within their parent's sequence; Content rows keep their relative order. */
-const moveContainers = (kind, parentId, moves, client) =>
-  moveSequenceItems(CONTAINER_PARENT_FIELD[kind], parentId, moves, client);
-
-// --- Swapping two items of any kind (PATCH /contents/swap-order) --------------
-
-// The kinds an API caller may name. A quiz or an assignment is placed by its
-// Content row, so it is resolved to that row; the containers are themselves.
-const SEQUENCE_ITEM_KINDS = ["content", "quiz", "assignment", ...Object.keys(CONTAINER_PARENT_FIELD)];
-const isSequenceKind = (kind) => SEQUENCE_ITEM_KINDS.includes(kind);
-
 const PARENT_SELECT = Object.fromEntries(PARENT_FIELDS.map((field) => [field, true]));
 
-/**
- * The sequence member `{ kind, id }` stands for — its own row, or for a quiz /
- * assignment the Content row placing it — with the parent whose sequence holds
- * it. null when there is none (unknown id, or a standalone quiz).
- */
-async function resolveSequenceItem(item, client = prisma) {
-  if (item.kind === "content" || item.kind === "quiz" || item.kind === "assignment") {
-    const where = item.kind === "content" ? { id: item.id } : { [`${item.kind}Id`]: item.id };
-    const row = await client.content.findUnique({ where, select: { id: true, order: true, ...PARENT_SELECT } });
-    const parentField = mostSpecificParentField(row);
-    return row && parentField ? { id: row.id, order: row.order, parentField, parentId: row[parentField] } : null;
-  }
-  const parentField = CONTAINER_PARENT_FIELD[item.kind];
-  const row = await client[item.kind].findUnique({ where: { id: item.id }, select: { id: true, order: true, [parentField]: true } });
-  return row?.[parentField] ? { id: row.id, order: row.order, parentField, parentId: row[parentField] } : null;
-}
-
-/**
- * Trades the positions of two items of one parent's sequence, whatever their
- * kinds (a Content with a Lesson, a Quiz with a Topic, …), in one transaction
- * under the parent's sequence lock. Built on moveSequenceItems, so the
- * sequence stays a gap-free 1..n with no position held twice.
- *
- * @param {{kind: string, id: string}} first
- * @param {{kind: string, id: string}} second
- * @returns {Promise<{kind: string, id: string, order: number}[]>} both items with their new order
- */
-async function swapSequenceItems(first, second, client = prisma) {
-  for (const item of [first, second]) {
-    if (!item?.id || !isSequenceKind(item.kind)) throw badRequest("Each item needs an id and a valid kind.");
-  }
-  if (first.kind === second.kind && first.id === second.id) {
-    throw badRequest("An item cannot swap positions with itself.");
-  }
-
-  return client.$transaction(async (tx) => {
-    const a = await resolveSequenceItem(first, tx);
-    const b = await resolveSequenceItem(second, tx);
-    if (!a || !b) {
-      const error = new Error("Item not found in a learning sequence.");
-      error.statusCode = 404;
-      throw error;
-    }
-    if (a.parentField !== b.parentField || a.parentId !== b.parentId) {
-      throw badRequest("Items must belong to the same parent to swap positions.");
-    }
-
-    // Read both positions again under the lock: a concurrent add or remove may
-    // have shifted either row since the lookup above.
-    await lockParentSequence(tx, a.parentField, a.parentId);
-    const lockedA = await resolveSequenceItem(first, tx);
-    const lockedB = await resolveSequenceItem(second, tx);
-    const result = await moveSequenceItems(
-      a.parentField,
-      a.parentId,
-      [
-        { id: lockedA.id, order: lockedB.order },
-        { id: lockedB.id, order: lockedA.order },
-      ],
-      tx
-    );
-    const orderOf = new Map(result.map((row) => [row.id, row.order]));
-    return [
-      { kind: first.kind, id: first.id, order: orderOf.get(lockedA.id) },
-      { kind: second.kind, id: second.id, order: orderOf.get(lockedB.id) },
-    ];
-  });
-}
-
 module.exports = {
-  EMPTY_SEQUENCE_ORDER,
   PARENT_FIELDS,
-  PARENT_FIELDS_MOST_SPECIFIC_FIRST,
-  DEEPER_PARENT_FIELDS,
-  CHILD_KIND_OF_PARENT,
-  CONTAINER_PARENT_FIELD,
   QUIZ_CONTENT_TYPE,
   ASSIGNMENT_CONTENT_TYPE,
-  ASSESSMENT_CONTENT_TYPES,
   isAssessmentContent,
   mostSpecificParentField,
   singleParentPlacement,
   sequenceMembers,
-  containerParent,
   lockParentSequence,
   getLastOrder,
-  getNextOrder,
   claimSequenceOrder,
-  releaseSequenceOrder,
   applySequenceOrdering,
   moveSequenceItems,
   claimContentOrder,
@@ -447,8 +351,4 @@ module.exports = {
   getNextContentOrder,
   claimContainerOrder,
   releaseContainerOrder,
-  moveContainers,
-  isSequenceKind,
-  resolveSequenceItem,
-  swapSequenceItems,
 };

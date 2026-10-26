@@ -121,24 +121,11 @@ test("no credential is committed in source", async () => {
 // Authorization surface
 // ---------------------------------------------------------------------------
 
-test("no instructor analytics route is reachable by a student", async () => {
-  const source = readSource("src/modules/learner-model/learnerModel.routes.js");
-
-  // Each instructor route and the role list guarding it.
-  const instructorRoutes = ["instructor-insights", "instructor-learners", "instructor-learner"];
-  for (const route of instructorRoutes) {
-    const index = source.indexOf(`"/${route}"`);
-    assert.ok(index > -1, `${route} should be routed`);
-    const block = source.slice(index, index + 260);
-    assert.match(block, /checkRole\(\["INSTRUCTOR", "ADMIN"\]\)/, `${route} must exclude STUDENT`);
-  }
-});
-
 test("every learner-model route requires a verified token", async () => {
   const source = readSource("src/modules/learner-model/learnerModel.routes.js");
   const routes = source.match(/router\.(get|post)\(\s*["'][^"']+["'][\s\S]*?\);/g) || [];
 
-  assert.ok(routes.length >= 8, `expected the full router, found ${routes.length} routes`);
+  assert.ok(routes.length >= 1, `expected the learner-model router, found ${routes.length} routes`);
   for (const route of routes) {
     assert.match(route, /verifyToken/, `an unauthenticated route exists: ${route.slice(0, 60)}`);
     assert.match(route, /checkRole/, `a route without a role gate exists: ${route.slice(0, 60)}`);
@@ -156,7 +143,6 @@ test("the deterministic decision path still contains no model call", async () =>
     "src/modules/learner-model/recommendation.service.js",
     "src/modules/learner-model/retention.service.js",
     "src/modules/learner-model/bkt.service.js",
-    "src/modules/learner-model/instructorInsights.service.js",
     "src/utils/learningPath.js",
     "src/utils/attemptAllowance.js",
     "src/utils/progressRollup.js"
@@ -177,8 +163,7 @@ test("attempt allowance still has exactly one definition", async () => {
 
   for (const file of [
     "src/modules/quizzes/quiz.service.js",
-    "src/modules/learner-model/nextAction.service.js",
-    "src/modules/learner-model/instructorInsights.service.js"
+    "src/modules/learner-model/nextAction.service.js"
   ]) {
     const source = readCode(file);
     assert.ok(

@@ -57,21 +57,6 @@ async function markContentComplete(req, res, next) {
   }
 }
 
-async function markLessonComplete(req, res, next) {
-  try {
-    const studentId = await resolveStudentId(req);
-    const { lessonId, completed = true } = req.body;
-    const data = await progressService.completeLesson(studentId, lessonId, completed, req.user);
-    res.json({
-      success: true,
-      message: completed ? 'Lesson marked as complete' : 'Lesson marked as incomplete',
-      data
-    });
-  } catch (error) {
-    next(error);
-  }
-}
-
 async function markVisited(req, res, next) {
   try {
     const studentId = await resolveStudentId(req);
@@ -93,32 +78,6 @@ async function getCourseProgress(req, res, next) {
     const { courseId } = req.params;
     await progressService.assertCourseProgressAccess(req.user, studentId, courseId);
     const data = await progressService.getStudentCourseProgress(studentId, courseId);
-    res.json({
-      success: true,
-      data
-    });
-  } catch (error) {
-    next(error);
-  }
-}
-
-async function getOverallProgress(req, res, next) {
-  try {
-    const studentId = await resolveStudentId(req);
-    const data = await progressService.getStudentOverallProgress(studentId);
-    res.json({
-      success: true,
-      data
-    });
-  } catch (error) {
-    next(error);
-  }
-}
-
-async function getInstructorProgress(req, res, next) {
-  try {
-    const { courseId } = req.params;
-    const data = await progressService.getInstructorCourseProgress(courseId);
     res.json({
       success: true,
       data
@@ -202,11 +161,8 @@ async function getLearningSequence(req, res, next) {
 
 module.exports = {
   markContentComplete,
-  markLessonComplete,
   markVisited,
   getCourseProgress,
   getLearningPath,
   getLearningSequence,
-  getOverallProgress,
-  getInstructorProgress
 };

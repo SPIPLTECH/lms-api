@@ -1,5 +1,6 @@
 const questionService = require("./question.service");
 const questionRepositoryService = require("./services/questionRepository.service");
+const importService = require("./question.import.service");
 
 /** Creating a "single question" is repository-only unless a quizId was supplied — mirrors how bulkCreateQuestions/importQuestions already attach their inserted questions via the QuizQuestion join table, which this path was missing entirely. */
 const attachIfQuizProvided = async (question, quizId) => {
@@ -49,32 +50,6 @@ const getQuestionsByQuizId = async (req, res, next) => {
     });
   } catch (quizError) {
     next(quizError);
-  }
-};
-
-// =========================
-// Get Question By ID
-// =========================
-const getQuestionById = async (req, res, next) => {
-  try {
-    const question = await questionRepositoryService.getQuestionById(
-      req.params.questionId,
-      req.user || {}
-    );
-
-    if (!question) {
-      return res.status(404).json({
-        success: false,
-        message: "Question not found",
-      });
-    }
-
-    res.json({
-      success: true,
-      data: question,
-    });
-  } catch (error) {
-    next(error);
   }
 };
 
@@ -170,6 +145,29 @@ const importQuestionsFile = async (req, res, next) => {
 };
 
 // =========================
+// Preview a question file (writes nothing)
+// =========================
+const previewImportFile = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Choose a question file to import (CSV, Excel, Word, PDF, TXT or JSON).",
+      });
+    }
+
+    const result = await importService.previewFile(req.file);
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// =========================
 // Update Question
 // =========================
 const updateQuestion = async (req, res, next) => {
@@ -251,10 +249,10 @@ const duplicateQuestion = async (req, res, next) => {
 module.exports = {
   getQuestions,
   getQuestionsByQuizId,
-  getQuestionById,
   createQuestion,
   bulkCreateQuestions,
   importQuestionsFile,
+  previewImportFile,
   uploadQuestions,
   updateQuestion,
   deleteQuestion,

@@ -316,24 +316,10 @@ const replyToQuery = async (queryId, user, reply) => {
   return updatedQuery;
 };
 
-const updateStatus = async (queryId, user, status) => {
-  const query = await findQueryWithCourseOwner(queryId);
-  assertInstructorOwnsQuery(query, user);
-
-  return prisma.lessonQuery.update({
-    where: { id: queryId },
-    data: {
-      status,
-      answeredAt: status === "ANSWERED" ? new Date() : null
-    }
-  });
-};
-
 module.exports = {
   getQueriesForLesson,
   getQueriesForInstructor,
   getQueriesForStudent,
   createQuery,
   replyToQuery,
-  updateStatus
 };
