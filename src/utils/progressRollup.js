@@ -109,7 +109,99 @@ const CONTENT_SELECT = {
   }
 };
 
-const ownContents = (level) => ({ where: { ...OWN_ITEMS_ONLY[level] }, orderBy: ORDERED, select: CONTENT_SELECT });
+// Each container level's parent column (modules hang off the course).
+const PARENT_KEY = { module: 'courseId', lesson: 'moduleId', topic: 'lessonId', subTopic: 'topicId', concept: 'subTopicId' };
+const LEVEL_KEYS = LEVELS.map((level) => `${level}Id`);
+
+const groupRows = (rows, key) => {
+  const groups = new Map();
+  for (const row of rows) {
+    if (row[key] == null) continue;
+    if (!groups.has(row[key])) groups.set(row[key], []);
+    groups.get(row[key]).push(row);
+  }
+  return groups;
+};
+
+/**
+ * The course's published hierarchy — course -> modules -> lessons -> topics ->
+ * subTopics -> concepts (id, title, order), each level with the Content rows
+ * it OWNS (OWN_ITEMS_ONLY), in ORDERED order: the tree a nested Prisma select
+ * would return, read as one flat query per table, all in parallel.
+ *
+ * As a nested select it compiled (under relationJoins) to one deep SQL query
+ * that took ~3.7s on a course with hundreds of subtopics and concepts, and
+ * the same shape of query in the course endpoint took the database down.
+ *
+ * Returns null when the course does not exist.
+ */
+async function loadPublishedHierarchy(client, courseId) {
+  const inCourse = {
+    module: { courseId },
+    lesson: { module: { courseId } },
+    topic: { lesson: { module: { courseId } } },
+    subTopic: { topic: { lesson: { module: { courseId } } } },
+    concept: { subTopic: { topic: { lesson: { module: { courseId } } } } }
+  };
+  const containerLevels = LEVELS.slice(1);
+  const containers = (level) =>
+    client[level].findMany({
+      where: { ...inCourse[level], isPublished: true },
+      orderBy: ORDERED,
+      select: { id: true, title: true, order: true, [PARENT_KEY[level]]: true }
+    });
+  const levelIdSelect = Object.fromEntries(LEVEL_KEYS.map((key) => [key, true]));
+
+  const [courseRow, contents, ...levelRows] = await Promise.all([
+    client.course.findUnique({
+      where: { id: courseId },
+      select: { id: true, title: true, status: true, sequentialLearning: true }
+    }),
+    client.content.findMany({
+      where: { OR: [{ courseId }, ...containerLevels.map((level) => ({ [level]: inCourse[level] }))] },
+      orderBy: ORDERED,
+      select: { ...CONTENT_SELECT, ...levelIdSelect }
+    }),
+    ...containerLevels.map(containers)
+  ]);
+  if (!courseRow) return null;
+
+  // Each level gets the rows it OWNS; the parent ids were read only to place
+  // them and are not part of the row handed on.
+  const withoutLevelIds = (row) => {
+    const item = { ...row };
+    for (const key of LEVEL_KEYS) delete item[key];
+    return item;
+  };
+  const contentsByLevel = Object.fromEntries(
+    LEVELS.map((level) => {
+      const owned = contents.filter((row) => Object.keys(OWN_ITEMS_ONLY[level]).every((key) => row[key] == null));
+      const groups = groupRows(owned, `${level}Id`);
+      for (const [id, rows] of groups) groups.set(id, rows.map(withoutLevelIds));
+      return [level, groups];
+    })
+  );
+
+  const childrenOf = Object.fromEntries(
+    containerLevels.map((level, i) => [level, groupRows(levelRows[i], PARENT_KEY[level])])
+  );
+  const CHILD = { module: ['lessons', 'lesson'], lesson: ['topics', 'topic'], topic: ['subTopics', 'subTopic'], subTopic: ['concepts', 'concept'] };
+
+  const node = (row, level) => {
+    const built = { id: row.id, title: row.title, order: row.order, contents: contentsByLevel[level].get(row.id) || [] };
+    if (CHILD[level]) {
+      const [field, childLevel] = CHILD[level];
+      built[field] = (childrenOf[childLevel].get(row.id) || []).map((child) => node(child, childLevel));
+    }
+    return built;
+  };
+
+  return {
+    ...courseRow,
+    contents: contentsByLevel.course.get(courseId) || [],
+    modules: (childrenOf.module.get(courseId) || []).map((row) => node(row, 'module'))
+  };
+}
 
 /** Whether a Content row is a learning item a student can currently reach. */
 function isVisibleItem(content) {
@@ -158,66 +250,7 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
   let persist = options.persist !== false;
 
   // 1. The live published hierarchy, every level with its own Content rows.
-  const course = await client.course.findUnique({
-    where: { id: courseId },
-    select: {
-      id: true,
-      title: true,
-      status: true,
-      sequentialLearning: true,
-      contents: ownContents('course'),
-      modules: {
-        where: { isPublished: true },
-        orderBy: ORDERED,
-        select: {
-          id: true,
-          title: true,
-          order: true,
-          contents: ownContents('module'),
-          lessons: {
-            where: { isPublished: true },
-            orderBy: ORDERED,
-            select: {
-              id: true,
-              title: true,
-              order: true,
-              contents: ownContents('lesson'),
-              topics: {
-                where: { isPublished: true },
-                orderBy: ORDERED,
-                select: {
-                  id: true,
-                  title: true,
-                  order: true,
-                  contents: ownContents('topic'),
-                  subTopics: {
-                    where: { isPublished: true },
-                    orderBy: ORDERED,
-                    select: {
-                      id: true,
-                      title: true,
-                      order: true,
-                      contents: ownContents('subTopic'),
-                      concepts: {
-                        where: { isPublished: true },
-                        orderBy: ORDERED,
-                        select: {
-                          id: true,
-                          title: true,
-                          order: true,
-                          contents: ownContents('concept')
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  });
+  const course = await loadPublishedHierarchy(client, courseId);
 
   if (!course) {
     throw new Error(`Course with ID ${courseId} not found`);

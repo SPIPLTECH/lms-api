@@ -359,12 +359,153 @@ const getCourses = async (
   return { courses: await attachCourseStats(courses), total };
 };
 
+// The course tree's levels, top down, with the id column each level's items
+// (Content, Quiz, Assignment) point at it by.
+const TREE_LEVELS = ["course", "module", "lesson", "topic", "subTopic", "concept"];
+const LEVEL_KEY = {
+  course: "courseId",
+  module: "moduleId",
+  lesson: "lessonId",
+  topic: "topicId",
+  subTopic: "subTopicId",
+  concept: "conceptId",
+};
+
+// Every level's learning items, in Content.order — ordinary content plus
+// the Content(type=QUIZ/ASSIGNMENT) rows that place quizzes and
+// assignments, each carrying the Quiz/Assignment it stands for.
+const CONTENT_ITEM_INCLUDE = {
+  quiz: {
+    select: {
+      id: true,
+      title: true,
+      quizTag: true,
+      passingScore: true,
+      timeLimit: true,
+      attempts: true,
+      isPublished: true,
+      _count: { select: { quizQuestions: true } },
+    },
+  },
+  assignment: {
+    select: { id: true, title: true, description: true, dueDate: true, marks: true, isPublished: true },
+  },
+};
+
+const groupRows = (rows, key) => {
+  const groups = new Map();
+  for (const row of rows) {
+    const id = row[key];
+    if (id == null) continue;
+    if (!groups.has(id)) groups.set(id, []);
+    groups.get(id).push(row);
+  }
+  return groups;
+};
+
+/**
+ * Every row of a course's tree: modules, lessons, topics, subtopics and
+ * concepts (published ones only for students and guests), plus every Content
+ * and Assignment placed anywhere in it. One flat read per table, all in
+ * parallel.
+ *
+ * This replaces a nested Prisma include. Under relationJoins that include is
+ * a single SQL query, and on a deep course (hundreds of subtopics and
+ * concepts) it took the database server down; run as one query per level
+ * instead, it cost ~6s of round trips.
+ */
+const loadCourseTreeRows = (courseId, publishedOnly) => {
+  const inCourse = {
+    module: { courseId },
+    lesson: { module: { courseId } },
+    topic: { lesson: { module: { courseId } } },
+    subTopic: { topic: { lesson: { module: { courseId } } } },
+    concept: { subTopic: { topic: { lesson: { module: { courseId } } } } },
+  };
+  const containers = (level) =>
+    prisma[level].findMany({ where: { ...inCourse[level], ...publishedOnly }, orderBy: { order: "asc" } });
+  const placedInCourse = {
+    OR: [{ courseId }, ...TREE_LEVELS.slice(1).map((level) => ({ [level]: inCourse[level] }))],
+  };
+
+  return Promise.all([
+    containers("module"),
+    containers("lesson"),
+    containers("topic"),
+    containers("subTopic"),
+    containers("concept"),
+    prisma.content.findMany({ where: placedInCourse, orderBy: { order: "asc" }, include: CONTENT_ITEM_INCLUDE }),
+    prisma.assignment.findMany({ where: placedInCourse, orderBy: { createdAt: "asc" } }),
+  ]).then(([modules, lessons, topics, subTopics, concepts, contents, assignments]) => ({
+    modules, lessons, topics, subTopics, concepts, contents, assignments,
+  }));
+};
+
+/**
+ * Nests loadCourseTreeRows' rows into the shape the old include returned:
+ * course.contents/assignments and course.modules -> lessons -> topics ->
+ * subTopics -> concepts, each node with its contents (every Content pointing
+ * at it), its own quizzes and assignments (items whose most specific parent
+ * it is), and, from topics down, _count.contents.
+ *
+ * `quizzes` is the course's quiz list, already filtered for the viewer.
+ */
+const assembleCourseTree = (courseId, quizzes, rows, publishedOnly) => {
+  const contentsBy = Object.fromEntries(
+    TREE_LEVELS.map((level) => [level, groupRows(rows.contents, LEVEL_KEY[level])])
+  );
+  // Own items only at each level — a quiz may still carry ancestor ids, but
+  // it belongs to its most specific parent alone.
+  const ownBy = (items, level) => {
+    const deeper = TREE_LEVELS.slice(TREE_LEVELS.indexOf(level) + 1).map((l) => LEVEL_KEY[l]);
+    return groupRows(items.filter((item) => deeper.every((key) => item[key] == null)), LEVEL_KEY[level]);
+  };
+  // Course-level assignments are not filtered by publication; every other
+  // level's are, for students and guests.
+  const publishedAssignments = publishedOnly ? rows.assignments.filter((a) => a.isPublished) : rows.assignments;
+  const quizzesBy = Object.fromEntries(TREE_LEVELS.map((level) => [level, ownBy(quizzes, level)]));
+  const assignmentsBy = Object.fromEntries(
+    TREE_LEVELS.map((level) => [level, ownBy(level === "course" ? rows.assignments : publishedAssignments, level)])
+  );
+
+  const children = {
+    lesson: groupRows(rows.lessons, "moduleId"),
+    topic: groupRows(rows.topics, "lessonId"),
+    subTopic: groupRows(rows.subTopics, "topicId"),
+    concept: groupRows(rows.concepts, "subTopicId"),
+  };
+  const counted = new Set(["topic", "subTopic", "concept"]);
+  const childList = { module: ["lessons", "lesson"], lesson: ["topics", "topic"], topic: ["subTopics", "subTopic"], subTopic: ["concepts", "concept"] };
+
+  const node = (row, level) => {
+    const contents = contentsBy[level].get(row.id) || [];
+    const built = {
+      ...row,
+      contents,
+      quizzes: quizzesBy[level].get(row.id) || [],
+      assignments: assignmentsBy[level].get(row.id) || [],
+      ...(counted.has(level) ? { _count: { contents: contents.length } } : {}),
+    };
+    if (childList[level]) {
+      const [field, childLevel] = childList[level];
+      built[field] = (children[childLevel].get(row.id) || []).map((child) => node(child, childLevel));
+    }
+    return built;
+  };
+
+  return {
+    contents: contentsBy.course.get(courseId) || [],
+    assignments: assignmentsBy.course.get(courseId) || [],
+    modules: rows.modules.map((moduleRow) => node(moduleRow, "module")),
+  };
+};
+
 /**
  * @param {object}  [options]
  * @param {boolean} [options.includeModules=true]
  *   When false, the `modules` relation (modules -> lessons -> topics ->
- *   contents, plus quizzes -> quizQuestions -> question at four levels) is
- *   omitted and only course-level data is returned.
+ *   contents, plus each level's quizzes and assignments) is omitted and only
+ *   course-level data is returned.
  *
  *   Defaults to true so every existing caller keeps its current payload.
  *   Callers that only render course metadata — the breadcrumb in
@@ -375,73 +516,15 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
   const { includeModules = true } = options;
   const isStudentOrGuest = role === "STUDENT" || role === "GUEST";
 
-  // A student reads quizzes through GET /quizzes/:id (sequence-gated, answers
-  // withheld); the course tree only says how many questions there are, so a
-  // quiz the student has not reached cannot be read off this response.
-  // Instructors get the full question list, answer key included.
+  // Every role reads a quiz's questions through GET /quizzes/:id (for a
+  // student sequence-gated, answers withheld); the course tree only says how
+  // many questions there are. Carrying every question of every quiz here made
+  // a large course's response megabytes long, metadata-only calls included.
   const quizzesInclude = (where = {}) => ({
     where: { ...where, ...(isStudentOrGuest ? { quizTag: { not: "QUALIFYING" } } : {}) },
     orderBy: { createdAt: "asc" },
-    include: isStudentOrGuest
-      ? { _count: { select: { quizQuestions: true } } }
-      : {
-          quizQuestions: {
-            orderBy: { order: "asc" },
-            select: {
-              id: true,
-              quizId: true,
-              order: true,
-              marks: true,
-              question: {
-                select: {
-                  id: true,
-                  question: true,
-                  questionType: true,
-                  options: true,
-                  difficulty: true,
-                  correctAnswer: true,
-                  explanation: true,
-                },
-              },
-            },
-          },
-        },
+    include: { _count: { select: { quizQuestions: true } } },
   });
-
-  // Every level's learning items, in Content.order — ordinary content plus
-  // the Content(type=QUIZ/ASSIGNMENT) rows that place quizzes and
-  // assignments, each carrying the Quiz/Assignment it stands for.
-  const contentsInclude = {
-    orderBy: { order: "asc" },
-    include: {
-      quiz: {
-        select: {
-          id: true,
-          title: true,
-          quizTag: true,
-          passingScore: true,
-          timeLimit: true,
-          attempts: true,
-          isPublished: true,
-          _count: { select: { quizQuestions: true } },
-        },
-      },
-      assignment: {
-        select: { id: true, title: true, description: true, dueDate: true, marks: true, isPublished: true },
-      },
-    },
-  };
-
-  // Own items only at each level — a quiz may still carry ancestor ids, but
-  // it belongs to its most specific parent alone.
-  const OWN = {
-    course: { moduleId: null, lessonId: null, topicId: null, subTopicId: null, conceptId: null },
-    module: { lessonId: null, topicId: null, subTopicId: null, conceptId: null },
-    lesson: { topicId: null, subTopicId: null, conceptId: null },
-    topic: { subTopicId: null, conceptId: null },
-    subTopic: { conceptId: null },
-    concept: {},
-  };
 
   // If role is STUDENT, check if student holds an active enrollment — profile
   // and enrollment in one round trip.
@@ -490,62 +573,8 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
         },
       },
 
-      // The deep tree. Omitted entirely when includeModules is false so
-      // metadata-only callers don't transfer every content cell and quiz.
-      ...(includeModules ? {
-      contents: contentsInclude,
-      assignments: { where: OWN.course, orderBy: { createdAt: "asc" } },
-      modules: {
-        where: publishedOnly,
-        orderBy: { order: "asc" },
-        include: {
-          contents: contentsInclude,
-          quizzes: quizzesInclude(OWN.module),
-          assignments: { where: { ...OWN.module, ...publishedOnly }, orderBy: { createdAt: "asc" } },
-          lessons: {
-            where: publishedOnly,
-            orderBy: { order: "asc" },
-            include: {
-              contents: contentsInclude,
-              quizzes: quizzesInclude(OWN.lesson),
-              assignments: { where: { ...OWN.lesson, ...publishedOnly }, orderBy: { createdAt: "asc" } },
-              topics: {
-                where: publishedOnly,
-                orderBy: { order: "asc" },
-                include: {
-                  contents: contentsInclude,
-                  quizzes: quizzesInclude(OWN.topic),
-                  assignments: { where: { ...OWN.topic, ...publishedOnly }, orderBy: { createdAt: "asc" } },
-                  _count: { select: { contents: true } },
-                  subTopics: {
-                    where: publishedOnly,
-                    orderBy: { order: "asc" },
-                    include: {
-                      contents: contentsInclude,
-                      quizzes: quizzesInclude(OWN.subTopic),
-                      assignments: { where: { ...OWN.subTopic, ...publishedOnly }, orderBy: { createdAt: "asc" } },
-                      _count: { select: { contents: true } },
-                      concepts: {
-                        where: publishedOnly,
-                        orderBy: { order: "asc" },
-                        include: {
-                          contents: contentsInclude,
-                          quizzes: quizzesInclude(OWN.concept),
-                          assignments: { where: publishedOnly, orderBy: { createdAt: "asc" } },
-                          _count: { select: { contents: true } }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      } : {}),
-
-      // Every quiz of the course, for counts and the instructor's quiz lists.
+      // Every quiz of the course, for counts and the instructor's quiz lists
+      // — and the pool the tree's per-level quiz lists are taken from.
       quizzes: quizzesInclude(),
       // Enrollment row ids only — never other students' profile ids, and no
       // client reads more than the list's length (the count is in _count).
@@ -553,9 +582,15 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
     }
   });
 
-  const [course, lockState] = await Promise.all([coursePromise, lockMapPromise]);
+  // The deep tree, read alongside the course. Omitted entirely when
+  // includeModules is false so metadata-only callers don't transfer it.
+  const treePromise = includeModules ? loadCourseTreeRows(courseId, publishedOnly) : null;
+
+  const [course, treeRows, lockState] = await Promise.all([coursePromise, treePromise, lockMapPromise]);
 
   if (!course) return null;
+
+  if (treeRows) Object.assign(course, assembleCourseTree(courseId, course.quizzes, treeRows, publishedOnly));
 
   if (isStudentOrGuest && course.status !== "PUBLISHED" && !isEnrolledStudent) {
     return null;
