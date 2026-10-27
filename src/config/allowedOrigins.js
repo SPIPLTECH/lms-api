@@ -30,6 +30,7 @@
 const DEFAULT_ALLOWED_ORIGINS = [
   "http://localhost:3000",
   "https://lms-web-demo.vercel.app",
+  "https://otree-yzdp.onrender.com",
 ];
 
 // Loopback + the three RFC1918 private ranges, with an optional port.
@@ -40,7 +41,7 @@ const PRIVATE_ORIGIN_PATTERN =
 const splitList = (value) =>
   (value || "")
     .split(",")
-    .map((entry) => entry.trim())
+    .map((entry) => entry.trim().replace(/\/+$/, ""))
     .filter(Boolean);
 
 /**

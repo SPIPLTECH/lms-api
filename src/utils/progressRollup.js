@@ -1,5 +1,9 @@
 const prisma = require('../config/database');
-const { QUALIFYING_TAG, getCourseQualifications } = require('./qualification');
+const {
+  QUALIFYING_TAG,
+  getCourseQualifications,
+  getCourseQualificationsForStudents
+} = require('./qualification');
 const {
   summarizeQuizAttempts,
   isQuizComplete,
@@ -243,24 +247,12 @@ async function loadPublishedHierarchy(client, courseId) {
   return course;
 }
 
-async function computeCourseProgress(studentId, courseId, tx = null, options = {}) {
-  const client = tx || prisma;
-  const includeTree = options.includeTree === true;
-  let persist = options.persist !== false;
-
-  // 1. The live published hierarchy, every level with its own Content rows.
-  const course = await loadPublishedHierarchy(client, courseId);
-
-  if (!course) {
-    throw new Error(`Course with ID ${courseId} not found`);
-  }
-
-  // A course with sequential learning off keeps no progress: the roll-up is
-  // still computed for whoever asks, but nothing is written.
-  if (course.sequentialLearning === false) persist = false;
-
-  // 2. Collect every reachable item and container id. Unpublished quiz/
-  // assignment items are dropped from each container here, once.
+/**
+ * Every reachable item and container id of a loaded hierarchy. Unpublished
+ * quiz/assignment items are dropped from each container here — in place, and
+ * idempotently, so one loaded tree can be collected again for each student.
+ */
+function collectCourseItems(course) {
   const allContents = [];
   const quizIds = new Set();
   const assignmentIds = new Set();
@@ -301,94 +293,167 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     }
   }
 
-  // 3. Ground truth for this student, plus existing container rows (to
-  // preserve completedAt/visitedAt). Independent reads, one parallel batch —
-  // on a remote database the round trips, not the queries, are the cost.
-  const contentIds = allContents.map((c) => c.id);
-  const quizIdList = Array.from(quizIds);
-  const assignmentIdList = Array.from(assignmentIds);
+  return {
+    allContents,
+    quizIds,
+    assignmentIds,
+    allConceptIds,
+    allSubTopicIds,
+    allTopicIds,
+    allLessonIds,
+    allModuleIds
+  };
+}
+
+/**
+ * The student's ground truth for a course's items, plus their existing
+ * container rows (to preserve completedAt/visitedAt). Independent reads, one
+ * parallel batch — on a remote database the round trips, not the queries, are
+ * the cost. `studentId` is one id, or `{ in: [...] }` to read many students
+ * at once; every row carries its studentId for grouping.
+ */
+async function readStudentRows(client, studentId, items) {
+  const contentIds = items.allContents.map((c) => c.id);
+  const quizIdList = Array.from(items.quizIds);
+  const assignmentIdList = Array.from(items.assignmentIds);
 
   const [
     cpRecords,
     attemptRecords,
     submissionRecords,
     assignmentSubmissionRecords,
-    existingConceptProgresses,
-    existingSubTopicProgresses,
-    existingTopicProgresses,
-    existingLessonProgresses,
-    existingModuleProgresses,
-    qualifications,
-    existingEnrollment
+    conceptProgresses,
+    subTopicProgresses,
+    topicProgresses,
+    lessonProgresses,
+    moduleProgresses
   ] = await Promise.all([
     contentIds.length > 0
       ? client.contentProgress.findMany({
           where: { studentId, contentId: { in: contentIds } },
-          select: { contentId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
+          select: { studentId: true, contentId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
         })
       : [],
     quizIdList.length > 0
       ? client.quizAttempt.findMany({
           where: { studentId, quizId: { in: quizIdList } },
-          select: { quizId: true, passed: true, percentage: true, score: true, totalMarks: true, submittedAt: true }
+          select: { studentId: true, quizId: true, passed: true, percentage: true, score: true, totalMarks: true, submittedAt: true }
         })
       : [],
     quizIdList.length > 0
       ? client.quizSubmission.findMany({
           where: { studentId, quizId: { in: quizIdList } },
-          select: { quizId: true, passed: true, percentage: true, score: true, totalMarks: true, submittedAt: true }
+          select: { studentId: true, quizId: true, passed: true, percentage: true, score: true, totalMarks: true, submittedAt: true }
         })
       : [],
     assignmentIdList.length > 0
       ? client.assignmentSubmission.findMany({
           where: { studentId, assignmentId: { in: assignmentIdList } },
-          select: { assignmentId: true, status: true, grade: true, submittedAt: true }
+          select: { studentId: true, assignmentId: true, status: true, grade: true, submittedAt: true }
         })
       : [],
-    allConceptIds.size > 0
+    items.allConceptIds.size > 0
       ? client.conceptProgress.findMany({
-          where: { studentId, conceptId: { in: Array.from(allConceptIds) } },
-          select: { conceptId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
+          where: { studentId, conceptId: { in: Array.from(items.allConceptIds) } },
+          select: { studentId: true, conceptId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
         })
       : [],
-    allSubTopicIds.size > 0
+    items.allSubTopicIds.size > 0
       ? client.subTopicProgress.findMany({
-          where: { studentId, subTopicId: { in: Array.from(allSubTopicIds) } },
-          select: { subTopicId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
+          where: { studentId, subTopicId: { in: Array.from(items.allSubTopicIds) } },
+          select: { studentId: true, subTopicId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
         })
       : [],
-    allTopicIds.size > 0
+    items.allTopicIds.size > 0
       ? client.topicProgress.findMany({
-          where: { studentId, topicId: { in: Array.from(allTopicIds) } },
-          select: { topicId: true, completed: true, completedAt: true, visited: true, visitedAt: true, qualified: true, qualifiedAt: true }
+          where: { studentId, topicId: { in: Array.from(items.allTopicIds) } },
+          select: { studentId: true, topicId: true, completed: true, completedAt: true, visited: true, visitedAt: true, qualified: true, qualifiedAt: true }
         })
       : [],
-    allLessonIds.size > 0
+    items.allLessonIds.size > 0
       ? client.lessonProgress.findMany({
-          where: { studentId, lessonId: { in: Array.from(allLessonIds) } },
-          select: { lessonId: true, completed: true, completedAt: true, visited: true, visitedAt: true, qualified: true, qualifiedAt: true }
+          where: { studentId, lessonId: { in: Array.from(items.allLessonIds) } },
+          select: { studentId: true, lessonId: true, completed: true, completedAt: true, visited: true, visitedAt: true, qualified: true, qualifiedAt: true }
         })
       : [],
-    allModuleIds.size > 0
+    items.allModuleIds.size > 0
       ? client.moduleProgress.findMany({
-          where: { studentId, moduleId: { in: Array.from(allModuleIds) } },
-          select: { moduleId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
+          where: { studentId, moduleId: { in: Array.from(items.allModuleIds) } },
+          select: { studentId: true, moduleId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
         })
-      : [],
-    // The lessons/topics this student has qualified out of, read from the
-    // attempt log rather than stored anywhere of its own.
-    getCourseQualifications(studentId, courseId, client),
-    // Written at the end (progressPercent / lastAccessedAt); read here with
-    // the rest instead of as one more round trip after the container writes.
-    // Only this function writes `completed`/`completedAt`, under the per-key
-    // lock, so reading it earlier sees the same row.
-    persist
-      ? client.enrollment.findUnique({
-          where: { studentId_courseId: { studentId, courseId } }
-        })
-      : null
+      : []
   ]);
 
+  return {
+    cpRecords,
+    attemptRecords,
+    submissionRecords,
+    assignmentSubmissionRecords,
+    conceptProgresses,
+    subTopicProgresses,
+    topicProgresses,
+    lessonProgresses,
+    moduleProgresses
+  };
+}
+
+/**
+ * Options beyond includeTree/persist:
+ * - preloaded: { course, rows, qualifications } — the loaded hierarchy and
+ *   this student's reads, from computeCourseProgressForStudents. Nothing is
+ *   read or written; the roll-up is computed from them as is.
+ */
+async function computeCourseProgress(studentId, courseId, tx = null, options = {}) {
+  const client = tx || prisma;
+  const includeTree = options.includeTree === true;
+  const preloaded = options.preloaded || null;
+  let persist = options.persist !== false && !preloaded;
+
+  // 1. The live published hierarchy, every level with its own Content rows.
+  const course = preloaded ? preloaded.course : await loadPublishedHierarchy(client, courseId);
+
+  if (!course) {
+    throw new Error(`Course with ID ${courseId} not found`);
+  }
+
+  // A course with sequential learning off keeps no progress: the roll-up is
+  // still computed for whoever asks, but nothing is written.
+  if (course.sequentialLearning === false) persist = false;
+
+  // 2. Every reachable item and container id.
+  const items = collectCourseItems(course);
+  const { allContents } = items;
+
+  // 3. This student's ground truth and existing container rows.
+  const [rows, qualifications, existingEnrollment] = preloaded
+    ? [preloaded.rows, preloaded.qualifications, null]
+    : await Promise.all([
+        readStudentRows(client, studentId, items),
+        // The lessons/topics this student has qualified out of, read from the
+        // attempt log rather than stored anywhere of its own.
+        getCourseQualifications(studentId, courseId, client),
+        // Written at the end (progressPercent / lastAccessedAt); read here with
+        // the rest instead of as one more round trip after the container writes.
+        // Only this function writes `completed`/`completedAt`, under the per-key
+        // lock, so reading it earlier sees the same row.
+        persist
+          ? client.enrollment.findUnique({
+              where: { studentId_courseId: { studentId, courseId } }
+            })
+          : null
+      ]);
+
+  const {
+    cpRecords,
+    attemptRecords,
+    submissionRecords,
+    assignmentSubmissionRecords,
+    conceptProgresses: existingConceptProgresses,
+    subTopicProgresses: existingSubTopicProgresses,
+    topicProgresses: existingTopicProgresses,
+    lessonProgresses: existingLessonProgresses,
+    moduleProgresses: existingModuleProgresses
+  } = rows;
   const { qualifiedTopicIds, qualifiedLessonIds } = qualifications;
 
   const contentProgressMap = new Map(cpRecords.map((r) => [r.contentId, r]));
@@ -951,7 +1016,55 @@ async function recomputeCourseProgress(studentId, courseId, tx = null, options =
   return runExclusive(`${studentId}:${courseId}`, () => computeCourseProgress(studentId, courseId, tx, options));
 }
 
+const groupByStudent = (rowList) => {
+  const groups = new Map();
+  for (const row of rowList) {
+    if (!groups.has(row.studentId)) groups.set(row.studentId, []);
+    groups.get(row.studentId).push(row);
+  }
+  return groups;
+};
+
+/**
+ * Read-only roll-ups for many students of ONE course (the Student Directory):
+ * the same result as recomputeCourseProgress(..., { persist: false }) per
+ * student, but the course tree is loaded once and each read is one query for
+ * all of them — a fixed ~17 queries per course instead of ~17 per student.
+ * Run per (student, course) pair in parallel, a 44-enrollment directory queued
+ * ~800 queries on the connection pool and starved every other request until
+ * they failed with P2024 (pool timeout).
+ *
+ * Returns Map studentId -> roll-up. Throws when the course does not exist.
+ */
+async function computeCourseProgressForStudents(studentIds, courseId, options = {}) {
+  const course = await loadPublishedHierarchy(prisma, courseId);
+  if (!course) {
+    throw new Error(`Course with ID ${courseId} not found`);
+  }
+
+  const items = collectCourseItems(course);
+  const [rows, qualificationsByStudent] = await Promise.all([
+    readStudentRows(prisma, { in: studentIds }, items),
+    getCourseQualificationsForStudents(studentIds, courseId)
+  ]);
+  const grouped = Object.entries(rows).map(([key, rowList]) => [key, groupByStudent(rowList)]);
+
+  const results = new Map();
+  for (const studentId of studentIds) {
+    const ownRows = Object.fromEntries(grouped.map(([key, groups]) => [key, groups.get(studentId) || []]));
+    results.set(
+      studentId,
+      await computeCourseProgress(studentId, courseId, null, {
+        includeTree: options.includeTree,
+        preloaded: { course, rows: ownRows, qualifications: qualificationsByStudent.get(studentId) }
+      })
+    );
+  }
+  return results;
+}
+
 module.exports = {
   recomputeCourseProgress,
+  computeCourseProgressForStudents,
   containerRowChanged
 };

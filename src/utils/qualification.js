@@ -46,6 +46,37 @@ const resolveQualificationTarget = (quiz) => {
   return null;
 };
 
+const passingQualifyingAttempts = (db, studentFilter, courseId) =>
+  db.quizAttempt.findMany({
+    where: {
+      studentId: studentFilter,
+      passed: true,
+      quiz: {
+        courseId,
+        quizTag: QUALIFYING_TAG,
+        isPublished: true
+      }
+    },
+    orderBy: { submittedAt: "asc" },
+    select: {
+      studentId: true,
+      submittedAt: true,
+      quiz: { select: { id: true, quizTag: true, topicId: true, lessonId: true } }
+    }
+  });
+
+const emptyQualifications = () => ({ qualifiedTopicIds: new Map(), qualifiedLessonIds: new Map() });
+
+// Ordered ascending by the query, so the first write per target is the
+// EARLIEST passing attempt — qualifiedAt is when they first qualified, not
+// when they last happened to pass.
+const addQualification = ({ qualifiedTopicIds, qualifiedLessonIds }, attempt) => {
+  const target = resolveQualificationTarget(attempt.quiz);
+  if (!target) return;
+  const bucket = target.kind === "TOPIC" ? qualifiedTopicIds : qualifiedLessonIds;
+  if (!bucket.has(target.id)) bucket.set(target.id, attempt.submittedAt);
+};
+
 /**
  * Every lesson/topic the student has qualified out of, within one course.
  *
@@ -56,41 +87,30 @@ const resolveQualificationTarget = (quiz) => {
  */
 const getCourseQualifications = async (studentId, courseId, tx = null) => {
   const db = tx || prisma;
-  if (!studentId || !courseId) {
-    return { qualifiedTopicIds: new Map(), qualifiedLessonIds: new Map() };
-  }
+  const qualifications = emptyQualifications();
+  if (!studentId || !courseId) return qualifications;
 
-  const passingAttempts = await db.quizAttempt.findMany({
-    where: {
-      studentId,
-      passed: true,
-      quiz: {
-        courseId,
-        quizTag: QUALIFYING_TAG,
-        isPublished: true
-      }
-    },
-    orderBy: { submittedAt: "asc" },
-    select: {
-      submittedAt: true,
-      quiz: { select: { id: true, quizTag: true, topicId: true, lessonId: true } }
-    }
-  });
+  const passingAttempts = await passingQualifyingAttempts(db, studentId, courseId);
+  for (const attempt of passingAttempts) addQualification(qualifications, attempt);
+  return qualifications;
+};
 
-  const qualifiedTopicIds = new Map();
-  const qualifiedLessonIds = new Map();
+/**
+ * getCourseQualifications for many students of one course in one query (the
+ * Student Directory). Map of studentId -> the same shape; every requested
+ * student has an entry.
+ */
+const getCourseQualificationsForStudents = async (studentIds, courseId, tx = null) => {
+  const db = tx || prisma;
+  const byStudent = new Map(studentIds.map((id) => [id, emptyQualifications()]));
+  if (studentIds.length === 0 || !courseId) return byStudent;
 
+  const passingAttempts = await passingQualifyingAttempts(db, { in: studentIds }, courseId);
   for (const attempt of passingAttempts) {
-    const target = resolveQualificationTarget(attempt.quiz);
-    if (!target) continue;
-    // Ordered ascending above, so the first write per target is the EARLIEST
-    // passing attempt — qualifiedAt is when they first qualified, not when
-    // they last happened to pass.
-    const bucket = target.kind === "TOPIC" ? qualifiedTopicIds : qualifiedLessonIds;
-    if (!bucket.has(target.id)) bucket.set(target.id, attempt.submittedAt);
+    const qualifications = byStudent.get(attempt.studentId);
+    if (qualifications) addQualification(qualifications, attempt);
   }
-
-  return { qualifiedTopicIds, qualifiedLessonIds };
+  return byStudent;
 };
 
 /**
@@ -179,5 +199,6 @@ module.exports = {
   QUALIFYING_TAG,
   resolveQualificationTarget,
   getCourseQualifications,
+  getCourseQualificationsForStudents,
   getCourseQualifyingQuizzes
 };
