@@ -26,7 +26,7 @@ const parseXML = async (filePath) => {
         rows = [rows];
     }
 
-    return rows.map((row) => normalizeQuestion(row));
+    return rows.map((row) => normalizeQuestion(row, { answerByPosition: true }));
 };
 
 module.exports = {

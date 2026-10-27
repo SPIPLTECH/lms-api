@@ -46,12 +46,22 @@ const flushPendingMisconceptionClassifications = async () => {
   return Promise.allSettled([...pendingMisconceptionClassifications]);
 };
 
+// Questions answered by picking an option. The student's answer is an
+// option's own text, so it is compared with the key exactly — spaces aside —
+// because options can differ only by case ("int float" / "int Float") and
+// are then different answers. Typed answers (fill-in-the-blank and the
+// like) keep the case-insensitive comparison.
+const CHOICE_TYPES = new Set(["MCQ", "MCQ_SINGLE", "MCQ_MULTI", "MULTIPLE_CORRECT", "TRUE_FALSE"]);
+
 const evaluateAnswer = (answer, correctAnswer, questionType) => {
   if (answer === undefined || answer === null || answer === "") {
     return 0;
   }
 
   const type = String(questionType || '').toUpperCase();
+  const comparable = CHOICE_TYPES.has(type)
+    ? (value) => String(value).trim().replace(/\s+/g, " ")
+    : (value) => String(value).trim().toLowerCase();
 
   // 1. MATCH_PAIRS (Object mapping match)
   if (type === "MATCH_PAIRS" || (typeof correctAnswer === "object" && correctAnswer !== null && !Array.isArray(correctAnswer))) {
@@ -89,11 +99,11 @@ const evaluateAnswer = (answer, correctAnswer, questionType) => {
   // 3. MCQ_MULTI / MULTIPLE_CORRECT (Order-independent Array match)
   if (type === "MCQ_MULTI" || type === "MULTIPLE_CORRECT" || Array.isArray(correctAnswer) || Array.isArray(answer)) {
     const selArr = Array.isArray(answer)
-      ? answer.map(s => String(s).trim().toLowerCase())
-      : [String(answer).trim().toLowerCase()];
+      ? answer.map(comparable)
+      : [comparable(answer)];
     const corrArr = Array.isArray(correctAnswer)
-      ? correctAnswer.map(c => String(c).trim().toLowerCase())
-      : [String(correctAnswer).trim().toLowerCase()];
+      ? correctAnswer.map(comparable)
+      : [comparable(correctAnswer)];
 
     if (corrArr.length === 0) return 0;
     
@@ -113,9 +123,7 @@ const evaluateAnswer = (answer, correctAnswer, questionType) => {
   }
 
   // 4. Primitive types (MCQ_SINGLE, MCQ, TRUE_FALSE, FILL_BLANK, SHORT_ANSWER, LONG_ANSWER)
-  const selStr = String(answer).trim().toLowerCase();
-  const corrStr = String(correctAnswer).trim().toLowerCase();
-  return selStr === corrStr ? 1 : 0;
+  return comparable(answer) === comparable(correctAnswer) ? 1 : 0;
 };
 
 const normalizeOptionText = (value) => String(value).trim().toLowerCase();
@@ -144,7 +152,12 @@ const resolveMisconceptionTag = (options, studentAnswerRaw) => {
   if (!Array.isArray(options) || options.length === 0) return null;
 
   const normalizedAnswer = normalizeOptionText(studentAnswerRaw);
+  const exactAnswer = studentAnswerRaw.trim();
   const candidates = [];
+  // The option the student picked is the one with exactly their answer's
+  // text; case is only ignored when nothing matches exactly, so options
+  // that differ only by case ("int float" / "int Float") stay apart.
+  const exactCandidates = [];
 
   for (const entry of options) {
     let optText = null;
@@ -161,6 +174,9 @@ const resolveMisconceptionTag = (options, studentAnswerRaw) => {
 
     if (typeof optText !== "string" || !optText.trim()) continue;
 
+    if (optText.trim() === exactAnswer) {
+      exactCandidates.push({ optText, optTag });
+    }
     if (normalizeOptionText(optText) === normalizedAnswer) {
       candidates.push({ optText, optTag });
     }
@@ -168,9 +184,10 @@ const resolveMisconceptionTag = (options, studentAnswerRaw) => {
 
   // Zero matches (e.g. free-text answer) or duplicate option text
   // (ambiguous — never guess which one was actually selected).
-  if (candidates.length !== 1) return null;
+  const matches = exactCandidates.length > 0 ? exactCandidates : candidates;
+  if (matches.length !== 1) return null;
 
-  const tag = candidates[0].optTag;
+  const tag = matches[0].optTag;
   if (!isKnownMisconceptionType(tag)) return null; // no tag, or a stale/invalid one
 
   return tag;

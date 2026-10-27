@@ -15,7 +15,7 @@ const parseJSON = async (filePath) => {
         throw new Error("Invalid JSON format. Expected an array of questions or an object with a 'questions' array.");
     }
 
-    return rows.map((row) => normalizeQuestion(row));
+    return rows.map((row) => normalizeQuestion(row, { answerByPosition: true }));
 };
 
 module.exports = {

@@ -104,62 +104,70 @@ const normalizeOptions = (row) => {
 // Full Option Text
 // =====================================
 
-// Compares answer text with option text the way people write answer keys:
-// ignoring case and repeated spaces.
-const answerKey = (value) => String(value).trim().replace(/\s+/g, " ").toLowerCase();
+// Answer text as compared with option text: surrounding and repeated spaces
+// don't count, case does — "int float" and "int Float" are different
+// answers in a programming question.
+const answerText = (value) => String(value).trim().replace(/\s+/g, " ");
 
+// The option an answer's text names: the one it matches exactly; failing
+// that, the one option it matches when case is ignored. Never a guess
+// between two options that differ only by case.
 const findOptionByText = (answerStr, options) => {
     if (!Array.isArray(options)) return null;
-    const key = answerKey(answerStr);
-    const match = options.find((opt) => answerKey(optionDisplayText(opt)) === key);
-    return match === undefined ? null : optionDisplayText(match);
+    const text = answerText(answerStr);
+    const exact = options.find((opt) => answerText(optionDisplayText(opt)) === text);
+    if (exact !== undefined) return optionDisplayText(exact);
+    const loose = options.filter((opt) => answerText(optionDisplayText(opt)).toLowerCase() === text.toLowerCase());
+    return loose.length === 1 ? optionDisplayText(loose[0]) : null;
 };
 
-// "b", "(b)", "b)", "B.", "Option B", "option 2" — the letter/number forms an
-// answer key is written in, beyond the exact keys in answerMap below.
-const LETTER_ANSWER = /^(?:option\s*)?\(?([a-h])\)?\.?$/i;
-const NUMBER_ANSWER = /^(?:option\s*)?\(?([1-8])\)?\.?$/i;
+// An answer written as an option's position: "2", "B", "(b)", "B.",
+// "Option B", "option 2". Numbers count from 1; any number of options.
+const POSITION_ANSWER = /^(?:option\s*)?\(?([a-z]|\d+)\)?\.?$/i;
 
-const normalizeSingleAnswer = (ans, options) => {
+/** The option at the position an answer names, or null when it names none. */
+const optionAtPosition = (answerStr, options) => {
+    if (!Array.isArray(options)) return null;
+    const match = String(answerStr).trim().match(POSITION_ANSWER);
+    if (!match) return null;
+    const token = match[1];
+    const idx = /^\d+$/.test(token) ? Number(token) - 1 : token.toUpperCase().charCodeAt(0) - 65;
+    return idx >= 0 && idx < options.length ? optionDisplayText(options[idx]) : null;
+};
+
+/**
+ * One answer-key entry resolved to its option's exact text.
+ *
+ * `byPosition` is how an imported file is read: the answer is the option's
+ * number (or letter), so a number always means a position — even when the
+ * options are themselves numbers ("2" in [2, 4, 5, 9] is the second option,
+ * 4). A key saved from the editor is read text-first instead: it holds the
+ * option's text, which may itself look like a number.
+ */
+const normalizeSingleAnswer = (ans, options, { byPosition = false } = {}) => {
     if (ans === undefined || ans === null) return "";
     if (typeof ans === "boolean") return ans ? "True" : "False";
 
     const answerStr = String(ans).trim();
     if (!answerStr) return "";
 
-    // The option's own text wins over any letter/number reading: with
-    // options "3", "4", "5" an answer of "3" means "3", not the third option.
+    if (byPosition) {
+        const atPosition = optionAtPosition(answerStr, options);
+        if (atPosition !== null) return atPosition;
+        // A number that names no option is an error to report, not text.
+        if (/^\d+$/.test(answerStr)) return answerStr;
+    }
+
     const byText = findOptionByText(answerStr, options);
     if (byText !== null) return byText;
 
-    const answerMap = {
-        A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7,
-        optionA: 0, optionB: 1, optionC: 2, optionD: 3, optionE: 4, optionF: 5, optionG: 6, optionH: 7,
-        1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7,
-        option1: 0, option2: 1, option3: 2, option4: 3, option5: 4, option6: 5, option7: 6, option8: 7,
-    };
-
-    if (Object.prototype.hasOwnProperty.call(answerMap, answerStr)) {
-        const idx = answerMap[answerStr];
-        if (options && options[idx] !== undefined) {
-            // options[idx] may now be an object ({optionText, ...}) rather
-            // than a plain string — resolve shorthand (e.g. "A") to its
-            // display text either way.
-            return optionDisplayText(options[idx]) || options[idx];
-        }
-    }
-
-    const letter = answerStr.match(LETTER_ANSWER);
-    const number = answerStr.match(NUMBER_ANSWER);
-    const idx = letter ? letter[1].toUpperCase().charCodeAt(0) - 65 : number ? Number(number[1]) - 1 : -1;
-    if (idx >= 0 && Array.isArray(options) && options[idx] !== undefined) {
-        return optionDisplayText(options[idx]) || options[idx];
-    }
+    const atPosition = optionAtPosition(answerStr, options);
+    if (atPosition !== null) return atPosition;
 
     return answerStr;
 };
 
-const normalizeCorrectAnswer = (row, options) => {
+const normalizeCorrectAnswer = (row, options, readOptions = {}) => {
     let raw = row.correctAnswer;
     if (raw === undefined || raw === null || raw === "") {
         if (row.answer !== undefined) raw = row.answer;
@@ -169,9 +177,11 @@ const normalizeCorrectAnswer = (row, options) => {
         return "";
     }
 
+    const single = (a) => normalizeSingleAnswer(a, options, readOptions);
+
     // If array of answers
     if (Array.isArray(raw)) {
-        return raw.map((a) => normalizeSingleAnswer(a, options));
+        return raw.map(single);
     }
 
     // If string representing JSON array or comma/semicolon/pipe separated values
@@ -179,33 +189,29 @@ const normalizeCorrectAnswer = (row, options) => {
         const trimmed = raw.trim();
         // An option whose own text contains a comma ("Paris, France") is one answer.
         if (findOptionByText(trimmed, options) !== null) {
-            return normalizeSingleAnswer(trimmed, options);
+            return single(trimmed);
         }
         if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
             try {
                 const parsed = JSON.parse(trimmed);
                 if (Array.isArray(parsed)) {
-                    return parsed.map((a) => normalizeSingleAnswer(a, options));
+                    return parsed.map(single);
                 }
             } catch (e) {}
         }
         if (trimmed.includes(",")) {
-            const parts = trimmed.split(",").map((s) => s.trim()).filter(Boolean);
-            // Check if parts match keys (e.g. "A, B" or "optionA, optionB")
-            const mapped = parts.map((p) => normalizeSingleAnswer(p, options));
-            return mapped;
+            // e.g. "1, 3", "A, B" or "optionA, optionB"
+            return trimmed.split(",").map((s) => s.trim()).filter(Boolean).map(single);
         }
         if (trimmed.includes("|")) {
-            const parts = trimmed.split("|").map((s) => s.trim()).filter(Boolean);
-            return parts.map((p) => normalizeSingleAnswer(p, options));
+            return trimmed.split("|").map((s) => s.trim()).filter(Boolean).map(single);
         }
         if (trimmed.includes(";")) {
-            const parts = trimmed.split(";").map((s) => s.trim()).filter(Boolean);
-            return parts.map((p) => normalizeSingleAnswer(p, options));
+            return trimmed.split(";").map((s) => s.trim()).filter(Boolean).map(single);
         }
     }
 
-    return normalizeSingleAnswer(raw, options);
+    return single(raw);
 };
 
 // =====================================
@@ -223,11 +229,18 @@ const VALID_QUESTION_TYPES = [
 
 const VALID_DIFFICULTIES = ["EASY", "MEDIUM", "HARD"];
 
-const normalizeQuestion = (row) => {
+/**
+ * @param {object} [readOptions]
+ * @param {boolean} [readOptions.answerByPosition] Read the answer key the way
+ *   an imported file writes it — as option numbers/letters (see
+ *   normalizeSingleAnswer). Off for keys saved from the editor, which hold
+ *   option text.
+ */
+const normalizeQuestion = (row, { answerByPosition = false } = {}) => {
     if (!row) row = {};
 
     const options = normalizeOptions(row);
-    const correctAnswer = normalizeCorrectAnswer(row, options);
+    const correctAnswer = normalizeCorrectAnswer(row, options, { byPosition: answerByPosition });
 
     let questionType = row.questionType ? String(row.questionType).trim().toUpperCase() : undefined;
     if (!questionType || !VALID_QUESTION_TYPES.includes(questionType)) {
@@ -294,4 +307,5 @@ const normalizeQuestion = (row) => {
 
 module.exports = {
     normalizeQuestion,
+    answerText,
 };

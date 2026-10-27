@@ -92,7 +92,7 @@ const parseText = async (filePath) => {
     );
 
     questions.push(
-    normalizeQuestion(row)
+    normalizeQuestion(row, { answerByPosition: true })
 );
 
   }
