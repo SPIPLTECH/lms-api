@@ -1,3 +1,5 @@
+const { findChoiceIndex } = require("../choiceAnswer");
+
 // =====================================
 // Normalize Options
 // =====================================
@@ -109,16 +111,14 @@ const normalizeOptions = (row) => {
 // answers in a programming question.
 const answerText = (value) => String(value).trim().replace(/\s+/g, " ");
 
-// The option an answer's text names: the one it matches exactly; failing
-// that, the one option it matches when case is ignored. Never a guess
-// between two options that differ only by case.
+// The option an answer's text names (findChoiceIndex): the one it matches
+// exactly; failing that, the one option it matches with spaces or case
+// ignored. Never a guess between two options that differ only by case, or,
+// in code, only by indentation.
 const findOptionByText = (answerStr, options) => {
     if (!Array.isArray(options)) return null;
-    const text = answerText(answerStr);
-    const exact = options.find((opt) => answerText(optionDisplayText(opt)) === text);
-    if (exact !== undefined) return optionDisplayText(exact);
-    const loose = options.filter((opt) => answerText(optionDisplayText(opt)).toLowerCase() === text.toLowerCase());
-    return loose.length === 1 ? optionDisplayText(loose[0]) : null;
+    const index = findChoiceIndex(answerStr, options.map(optionDisplayText));
+    return index >= 0 ? optionDisplayText(options[index]) : null;
 };
 
 // An answer written as an option's position: "2", "B", "(b)", "B.",

@@ -5,6 +5,7 @@
 
 const XLSX = require("xlsx");
 const prisma = require("../../../config/database");
+const { findChoiceIndex } = require("../../../utils/choiceAnswer");
 
 class QuestionUploadParser {
   /**
@@ -423,13 +424,9 @@ class QuestionUploadParser {
             // Not an option number: the option with exactly this text — which
             // also covers a number too big to be a position ("201" among
             // 201/200/404) — else the one option it matches ignoring case.
-            const text = ansStr.replace(/\s+/g, " ");
-            const same = (o) => o.optionText.trim().replace(/\s+/g, " ");
-            index = optionsList.findIndex((o) => same(o) === text);
-            if (index < 0 && !/^\d+$/.test(ansStr)) {
-              const loose = optionsList.filter((o) => same(o).toLowerCase() === text.toLowerCase());
-              index = loose.length === 1 ? optionsList.indexOf(loose[0]) : -1;
-            }
+            index = findChoiceIndex(ansStr, optionsList.map((o) => o.optionText), {
+              ignoreCase: !/^\d+$/.test(ansStr),
+            });
           }
           if (index >= 0) optionsList[index].isCorrect = true;
           else unmatched.push(ansStr);
