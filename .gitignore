@@ -46,5 +46,9 @@ backup/
 # committed before this rule stay tracked; new uploads are not added.
 uploads/
 
+# Documentation
+docs/
+test/
+
 # OCR language model downloaded by assignment auto-evaluation on first use.
 .cache/

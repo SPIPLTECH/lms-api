@@ -820,7 +820,11 @@ async function getStudentCourseProgress(studentId, courseId) {
  */
 async function getStudentLearningPath(studentId, courseId) {
   const [{ rollup, sequence }, qualifyingQuizzes] = await Promise.all([
-    computeStudentSequence(studentId, courseId, { persist: true }),
+    // Read-only: the player fetches this alongside the learning sequence,
+    // which persists the very same roll-up. Persisting here too wrote the
+    // same rows twice and, holding the per-student roll-up lock, made the
+    // two requests run one after the other.
+    computeStudentSequence(studentId, courseId),
     // Student-scoped, so each qualifying quiz carries this student's remaining
     // allowance and the path can stop offering a skip they cannot take.
     getCourseQualifyingQuizzes(courseId, null, studentId)
