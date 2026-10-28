@@ -405,15 +405,18 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       const attempts = attemptsByQuiz.get(content.quizId) || [];
       const latest = submissionByQuiz.get(content.quizId) || null;
       const summary = summarizeQuizAttempts(attempts, latest, content.quiz.passingScore);
-      completed = isQuizComplete(content.quiz.quizTag, summary);
+      completed = isQuizComplete(content.quiz.quizTag, summary, content.quiz.attempts);
       activity = summary.attempted;
       if (completed) {
+        // A Final failed on its last attempt has no passing attempt, so it
+        // completes when that last attempt (the latest submission) was made.
         const qualifying = content.quiz.quizTag === 'SELF_TEST' ? attempts : attempts.filter((a) => a.passed);
         domainCompletedAt = earliest([...qualifying.map((a) => a.submittedAt), latest?.submittedAt]);
       }
       extra = {
         attempted: summary.attempted,
         passed: summary.passed,
+        attemptsUsed: summary.attemptsUsed,
         score: latest?.score ?? null,
         totalMarks: latest?.totalMarks ?? null,
         percentage: latest?.percentage ?? null,

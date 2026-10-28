@@ -28,7 +28,8 @@
  *   already visited, which never re-lock (adding a new item to an earlier
  *   lesson must not shut a student out of material they were already in).
  *   A lesson/topic the student qualified out of counts as complete (the
- *   roll-up marks its items complete).
+ *   roll-up marks its items complete), and so does a Final the student failed
+ *   with no attempts left — they move on, it just stays not passed.
  *
  *   `unlockAll` opens every step: for evaluator accounts (utils/evaluatorAccess),
  *   whose completion, current step and resume are tracked as usual, and in
@@ -110,6 +111,10 @@ function newStep(raw, index, bodies) {
     visited: item.visited === true,
     visitedAt: item.visitedAt ?? null,
     attempted: item.attempted === true,
+    // A Final also completes when its last attempt fails, so `completed` alone
+    // does not say whether it was passed. Null for anything but a quiz.
+    passed: item.kind === "QUIZ" ? item.passed === true : null,
+    attemptsUsed: item.kind === "QUIZ" ? item.attemptsUsed ?? 0 : null,
     submissionStatus: item.submissionStatus ?? null,
     completionHint: completionHint(item.kind, item.quizTag),
     body: body ? Object.fromEntries(BODY_FIELDS.map((field) => [field, body[field] ?? null])) : null,
