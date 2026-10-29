@@ -45,6 +45,14 @@ router.get(
   controller.getCourses
 );
 
+// A staff URL's readable course key -> the course id (utils/courseKey.js).
+router.get(
+  "/resolve/:key",
+  verifyToken,
+  checkRole(["ADMIN", "INSTRUCTOR"]),
+  controller.resolveCourseKey
+);
+
 // Public read — optionalToken allows unauthenticated access for course preview.
 // Students/guests only receive PUBLISHED course data; the service enforces this.
 router.get(

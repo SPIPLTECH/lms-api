@@ -2,6 +2,7 @@ const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
 const ApiError = require("../../utils/ApiError");
 const { buildLessonLockMap } = require("../../utils/dripAccess");
+const { loadCourseKeys } = require("../../utils/courseKey");
 
 /**
  * Batched stats block for the course card / workspace overview — one set of
@@ -351,12 +352,18 @@ const getCourses = async (
   if (category) where.category = category;
   if (level) where.level = level;
 
-  const [courses, total] = await Promise.all([
+  // Staff URLs name a course by its readable key (utils/courseKey.js).
+  const [courses, total, keys] = await Promise.all([
     prisma.course.findMany(query),
     prisma.course.count({ where }),
+    loadCourseKeys(role, userId),
   ]);
 
-  return { courses: await attachCourseStats(courses), total };
+  const withStats = await attachCourseStats(courses);
+  return {
+    courses: keys.size ? withStats.map((course) => ({ ...course, urlKey: keys.get(course.id) || course.id })) : withStats,
+    total,
+  };
 };
 
 // The course tree's levels, top down, with the id column each level's items
@@ -586,9 +593,15 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
   // includeModules is false so metadata-only callers don't transfer it.
   const treePromise = includeModules ? loadCourseTreeRows(courseId, publishedOnly) : null;
 
-  const [course, treeRows, lockState] = await Promise.all([coursePromise, treePromise, lockMapPromise]);
+  // Staff URLs name a course by its readable key (utils/courseKey.js); the
+  // set it is unique in is read alongside the course, not after it.
+  const keysPromise = role === "ADMIN" || role === "INSTRUCTOR" ? loadCourseKeys(role, userId) : null;
+
+  const [course, treeRows, lockState, keys] = await Promise.all([coursePromise, treePromise, lockMapPromise, keysPromise]);
 
   if (!course) return null;
+
+  if (keys) course.urlKey = keys.get(course.id) || course.id;
 
   if (treeRows) Object.assign(course, assembleCourseTree(courseId, course.quizzes, treeRows, publishedOnly));
 
