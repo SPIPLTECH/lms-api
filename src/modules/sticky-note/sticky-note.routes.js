@@ -28,6 +28,9 @@ router.get(
   "/:stickyNoteId",
   verifyToken,
   requireContentAccess,
+  // A note is its student's own: without this any signed-in user could read
+  // any note (and its student's details) by id.
+  verifyStickyNoteOwnership,
   controller.getStickyNoteById
 );
 

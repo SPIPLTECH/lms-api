@@ -1,7 +1,7 @@
 const fs = require("fs");
 const courseService = require("./course.service");
 
-const getCourses = async (req, res) => {
+const getCourses = async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
@@ -32,10 +32,7 @@ const getCourses = async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
+    next(error);
   }
 };
 

@@ -383,6 +383,26 @@ test("3/4. B cannot start while A holds the lease: 409, exact message, no media"
   await expectCode(playbackService.startPlayback(await requestUser(b), "video-2"), "PLAYBACK_ACTIVE_ON_ANOTHER_DEVICE");
 });
 
+test("3/4. B's conflict is answered before the slow sequence check runs", async () => {
+  const student = addUser("student-1", "STUDENT");
+  const contentId = addVideo();
+  const a = await signIn(student);
+  const b = await signIn(student);
+  await playbackService.startPlayback(await requestUser(a), contentId);
+
+  let accessChecks = 0;
+  stub(progressService, "assertContentsAccessible", async () => {
+    accessChecks += 1;
+  });
+  await expectCode(playbackService.startPlayback(await requestUser(b), contentId), "PLAYBACK_ACTIVE_ON_ANOTHER_DEVICE");
+  assert.strictEqual(accessChecks, 0);
+  assert.ok(db.auditEvent.some((e) => e.eventType === "PLAYBACK_CONFLICT" && e.reasonCode === "ACTIVE_ELSEWHERE"));
+
+  // The holder itself still goes through the access check.
+  await playbackService.startPlayback(await requestUser(a), contentId);
+  assert.strictEqual(accessChecks, 1);
+});
+
 test("4. over HTTP: B's start is 409 with the exact message and no video URL", async () => {
   const student = addUser("student-1", "STUDENT");
   const contentId = addVideo();

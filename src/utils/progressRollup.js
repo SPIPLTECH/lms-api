@@ -1,4 +1,5 @@
 const prisma = require('../config/database');
+const sequenceCache = require('./sequenceCache');
 const {
   QUALIFYING_TAG,
   getCourseQualifications,
@@ -192,7 +193,7 @@ async function loadPublishedHierarchy(client, courseId) {
   const published = (level) => ({ where: { isPublished: true, ...IN_COURSE[level](courseId) }, orderBy: ORDERED });
 
   const [course, modules, lessons, topics, subTopics, concepts, contents] = await Promise.all([
-    client.course.findUnique({ where: { id: courseId }, select: { id: true, title: true, status: true, sequentialLearning: true } }),
+    client.course.findUnique({ where: { id: courseId }, select: { id: true, title: true, status: true, language: true, sequentialLearning: true } }),
     client.module.findMany({ ...published('module'), select: CONTAINER_SELECT }),
     client.lesson.findMany({ ...published('lesson'), select: { ...CONTAINER_SELECT, moduleId: true } }),
     client.topic.findMany({ ...published('topic'), select: { ...CONTAINER_SELECT, lessonId: true } }),
@@ -959,6 +960,7 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     id: course.id,
     title: course.title,
     status: course.status,
+    language: course.language,
     ...courseDirect,
     modules: modulesTree,
     totalItems: courseTotalItems,
@@ -1015,6 +1017,9 @@ function runExclusive(key, fn) {
 }
 
 async function recomputeCourseProgress(studentId, courseId, tx = null, options = {}) {
+  // A persisted roll-up follows (or is) a progress write: any cached sequence
+  // for this student and course is now stale.
+  if (options.persist !== false) sequenceCache.invalidate(studentId, courseId);
   if (tx || options.persist === false) return computeCourseProgress(studentId, courseId, tx, options);
   return runExclusive(`${studentId}:${courseId}`, () => computeCourseProgress(studentId, courseId, tx, options));
 }

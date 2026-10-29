@@ -65,8 +65,10 @@ const importFileFilter = (req, file, cb) => {
   cb(new Error(`Unsupported import file format: ${extension}`), false);
 };
 
+// Attachments are kept in memory and stored in Vercel Blob by the route
+// (utils/blobStorage.js) — the uploads/ folder does not survive a redeploy.
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   fileFilter: attachmentFileFilter,
   limits: {
     fileSize: 50 * 1024 * 1024,
@@ -208,22 +210,9 @@ const getAttachmentType = (
 
 };
 
-const avatarUploadDir = path.join(__dirname, "../../uploads/avatars");
-if (!fs.existsSync(avatarUploadDir)) {
-  fs.mkdirSync(avatarUploadDir, { recursive: true });
-}
-
-const avatarStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, avatarUploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, `avatar-${uniqueSuffix}${ext}`);
-  },
-});
-
+// Kept in memory; the controller stores the image in Vercel Blob.
 const avatarUpload = multer({
-  storage: avatarStorage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith("image/")) {
@@ -245,12 +234,17 @@ module.exports = {
   getAttachmentType,
   
   sanitizeSvgUpload: (req, res, next) => {
-    if (req.file && req.file.path && path.extname(req.file.originalname).toLowerCase() === '.svg') {
+    if (req.file && path.extname(req.file.originalname).toLowerCase() === '.svg') {
       try {
         const { sanitizeSvg } = require("../utils/sanitizer");
-        const svgBuffer = fs.readFileSync(req.file.path);
+        const svgBuffer = req.file.buffer || fs.readFileSync(req.file.path);
         const cleanSvg = sanitizeSvg(svgBuffer);
-        fs.writeFileSync(req.file.path, cleanSvg);
+        if (req.file.buffer) {
+          req.file.buffer = Buffer.from(cleanSvg);
+          req.file.size = req.file.buffer.length;
+        } else {
+          fs.writeFileSync(req.file.path, cleanSvg);
+        }
       } catch (err) {
         return next(new Error("Failed to sanitize SVG file."));
       }

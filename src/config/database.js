@@ -53,4 +53,7 @@ const baseClient = new PrismaClient({
 // a pass-through.
 const prisma = baseClient.$extends(prismaTimingExtension);
 
-module.exports = prisma;
+// PERF_TIMING=1 also counts Prisma operations per request (utils/perfTiming.js).
+const { PERF_TIMING_ENABLED, instrumentPrisma } = require("../utils/perfTiming");
+
+module.exports = PERF_TIMING_ENABLED ? instrumentPrisma(prisma) : prisma;

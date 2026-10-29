@@ -412,3 +412,64 @@ test("device labels are coarse (browser + OS), not a fingerprint", () => {
   );
   assert.strictEqual(sessionService.deviceLabelFrom(null), null);
 });
+
+// ---------------------------------------------------------------------------
+// Error responses never carry internals
+// ---------------------------------------------------------------------------
+
+test("an unexpected error answers with a generic message and the request id, not its internals", () => {
+  const original = console.error;
+  console.error = () => {};
+  try {
+    const prismaError = Object.assign(
+      new Error("\nInvalid `prisma.authSession.findUnique()` invocation in\nC:\SP Nagpur\lms-api\src\modules\sessions\session.service.js:380:5"),
+      { name: "PrismaClientKnownRequestError", code: "P1001" }
+    );
+    for (const error of [prismaError, new TypeError("Cannot read properties of undefined (reading 'id')"), Object.assign(new Error("connect ECONNREFUSED 10.0.0.5:443"), { isAxiosError: true })]) {
+      const res = fakeRes();
+      errorHandler(error, { requestId: "req-9" }, res, () => {});
+      assert.strictEqual(res.statusCode, 500);
+      assert.strictEqual(res.body.message, "Something went wrong on our side. Please try again.");
+      assert.strictEqual(res.body.requestId, "req-9");
+      assert.ok(!JSON.stringify(res.body).includes("lms-api") && !JSON.stringify(res.body).includes("10.0.0.5"));
+    }
+
+    // Errors raised on purpose keep their message, as before.
+    const own = fakeRes();
+    errorHandler(Object.assign(new Error("Course not found"), { statusCode: 404 }), { requestId: "req-9" }, own, () => {});
+    assert.strictEqual(own.body.message, "Course not found");
+    const plain = fakeRes();
+    errorHandler(new Error("Student profile not found"), { requestId: "req-9" }, plain, () => {});
+    assert.strictEqual(plain.body.message, "Student profile not found");
+    assert.strictEqual(plain.body.requestId, undefined);
+  } finally {
+    console.error = original;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Presence is visible to admins only
+// ---------------------------------------------------------------------------
+
+test("who is online is sent to admins only", () => {
+  const registerPresenceEvents = require("../src/socket/presence.socket");
+  const sent = [];
+  const io = { to: (room) => ({ emit: (event, data) => sent.push({ room, event, data }) }), emit: (event) => sent.push({ room: "*", event }) };
+  const socketFor = (role) => {
+    const handlers = {};
+    const socket = { id: `s-${role}`, user: { id: `u-${role}`, name: role, role }, rooms: [], join: (r) => socket.rooms.push(r), on: (e, h) => (handlers[e] = h), emitted: [], emit: (e, d) => socket.emitted.push({ e, d }) };
+    registerPresenceEvents(io, socket);
+    return { socket, handlers };
+  };
+
+  const student = socketFor("STUDENT");
+  const admin = socketFor("ADMIN");
+  assert.ok(sent.every((m) => m.room === "presence_admins"), "never broadcast to everyone");
+  assert.deepStrictEqual(student.socket.rooms, []);
+  assert.deepStrictEqual(admin.socket.rooms, ["presence_admins"]);
+
+  student.handlers.get_online_users();
+  admin.handlers.get_online_users();
+  assert.strictEqual(student.socket.emitted.length, 0, "a student is told nothing");
+  assert.ok(admin.socket.emitted[0].d.includes("u-STUDENT"));
+});

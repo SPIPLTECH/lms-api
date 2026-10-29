@@ -1,5 +1,6 @@
 const prisma = require('../../config/database');
 const { recomputeCourseProgress } = require('../../utils/progressRollup');
+const sequenceCache = require('../../utils/sequenceCache');
 const { buildLearningPath, resolveNextItem } = require('../../utils/learningPath');
 const { buildLearningSequence, findStepForContent } = require('../../utils/learningSequence');
 const { getCourseQualifyingQuizzes } = require('../../utils/qualification');
@@ -9,8 +10,12 @@ const {
   COURSE_ID_INCLUDE,
   resolveCourseId
 } = require('../../utils/helpers/courseBreadcrumb.helper');
+const { createOpenStepsCache } = require('../../utils/openStepsCache');
 
 const forbidden = (message) => Object.assign(new Error(message), { statusCode: 403 });
+
+// What each student was last seen allowed to open (utils/openStepsCache.js).
+const openSteps = createOpenStepsCache();
 
 /** Every Content id the roll-up hierarchy holds, at every level. */
 function collectHierarchyContentIds(hierarchy) {
@@ -67,16 +72,55 @@ async function loadSequenceBodies(hierarchy, { allBodies }) {
  * Every step is open (no complete-to-unlock order) for evaluator accounts and
  * in a course whose instructor turned sequential learning off — which also
  * keeps no progress (`progressTracked: false`, see isProgressTracked).
+ *
+ * Read-only calls (the access checks) are served from utils/sequenceCache
+ * when a fresh result exists, and concurrent ones share one build. A
+ * persisted build seeds the cache too: it loaded every body, so it answers
+ * any read-only caller. Callers must treat the result as read-only.
  */
 async function computeStudentSequence(studentId, courseId, { persist = false, allBodies = false } = {}) {
+  const readOnly = !persist && !allBodies;
+  if (readOnly) {
+    const cached = sequenceCache.get(studentId, courseId);
+    if (cached) return cached;
+  }
+
+  if (!persist) {
+    const build = buildStudentSequence(studentId, courseId, { persist, allBodies });
+    if (readOnly) sequenceCache.set(studentId, courseId, build, sequenceCache.generation(studentId, courseId));
+    return build;
+  }
+
+  // A persisted roll-up invalidates the cache as it starts, so the generation
+  // is read once it has run; a write that lands after that refuses the seed.
+  let generation;
+  const result = await buildStudentSequence(studentId, courseId, {
+    persist,
+    allBodies,
+    onRolledUp: () => {
+      generation = sequenceCache.generation(studentId, courseId);
+    }
+  });
+  sequenceCache.set(studentId, courseId, Promise.resolve(result), generation);
+  return result;
+}
+
+async function buildStudentSequence(studentId, courseId, { persist, allBodies, onRolledUp = null }) {
   const [rollup, isEvaluator, progressTracked] = await Promise.all([
-    recomputeCourseProgress(studentId, courseId, null, { includeTree: true, persist }),
+    // Chained directly, so the callback runs before any other request can
+    // start a write.
+    recomputeCourseProgress(studentId, courseId, null, { includeTree: true, persist }).then((value) => {
+      onRolledUp?.();
+      return value;
+    }),
     isEvaluatorStudent(studentId),
     isProgressTracked(courseId)
   ]);
   const unlockAll = isEvaluator || !progressTracked;
   const bodies = await loadSequenceBodies(rollup.hierarchy, { allBodies });
-  return { rollup, progressTracked, sequence: buildLearningSequence(rollup.hierarchy, { bodies, unlockAll }) };
+  const sequence = buildLearningSequence(rollup.hierarchy, { bodies, unlockAll });
+  openSteps.remember(studentId, courseId, sequence);
+  return { rollup, progressTracked, sequence };
 }
 
 /**
@@ -108,6 +152,9 @@ async function isProgressTracked(courseId) {
 async function assertContentsAccessible(studentId, courseId, contentIds) {
   const ids = [...new Set((contentIds || []).filter(Boolean))];
   if (!courseId || ids.length === 0) return;
+  // Every item was open in a sequence computed moments ago: no need to
+  // rebuild the course roll-up to say so again.
+  if (openSteps.allOpen(studentId, courseId, ids)) return;
 
   const { sequence } = await computeStudentSequence(studentId, courseId);
   const notInSequence = [];
@@ -838,16 +885,29 @@ async function getStudentLearningPath(studentId, courseId) {
  * through, what the Course Map draws, where "Continue learning" lands, and
  * what the server lets the student open. Steps the student may not open yet
  * carry no material (`body: null`).
+ *
+ * `includePath: true` also returns the learning path (what
+ * getStudentLearningPath returns) as `learningPath`, built from this same
+ * roll-up. The player needs both on load; asking for them separately ran the
+ * whole roll-up twice, one after the other (recomputeCourseProgress
+ * serializes per student and course).
  */
-async function getStudentLearningSequence(studentId, courseId) {
-  const { rollup, progressTracked, sequence } = await computeStudentSequence(studentId, courseId, {
-    persist: true,
-    allBodies: true
-  });
+async function getStudentLearningSequence(studentId, courseId, { includePath = false } = {}) {
+  const [{ rollup, progressTracked, sequence }, qualifyingQuizzes] = await Promise.all([
+    computeStudentSequence(studentId, courseId, {
+      persist: true,
+      allBodies: true
+    }),
+    includePath ? getCourseQualifyingQuizzes(courseId, null, studentId) : null
+  ]);
 
   return {
+    ...(includePath && { learningPath: buildLearningPath(rollup.hierarchy, qualifyingQuizzes, sequence) }),
     courseId,
     title: rollup.hierarchy.title,
+    // The player's only other need from the course record — sending it here
+    // saves the page a whole GET /courses/:id.
+    language: rollup.hierarchy.language,
     progressTracked,
     progress: progressTracked
       ? {
@@ -865,6 +925,7 @@ async function getStudentLearningSequence(studentId, courseId) {
 }
 
 module.exports = {
+  openSteps,
   assertCourseProgressAccess,
   assertContentsAccessible,
   findUnpublishedContentIds,
