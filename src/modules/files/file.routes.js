@@ -2,7 +2,7 @@ const express = require("express");
 
 const verifyToken = require("../../middleware/auth.middleware");
 const { upload, sanitizeSvgUpload, getAttachmentType } = require("../../middleware/upload.middleware");
-const { uploadToBlob } = require("../../utils/blobStorage");
+const { uploadFile } = require("../../utils/r2Storage");
 
 const router = express.Router();
 
@@ -11,8 +11,8 @@ const router = express.Router();
  *
  * Generic authenticated file upload (assignment attachments, instructor
  * notes). Lived at /messages/upload until human-to-human chat was removed;
- * the response shape is unchanged. The file is stored in Vercel Blob, so
- * fileUrl is a Blob URL rather than one under this API's /uploads.
+ * the response shape is unchanged. The file is stored in R2, so
+ * fileUrl is an R2 URL rather than one under this API's /uploads.
  */
 router.post("/upload", verifyToken, upload.single("file"), sanitizeSvgUpload, async (req, res, next) => {
   try {
@@ -21,7 +21,7 @@ router.post("/upload", verifyToken, upload.single("file"), sanitizeSvgUpload, as
     }
 
     const type = getAttachmentType(req.file.mimetype, req.file.originalname);
-    const { url: fileUrl } = await uploadToBlob(req.file, "attachments");
+    const { url: fileUrl } = await uploadFile(req.file, "attachments");
 
     return res.status(200).json({
       success: true,

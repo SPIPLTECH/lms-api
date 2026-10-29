@@ -18,9 +18,10 @@
   "type": "commonjs",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
+    "@aws-sdk/client-s3": "^3.1159.0",
+    "@aws-sdk/s3-request-presigner": "^3.1159.0",
     "@google/genai": "^2.18.0",
     "@prisma/client": "^6.19.0",
-    "@vercel/blob": "^2.8.2",
     "adm-zip": "^0.6.0",
     "axios": "^1.18.1",
     "bcrypt": "^6.0.0",

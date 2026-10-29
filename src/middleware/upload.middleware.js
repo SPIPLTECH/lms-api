@@ -65,8 +65,8 @@ const importFileFilter = (req, file, cb) => {
   cb(new Error(`Unsupported import file format: ${extension}`), false);
 };
 
-// Attachments are kept in memory and stored in Vercel Blob by the route
-// (utils/blobStorage.js) — the uploads/ folder does not survive a redeploy.
+// Attachments are kept in memory and stored in R2 by the route
+// (utils/r2Storage.js) — the uploads/ folder does not survive a redeploy.
 const upload = multer({
   storage: multer.memoryStorage(),
   fileFilter: attachmentFileFilter,
@@ -210,7 +210,7 @@ const getAttachmentType = (
 
 };
 
-// Kept in memory; the controller stores the image in Vercel Blob.
+// Kept in memory; the controller stores the image in R2.
 const avatarUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },

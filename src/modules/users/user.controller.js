@@ -1,5 +1,5 @@
 const userService = require("./user.service");
-const { uploadToBlob } = require("../../utils/blobStorage");
+const { uploadFile } = require("../../utils/r2Storage");
 
 const getUserById = async (
   req,
@@ -135,7 +135,7 @@ const uploadAvatar = async (req, res, next) => {
       });
     }
 
-    const { url: avatarUrl } = await uploadToBlob(req.file, "avatars");
+    const { url: avatarUrl } = await uploadFile(req.file, "avatars");
     const user = await userService.updateMyProfile(req.user.id, { avatar: avatarUrl });
 
     res.json({

@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const { createPdfExtractor } = require("./pdf/pdfExtractor");
+const { parseR2Url, signedR2Url } = require("../../utils/r2Storage");
 
 // Same ceiling as the student upload route (lms_web_demo /api/upload).
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
@@ -23,14 +24,20 @@ const extractor = createPdfExtractor({
 
 /**
  * Where a submission's PDF lives, or null if it is somewhere we must not
- * fetch from. Only two places are trusted: the student-submission folder of
- * Vercel Blob (where the student upload route stores files) and this API's own
- * uploads/attachments folder (older submissions). Anything else is never
+ * fetch from. Only these places are trusted: the student-submission folder of
+ * our R2 bucket (where the student upload route stores files) or of Vercel
+ * Blob (before the move to R2), and this API's own uploads/attachments folder
+ * (older submissions). Anything else is never
  * downloaded, so a crafted fileUrl cannot make the server request arbitrary
  * addresses or send its storage token anywhere else.
  */
 function resolvePdfLocation(fileUrl) {
     if (!fileUrl || typeof fileUrl !== "string") return null;
+
+    const r2Key = parseR2Url(fileUrl);
+    if (r2Key) {
+        return r2Key.startsWith(SUBMISSION_BLOB_PREFIX.slice(1)) ? { kind: "r2", key: r2Key } : null;
+    }
 
     let url;
     try {
@@ -77,6 +84,15 @@ async function downloadPdf(fileUrl, { fetchImpl = fetch } = {}) {
         if (!stat) throw new Error("the uploaded file is no longer on the server");
         if (stat.size > MAX_PDF_BYTES) throw new Error("the PDF is larger than 20 MB");
         return fs.promises.readFile(location.filePath);
+    }
+
+    if (location.kind === "r2") {
+        const response = await fetchImpl(await signedR2Url(location.key), {
+            redirect: "error",
+            signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+        });
+        if (!response.ok) throw new Error(`file storage answered ${response.status}`);
+        return readLimited(response);
     }
 
     const token = process.env.BLOB_READ_WRITE_TOKEN || process.env.VERCEL_BLOB_READ_WRITE_TOKEN;

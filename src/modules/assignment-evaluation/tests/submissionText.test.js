@@ -124,3 +124,51 @@ test('typed answer and PDF text are combined; an unreadable PDF becomes a review
   assert.equal(broken.text, 'Typed part.');
   assert.match(broken.reviewReasons[0], /could not be read/);
 });
+
+// R2: fake settings; signing a URL is local, so nothing reaches the network.
+const R2_ENV = {
+  R2_ACCOUNT_ID: '0123456789abcdef0123456789abcdef',
+  R2_ACCESS_KEY_ID: 'test-access-key',
+  R2_SECRET_ACCESS_KEY: 'test-secret-key',
+  R2_PRIVATE_BUCKET: 'lms-private',
+};
+const R2_BASE = `https://${R2_ENV.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${R2_ENV.R2_PRIVATE_BUCKET}`;
+
+async function withR2Env(fn) {
+  const saved = Object.fromEntries(Object.keys(R2_ENV).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, R2_ENV);
+  try {
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+}
+
+test('R2: only our bucket\'s submission folder is trusted', () => withR2Env(() => {
+  assert.deepEqual(resolvePdfLocation(`${R2_BASE}/assignment-submissions/1-a-x.pdf`), { kind: 'r2', key: 'assignment-submissions/1-a-x.pdf' });
+  for (const bad of [
+    `${R2_BASE}/content-uploads/answer-key.pdf`,
+    `${R2_BASE}/assignment-submissions/%2e%2e/content-uploads/k.pdf`,
+    `https://ffffffffffffffffffffffffffffffff.r2.cloudflarestorage.com/${R2_ENV.R2_PRIVATE_BUCKET}/assignment-submissions/a.pdf`,
+    `https://${R2_ENV.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/other-bucket/assignment-submissions/a.pdf`,
+    `${R2_BASE}/assignment-submissions/a.pdf?x=1`,
+  ]) {
+    const location = resolvePdfLocation(bad);
+    assert.ok(location === null || location.kind === 'external' || location.kind === undefined, bad);
+    assert.notEqual(location?.kind, 'r2', bad);
+  }
+}));
+
+test('R2: a submission is read through a signed URL, with no token header', () => withR2Env(async () => {
+  const { impl, calls } = fakeFetch(await typedPdf([['Plants release oxygen.']]));
+  const buf = await downloadPdf(`${R2_BASE}/assignment-submissions/a.pdf`, { fetchImpl: impl });
+  assert.equal(buf.subarray(0, 5).toString(), '%PDF-');
+  const signed = new URL(calls[0].url);
+  assert.equal(signed.hostname, `${R2_ENV.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`);
+  assert.equal(signed.pathname, `/${R2_ENV.R2_PRIVATE_BUCKET}/assignment-submissions/a.pdf`);
+  assert.ok(signed.searchParams.get('X-Amz-Signature'), 'URL is signed');
+  assert.equal(calls[0].init.redirect, 'error');
+  assert.equal(calls[0].init.headers, undefined);
+}));
