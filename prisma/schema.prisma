@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
   // Loads `include`d relations in one SQL query (LATERAL joins) instead of one
   // round trip per relation level. Against the remote database that took the
   // deep course tree (getCourseById) from ~4.7s to ~0.8s and the course list
@@ -13,19 +13,19 @@ datasource db {
 }
 
 model User {
-  id                      String                    @id @default(cuid())
+  id                      String                      @id @default(cuid())
   name                    String
-  email                   String                    @unique
-  phoneNumber             String?                   @unique
+  email                   String                      @unique
+  phoneNumber             String?                     @unique
   address                 String?
   avatar                  String?
   password                String
-  role                    Role                      @default(STUDENT)
+  role                    Role                        @default(STUDENT)
   refreshToken            String?
-  status                  UserStatus                @default(ACTIVE)
-  createdAt               DateTime                  @default(now())
-  updatedAt               DateTime                  @updatedAt
-  isVerified              Boolean                   @default(false)
+  status                  UserStatus                  @default(ACTIVE)
+  createdAt               DateTime                    @default(now())
+  updatedAt               DateTime                    @updatedAt
+  isVerified              Boolean                     @default(false)
   otp                     String?
   otpExpiresAt            DateTime?
   adminProfile            AdminProfile?
@@ -121,7 +121,7 @@ model StudentProfile {
   // welcome banner, Getting started and the tour). NULL = not yet, so it is
   // offered. Filled in for every student that existed when the column was
   // added (scripts/add-student-onboarding.sql): only new registrations see it.
-  onboardingCompletedAt  DateTime?
+  onboardingCompletedAt DateTime?
 
   updatedAt             DateTime               @updatedAt
   certificates          Certificate[]
@@ -192,48 +192,50 @@ model Course {
   /// (utils/learningSequence.js). Off: every item is open from the start and
   /// no progress is kept (progress.service isProgressTracked).
   sequentialLearning     Boolean          @default(true)
-  
-  publishedAt            DateTime?
-  creatorId              String
-  createdAt              DateTime         @default(now())
-  updatedAt              DateTime         @updatedAt
-  lastViewedAt           DateTime?
-  certificates           Certificate[]
-  creator                User             @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-  enrollments            Enrollment[]
-  modules                Module[]
-  contents               Content[]
-  quizzes                Quiz[]
-  reviews                Review[]
-  assignments            Assignment[]
-  exams                  Exam[]
 
-  studentStates       StudentState[]
-  learningEvents      LearningEvent[]
-  announcements       Announcement[]
-  discussions         Discussion[]
-  questions           Question[]
-  aiConversations     AiConversation[]
+  publishedAt  DateTime?
+  creatorId    String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  lastViewedAt DateTime?
+  certificates Certificate[]
+  creator      User          @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  enrollments  Enrollment[]
+  modules      Module[]
+  contents     Content[]
+  quizzes      Quiz[]
+  reviews      Review[]
+  assignments  Assignment[]
+  exams        Exam[]
+
+  studentStates   StudentState[]
+  learningEvents  LearningEvent[]
+  announcements   Announcement[]
+  discussions     Discussion[]
+  questions       Question[]
+  aiConversations AiConversation[]
+  lessonQueries   LessonQuery[]
 
   @@index([creatorId])
 }
 
 model Module {
-  id          String           @id @default(cuid())
-  title       String
-  description String?
-  order       Int
-  isPublished Boolean          @default(false)
-  courseId    String
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  lessons     Lesson[]
-  contents    Content[]
-  course      Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  questions   Question[]
-  quizzes     Quiz[]
-  assignments Assignment[]
-  progresses  ModuleProgress[]
+  id            String           @id @default(cuid())
+  title         String
+  description   String?
+  order         Int
+  isPublished   Boolean          @default(false)
+  courseId      String
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  lessons       Lesson[]
+  contents      Content[]
+  course        Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  questions     Question[]
+  quizzes       Quiz[]
+  assignments   Assignment[]
+  progresses    ModuleProgress[]
+  lessonQueries LessonQuery[]
 
   @@unique([courseId, order])
 }
@@ -253,10 +255,10 @@ model Lesson {
   module          Module                 @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   queries         LessonQuery[]
 
-  stickyNotes    StickyNote[]
-  quizzes        Quiz[]
-  assignments    Assignment[]
-  progresses     LessonProgress[]
+  stickyNotes StickyNote[]
+  quizzes     Quiz[]
+  assignments Assignment[]
+  progresses  LessonProgress[]
 
   @@unique([moduleId, order])
 }
@@ -334,36 +336,36 @@ model Concept {
 // Assignment is placed at most once.) Constraints that schema.prisma cannot
 // express live in scripts/content-sequence-2-constraints.sql.
 model Content {
-  id            String              @id @default(cuid())
-  order         Int
-  courseId      String?
-  moduleId      String?
-  lessonId      String?
-  topicId       String?
-  subTopicId    String?
-  conceptId     String?
-  type          ContentType
-  title         String?
-  videoUrl      String?
-  fileUrl       String?
-  htmlContent   String?
-  externalUrl   String?
-  duration      Int?
-  data          Json?
-  quizId        String?             @unique
-  quiz          Quiz?               @relation(fields: [quizId], references: [id], onDelete: Cascade)
-  assignmentId  String?             @unique
-  assignment    Assignment?         @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  course        Course?             @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  module        Module?             @relation(fields: [moduleId], references: [id], onDelete: Cascade)
-  lesson        Lesson?             @relation(fields: [lessonId], references: [id], onDelete: Cascade)
-  topic         Topic?              @relation(fields: [topicId], references: [id], onDelete: Cascade)
-  subTopic      SubTopic?           @relation(fields: [subTopicId], references: [id], onDelete: Cascade)
-  concept       Concept?            @relation(fields: [conceptId], references: [id], onDelete: Cascade)
-  progresses    ContentProgress[]
-  lessonQueries LessonQuery[]
+  id             String            @id @default(cuid())
+  order          Int
+  courseId       String?
+  moduleId       String?
+  lessonId       String?
+  topicId        String?
+  subTopicId     String?
+  conceptId      String?
+  type           ContentType
+  title          String?
+  videoUrl       String?
+  fileUrl        String?
+  htmlContent    String?
+  externalUrl    String?
+  duration       Int?
+  data           Json?
+  quizId         String?           @unique
+  quiz           Quiz?             @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  assignmentId   String?           @unique
+  assignment     Assignment?       @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  course         Course?           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  module         Module?           @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  lesson         Lesson?           @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  topic          Topic?            @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  subTopic       SubTopic?         @relation(fields: [subTopicId], references: [id], onDelete: Cascade)
+  concept        Concept?          @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  progresses     ContentProgress[]
+  lessonQueries  LessonQuery[]
   playbackLeases PlaybackLease[]
 
   @@unique([courseId, order])
@@ -376,7 +378,9 @@ model Content {
 
 model LessonQuery {
   id           String            @id @default(cuid())
-  lessonId     String
+  courseId     String?
+  moduleId     String?
+  lessonId     String?
   // The one item the student asked from — a content block, a quiz or an
   // assignment (at most one is set). All optional so lesson-wide questions
   // (and every existing row) stay valid. A question tied to an item is only
@@ -390,12 +394,16 @@ model LessonQuery {
   status       LessonQueryStatus @default(PENDING)
   createdAt    DateTime          @default(now())
   answeredAt   DateTime?
-  lesson       Lesson            @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  course       Course?           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  module       Module?           @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  lesson       Lesson?           @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   content      Content?          @relation(fields: [contentId], references: [id], onDelete: SetNull)
   quiz         Quiz?             @relation(fields: [quizId], references: [id], onDelete: SetNull)
   assignment   Assignment?       @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
   student      StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
+  @@index([courseId])
+  @@index([moduleId])
   @@index([lessonId])
   @@index([contentId])
   @@index([quizId])
@@ -760,7 +768,7 @@ model QuizSubmission {
 // instructor views read; this table is what makes earlier attempts reviewable
 // and what Quiz.attempts is enforced against.
 model QuizAttempt {
-  id               String         @id @default(cuid())
+  id               String            @id @default(cuid())
   quizId           String
   studentId        String
   attemptNumber    Int
@@ -768,15 +776,15 @@ model QuizAttempt {
   score            Int
   totalMarks       Int
   percentage       Int
-  passed           Boolean        @default(false)
-  correctCount     Int            @default(0)
-  incorrectCount   Int            @default(0)
-  unansweredCount  Int            @default(0)
+  passed           Boolean           @default(false)
+  correctCount     Int               @default(0)
+  incorrectCount   Int               @default(0)
+  unansweredCount  Int               @default(0)
   // Reported by the attempt UI; null when it wasn't measured.
   timeTakenSeconds Int?
-  submittedAt      DateTime       @default(now())
-  quiz             Quiz           @relation(fields: [quizId], references: [id], onDelete: Cascade)
-  student          StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  submittedAt      DateTime          @default(now())
+  quiz             Quiz              @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  student          StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
   questionAttempts QuestionAttempt[]
 
   @@unique([studentId, quizId, attemptNumber])
@@ -803,7 +811,7 @@ model QuizAttempt {
 // correct totals). Those are folded from these rows — see
 // summarizeQuestionAttempts() in quiz.service.js.
 model QuestionAttempt {
-  id            String                @id @default(cuid())
+  id            String @id @default(cuid())
   quizAttemptId String
   questionId    String
 
@@ -984,8 +992,8 @@ model AssignmentSubmission {
   // Optional typed/pasted answer, alongside or instead of the PDF.
   textAnswer String?
 
-  assignment Assignment     @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  student    StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  assignment       Assignment                  @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student          StudentProfile              @relation(fields: [studentId], references: [id], onDelete: Cascade)
   evaluations      AssignmentEvaluation[]
   evaluationJob    AssignmentEvaluationJob?
   evaluationAudits AssignmentEvaluationAudit[]
@@ -1671,6 +1679,7 @@ model AuditEvent {
   @@index([userId, createdAt])
   @@index([eventType, createdAt])
 }
+
 // ─── Assignment auto-evaluation ───────────────────────────────────────────
 // Rule-based marking of written / PDF assignment answers
 // (src/modules/assignment-evaluation). Added by

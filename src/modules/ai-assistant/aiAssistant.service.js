@@ -167,6 +167,7 @@ const prepareTurn = async ({ user, courseId, position, message, history, request
     courseId: resolved.courseId,
     position: validPosition,
     budget: LIMITS.MAX_CONTEXT_CHARS,
+    userId: resolved.userId,
   });
 
   return {

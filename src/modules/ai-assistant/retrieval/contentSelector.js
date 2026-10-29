@@ -5,12 +5,64 @@ const { buildCourseContentContext } = require("../context/courseContent.context"
 const { applyContextBudget } = require("./contextBudget");
 
 /**
- * Platform catalog context built when no specific courseId is provided.
- *
- * Provides high-level public catalog information (published course titles,
- * categories, levels, and summaries) so general queries like "What courses are
- * available on Orange Tree?" can be answered accurately in GUEST and BROWSING
- * modes without inventing fake courses or triggering grounding refusals.
+ * Builds the enrolled courses and study dashboard context for an authenticated student
+ * who opened the assistant from My Courses or the general mobile bottom navigation bar.
+ */
+const buildStudentDashboardContext = async (userId) => {
+  if (!userId) return [];
+  const enrollments = await prisma.enrollment.findMany({
+    where: { student: { userId } },
+    select: {
+      progress: true,
+      lastAccessedAt: true,
+      course: {
+        select: {
+          id: true,
+          title: true,
+          category: true,
+          level: true,
+          description: true,
+          estimatedLearningHours: true,
+        },
+      },
+    },
+    orderBy: { lastAccessedAt: "desc" },
+    take: 10,
+  });
+
+  if (!enrollments.length) {
+    return [
+      {
+        sourceType: SOURCE_TYPE.COURSE,
+        sourceId: "student:enrollments",
+        title: "Student Enrolled Courses",
+        text: "The student is signed in but has not yet enrolled in any courses on Orange Tree LMS. Advise them to access their assigned courses from the My Courses page.",
+        priority: PRIORITY.COURSE,
+      },
+    ];
+  }
+
+  const list = enrollments
+    .map((e, idx) => {
+      const c = e.course;
+      const desc = clamp(stripHtml(c.description), 160);
+      return `${idx + 1}. "${c.title}" (Progress: ${Math.round(e.progress || 0)}%, Category: ${c.category || "General"}, Level: ${c.level || "All Levels"})${desc ? `\n   Overview: ${desc}` : ""}`;
+    })
+    .join("\n\n");
+
+  return [
+    {
+      sourceType: SOURCE_TYPE.COURSE,
+      sourceId: "student:enrollments",
+      title: "Student Enrolled Courses & Study Dashboard",
+      text: `The student is currently enrolled in these courses on Orange Tree LMS:\n\n${list}\n\n(Instruction for Assistant: You are talking to this enrolled student from their main learning dashboard. Help them resume their studies, explain concepts from their enrolled subjects, and provide study recommendations.)`,
+      priority: PRIORITY.COURSE,
+    },
+  ];
+};
+
+/**
+ * Fallback platform catalog context if a user has no enrolled courses or is unauthenticated.
  */
 const buildCatalogOverviewContext = async () => {
   const publishedCourses = await prisma.course.findMany({
@@ -61,12 +113,17 @@ const buildCatalogOverviewContext = async () => {
   ];
 };
 
-const select = async ({ scope, courseId, position = {}, budget }) => {
+const select = async ({ scope, courseId, position = {}, budget, userId }) => {
   const collected = [];
 
   if (!courseId) {
-    const catalogChunks = await buildCatalogOverviewContext();
-    collected.push(...catalogChunks);
+    if (userId) {
+      const studentChunks = await buildStudentDashboardContext(userId);
+      collected.push(...studentChunks);
+    } else {
+      const catalogChunks = await buildCatalogOverviewContext();
+      collected.push(...catalogChunks);
+    }
   } else {
     // Course-level metadata is the floor for every scope, including ENROLLED —
     // an enrolled student still asks "what is this course about".
