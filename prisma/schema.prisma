@@ -117,6 +117,12 @@ model StudentProfile {
   preferredStudyTime     PreferredStudyTime?
   technicalSkills        String[]                @default([])
 
+  // When this student finished or set aside the first-run onboarding (the
+  // welcome banner, Getting started and the tour). NULL = not yet, so it is
+  // offered. Filled in for every student that existed when the column was
+  // added (scripts/add-student-onboarding.sql): only new registrations see it.
+  onboardingCompletedAt  DateTime?
+
   updatedAt             DateTime               @updatedAt
   certificates          Certificate[]
   enrollments           Enrollment[]
