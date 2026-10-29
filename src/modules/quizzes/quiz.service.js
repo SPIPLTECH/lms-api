@@ -376,6 +376,138 @@ const calculateSubmissionResult = (quiz, answers = []) => {
   };
 };
 
+const QUIZ_MODULE_PUB = { select: { isPublished: true } };
+const QUIZ_LESSON_PUB = { select: { isPublished: true, module: QUIZ_MODULE_PUB } };
+const QUIZ_TOPIC_PUB = { select: { isPublished: true, lesson: QUIZ_LESSON_PUB } };
+const QUIZ_SUBTOPIC_PUB = { select: { isPublished: true, topic: QUIZ_TOPIC_PUB } };
+const QUIZ_CONCEPT_PUB = { select: { isPublished: true, subTopic: QUIZ_SUBTOPIC_PUB } };
+
+const hasUnpublishedQuizContainer = (node) => {
+  if (!node || typeof node !== "object") return false;
+  if (node.isPublished === false) return true;
+  return Object.values(node).some(
+    (child) => child && typeof child === "object" && hasUnpublishedQuizContainer(child)
+  );
+};
+
+const makeQuizHttpError = (statusCode, message) => {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+};
+
+/**
+ * Verifies a student is enrolled in a published course.
+ */
+const assertStudentCourseAccess = async (studentId, courseId) => {
+  if (!studentId) {
+    throw makeQuizHttpError(403, "Forbidden: Student profile required");
+  }
+  const [course, enrollment] = await Promise.all([
+    prisma.course.findUnique({
+      where: { id: courseId },
+      select: { id: true, status: true },
+    }),
+    prisma.enrollment.findUnique({
+      where: { studentId_courseId: { studentId, courseId } },
+      select: { id: true },
+    }),
+  ]);
+
+  if (!course) {
+    throw makeQuizHttpError(404, "Course not found");
+  }
+  if (!enrollment) {
+    throw makeQuizHttpError(403, "Forbidden: you are not enrolled in this course");
+  }
+  if (course.status !== "PUBLISHED") {
+    throw makeQuizHttpError(403, "Forbidden: this course is not currently available");
+  }
+};
+
+/**
+ * Verifies an enrolled student may open or submit a quiz:
+ *  1. Quiz exists.
+ *  2. Student is enrolled in the quiz's course.
+ *  3. Course is PUBLISHED, quiz is published & not archived, and no ancestor
+ *     container (module/lesson/topic/subTopic/concept) or Content wrapper is unpublished.
+ *  4. Sequence lock (for sequence-wrapped quizzes) allows opening/submitting it.
+ */
+const assertStudentQuizAccess = async (studentId, quizId) => {
+  if (!studentId) {
+    throw makeQuizHttpError(403, "Forbidden: Student profile required");
+  }
+
+  const quiz = await prisma.quiz.findUnique({
+    where: { id: quizId },
+    select: {
+      id: true,
+      courseId: true,
+      isPublished: true,
+      status: true,
+      course: { select: { id: true, status: true } },
+      module: QUIZ_MODULE_PUB,
+      lesson: QUIZ_LESSON_PUB,
+      topic: QUIZ_TOPIC_PUB,
+      subTopic: QUIZ_SUBTOPIC_PUB,
+      concept: QUIZ_CONCEPT_PUB,
+      content: { select: { id: true, isPublished: true } },
+    },
+  });
+
+  if (!quiz) {
+    throw makeQuizHttpError(404, "Quiz not found");
+  }
+
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { studentId_courseId: { studentId, courseId: quiz.courseId } },
+    select: { id: true },
+  });
+
+  if (!enrollment) {
+    throw makeQuizHttpError(403, "Forbidden: you are not enrolled in this course");
+  }
+
+  if (
+    quiz.course?.status !== "PUBLISHED" ||
+    quiz.isPublished === false ||
+    quiz.status === "ARCHIVED" ||
+    quiz.content?.isPublished === false ||
+    hasUnpublishedQuizContainer({
+      module: quiz.module,
+      lesson: quiz.lesson,
+      topic: quiz.topic,
+      subTopic: quiz.subTopic,
+      concept: quiz.concept,
+    })
+  ) {
+    throw makeQuizHttpError(403, "This quiz is not available.");
+  }
+
+  await require("../progress/progress.service").assertSequenceItemAccessible(studentId, {
+    quizId,
+  });
+
+  return quiz;
+};
+
+/**
+ * Verifies an instructor owns the course containing `quizId`.
+ */
+const assertInstructorQuizOwnership = async (userId, quizId) => {
+  const quiz = await prisma.quiz.findUnique({
+    where: { id: quizId },
+    select: { id: true, course: { select: { creatorId: true } } },
+  });
+  if (!quiz) {
+    throw makeQuizHttpError(404, "Quiz not found");
+  }
+  if (!userId || quiz.course?.creatorId !== userId) {
+    throw makeQuizHttpError(403, "Forbidden: you do not own this quiz");
+  }
+  return quiz;
+};
+
 const getQuizzes = async (
   courseId,
   role,
@@ -386,15 +518,20 @@ const getQuizzes = async (
 
   if (courseId) {
     where.courseId = courseId;
-  } else if (role === "INSTRUCTOR") {
-    // No specific course requested: scope to this instructor's own courses only.
+  }
+
+  if (role === "INSTRUCTOR") {
     where.course = { creatorId: userId };
-  } else if (role === "STUDENT" && studentId) {
-    // No specific course requested: scope to courses this student is
-    // actually enrolled in — previously unscoped here (studentId was
-    // resolved by the controller but never passed through), so a student
-    // calling GET /quizzes with no courseId got every quiz in the system.
-    where.course = { enrollments: { some: { studentId } } };
+  } else if (role === "STUDENT") {
+    if (!studentId) {
+      return [];
+    }
+    where.isPublished = true;
+    where.status = { not: "ARCHIVED" };
+    where.course = {
+      status: "PUBLISHED",
+      enrollments: { some: { studentId } },
+    };
   }
 
   const quizzes = await prisma.quiz.findMany({
@@ -443,6 +580,13 @@ const getQuizById = async (
   });
 
   if (!quiz) return null;
+
+  if (
+    (role === "STUDENT" || role === "GUEST") &&
+    (quiz.isPublished === false || quiz.status === "ARCHIVED")
+  ) {
+    throw makeQuizHttpError(403, "This quiz is not available.");
+  }
 
   const junctionQuestions = (quiz.quizQuestions || []).map((qq) => ({
     ...qq.question,
@@ -1208,6 +1352,10 @@ const submitQuiz = async (
     throw error;
   }
 
+  if (quiz.isPublished === false || quiz.status === "ARCHIVED") {
+    throw makeQuizHttpError(403, "This quiz is not available.");
+  }
+
   // A quiz in the learning sequence can only be submitted once the student
   // has reached it — the same gate the player and every other item use.
   // Required lazily: progress.service sits above this module.
@@ -1796,8 +1944,22 @@ const generateSelfAssessmentQuiz = async (courseId, questionCount = 5) => {
     throw error;
   }
 
+  if (course.status !== "PUBLISHED") {
+    throw makeQuizHttpError(403, "Forbidden: this course is not currently available");
+  }
+
   const courseQuizQuestions = await prisma.quizQuestion.findMany({
-    where: { quiz: { courseId } },
+    where: {
+      quiz: {
+        courseId,
+        isPublished: true,
+        status: { not: "ARCHIVED" },
+      },
+      question: {
+        status: "ACTIVE",
+        isPublished: true,
+      },
+    },
     select: { questionId: true },
     distinct: ["questionId"]
   });
@@ -1853,5 +2015,8 @@ module.exports = {
   generateSelfAssessmentQuiz,
   flushPendingMisconceptionClassifications,
   flushPendingSubmissionSideEffects,
-  isSequenceQuiz
+  isSequenceQuiz,
+  assertStudentCourseAccess,
+  assertStudentQuizAccess,
+  assertInstructorQuizOwnership
 };

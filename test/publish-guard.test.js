@@ -4,20 +4,16 @@ const assert = require("node:assert");
 const courseService = require("../src/modules/courses/course.service");
 const prisma = require("../src/config/database");
 
-// validateCourseForPublish existed and was tested, but publishCourse never
-// called it, so an instructor got no signal that a course was incomplete.
-// It reports rather than blocks: most already-published courses predate the
-// check and would fail it, and stranding them would be worse than the gap.
+// validateCourseForPublish reports completeness warnings when an ADMIN publishes
+// a course; publishing, unpublishing, and status changes are ADMIN-only per CLAUDE.md.
 
-function stubCourse({ modules }) {
-  // publishCourse does a plain findUnique; validateCourseForPublish does one
-  // with an `include`. Branch on that so a single stub serves both.
+function stubCourse({ modules = [], status = "DRAFT" } = {}) {
   return async (args) => {
     const base = {
       id: "course-1",
       title: "A Course",
       description: "A description",
-      status: "DRAFT",
+      status,
       creatorId: "instructor-1",
       publishedAt: null,
     };
@@ -29,10 +25,18 @@ function stubWrites(t) {
   const originals = {
     transaction: prisma.$transaction,
     courseFindUnique: prisma.course.findUnique,
+    courseUpdate: prisma.course.update,
   };
   t.after(() => {
     prisma.$transaction = originals.transaction;
     prisma.course.findUnique = originals.courseFindUnique;
+    prisma.course.update = originals.courseUpdate;
+  });
+  prisma.course.update = async () => ({
+    id: "course-1",
+    title: "A Course",
+    creatorId: "instructor-1",
+    status: "DRAFT",
   });
   prisma.$transaction = async (fn) =>
     fn({
@@ -40,14 +44,16 @@ function stubWrites(t) {
       module: { updateMany: async () => ({ count: 0 }) },
       lesson: { updateMany: async () => ({ count: 0 }) },
       topic: { updateMany: async () => ({ count: 0 }) },
+      subTopic: { updateMany: async () => ({ count: 0 }) },
+      concept: { updateMany: async () => ({ count: 0 }) },
     });
 }
 
-test("publishCourse reports an incomplete course instead of blocking it", async (t) => {
+test("publishCourse reports an incomplete course instead of blocking an ADMIN", async (t) => {
   stubWrites(t);
   prisma.course.findUnique = stubCourse({ modules: [] });
 
-  const result = await courseService.publishCourse("course-1", "instructor-1", "INSTRUCTOR");
+  const result = await courseService.publishCourse("course-1", "admin-1", "ADMIN");
 
   assert.ok(Array.isArray(result.publishWarnings), "publish should return warnings");
   assert.ok(
@@ -56,7 +62,7 @@ test("publishCourse reports an incomplete course instead of blocking it", async 
   );
 });
 
-test("publishCourse returns no warnings for a complete course", async (t) => {
+test("publishCourse returns no warnings for a complete course published by ADMIN", async (t) => {
   stubWrites(t);
   prisma.course.findUnique = stubCourse({
     modules: [
@@ -67,7 +73,27 @@ test("publishCourse returns no warnings for a complete course", async (t) => {
     ],
   });
 
-  const result = await courseService.publishCourse("course-1", "instructor-1", "INSTRUCTOR");
+  const result = await courseService.publishCourse("course-1", "admin-1", "ADMIN");
 
   assert.deepStrictEqual(result.publishWarnings, []);
+});
+
+test("publishCourse, unpublishCourse, and updateStatus reject INSTRUCTOR (even course owner) and STUDENT with 403", async (t) => {
+  stubWrites(t);
+  prisma.course.findUnique = stubCourse({ modules: [] });
+
+  for (const role of ["INSTRUCTOR", "STUDENT"]) {
+    await assert.rejects(
+      () => courseService.publishCourse("course-1", "instructor-1", role),
+      (err) => err.statusCode === 403
+    );
+    await assert.rejects(
+      () => courseService.unpublishCourse("course-1", "instructor-1", role),
+      (err) => err.statusCode === 403
+    );
+    await assert.rejects(
+      () => courseService.updateStatus("course-1", "PUBLISHED", "instructor-1", role),
+      (err) => err.statusCode === 403
+    );
+  }
 });

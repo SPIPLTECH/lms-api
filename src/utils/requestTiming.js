@@ -84,12 +84,17 @@ const summarize = (store) => {
 
 const round = (ms) => Math.round(ms);
 
+const isServerTimingEnabled = () => {
+  const flag = (process.env.ENABLE_SERVER_TIMING || "").trim().toLowerCase();
+  return flag === "true" || flag === "1";
+};
+
 function requestTiming(req, res, next) {
   const store = newStore();
 
   const writeHead = res.writeHead;
   res.writeHead = function writeHeadWithTiming(...args) {
-    if (!res.headersSent) {
+    if (!res.headersSent && isServerTimingEnabled()) {
       const { totalMs, dbMs, appMs } = summarize(store);
       res.setHeader(
         "Server-Timing",

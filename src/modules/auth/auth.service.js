@@ -2,7 +2,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const prisma = require("../../config/database");
-const { sendEmail } = require("../../utils/mail");
+const mail = require("../../utils/mail");
 const { otpEmail } = require("../../utils/emailTemplates");
 const { authError } = require("../../utils/authErrors");
 const sessionService = require("../sessions/session.service");
@@ -21,7 +21,7 @@ const badRequest = (message) => {
 
 const sendOtpEmail = async ({ to, name, otp, purpose, expiresInMinutes }) => {
   const { subject, html } = otpEmail({ purpose, otp, expiresInMinutes, name });
-  await sendEmail(to, subject, html);
+  await mail.sendEmail(to, subject, html);
 };
 /**
  * Generate Access Token
@@ -337,44 +337,46 @@ const loginWithGoogle = async (
 const generateOTP = () => {
   return crypto.randomInt(100000, 1000000).toString();
 };
-const forgotPassword =
-  async (email) => {
-    const user =
-      await prisma.user.findUnique({
-        where: { email }
-      });
+const GENERIC_PASSWORD_RESET_MESSAGE = "If the account exists, a code was sent.";
 
-    if (!user) {
-      throw new Error(
-        "User not found"
-      );
-    }
-    if(!user.isVerified){
-      throw new Error(
-       "You are not verified");}
-    const Newotp = generateOTP();
-  
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        otp : Newotp,
-        otpExpiresAt: new Date(Date.now() + OTP_MINUTES * 60 * 1000),
-     
-      }
-    });
-    await sendOtpEmail({
-      to: email,
-      name: user.name,
-      otp: Newotp,
-      purpose: "reset",
-      expiresInMinutes: OTP_MINUTES
-    });
-     return {
-     message: "OTP sent to email"
+const forgotPassword = async (email) => {
+  const normalizedEmail = String(email || "").trim();
+  const user = normalizedEmail
+    ? await prisma.user.findUnique({
+        where: { email: normalizedEmail },
+      })
+    : null;
+
+  // Return an identical response regardless of whether the account exists,
+  // is unverified, or is suspended so callers cannot enumerate valid emails.
+  if (!user || !user.isVerified || user.status !== "ACTIVE") {
+    return {
+      message: GENERIC_PASSWORD_RESET_MESSAGE,
     };
+  }
 
-  
+  const Newotp = generateOTP();
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      otp: Newotp,
+      otpExpiresAt: new Date(Date.now() + OTP_MINUTES * 60 * 1000),
+    },
+  });
+
+  await sendOtpEmail({
+    to: user.email,
+    name: user.name,
+    otp: Newotp,
+    purpose: "reset",
+    expiresInMinutes: OTP_MINUTES,
+  });
+
+  return {
+    message: GENERIC_PASSWORD_RESET_MESSAGE,
   };
+};
 
 /**
  * Load the user for a password reset and check the emailed OTP. Shared by

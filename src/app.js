@@ -92,11 +92,16 @@ app.use(
 // turn this layer restrictive.
 const corsAllowlistConfigured =
   (process.env.CORS_ALLOWED_ORIGINS || "").trim().length > 0;
+if (process.env.NODE_ENV === "production" && !corsAllowlistConfigured) {
+  console.warn(
+    "[cors] CORS_ALLOWED_ORIGINS is not set; enforcing strict fallback allow-list via corsOriginDelegate."
+  );
+}
 
 app.use(
   cors({
     maxAge: 7200,
-    ...(corsAllowlistConfigured ? { origin: corsOriginDelegate } : {})
+    origin: corsOriginDelegate
   })
 );
 app.use(
@@ -109,16 +114,26 @@ app.use(
 morgan.token("url", (req) => redactLoggedUrl(req.originalUrl || req.url));
 app.use(morgan("dev"));
 
-app.use(express.json({
-  limit: "100mb",
+const courseImportLargeJsonRoutes = /^\/course-import\/(?:apply|jobs\/[^/]+)(?:\/|$)/i;
+const standardJsonParser = express.json({
+  limit: "2mb",
   // Webhook signature verification (Razorpay) needs the exact raw bytes the
   // sender signed — re-serializing req.body with JSON.stringify can produce
   // a byte-for-byte different string and break HMAC verification.
   verify: (req, res, buf) => {
     req.rawBody = buf;
   },
-}));
-app.use(express.urlencoded({ extended: true, limit: "100mb" }));
+});
+const standardUrlencodedParser = express.urlencoded({ extended: true, limit: "2mb" });
+
+app.use((req, res, next) => {
+  if (courseImportLargeJsonRoutes.test(req.path)) return next();
+  return standardJsonParser(req, res, next);
+});
+app.use((req, res, next) => {
+  if (courseImportLargeJsonRoutes.test(req.path)) return next();
+  return standardUrlencodedParser(req, res, next);
+});
 // /uploads serves files (course content like PDFs, documents, audio, and public
 // assets like avatars and thumbnails). uploadsHandler allows public assets through
 // while strictly requiring authentication and enforcing the per-student playback-lease

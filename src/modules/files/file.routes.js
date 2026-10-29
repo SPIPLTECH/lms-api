@@ -1,7 +1,7 @@
 const express = require("express");
 
 const verifyToken = require("../../middleware/auth.middleware");
-const { upload, sanitizeSvgUpload, getAttachmentType } = require("../../middleware/upload.middleware");
+const { upload, validateUploadedFileSignature, getAttachmentType } = require("../../middleware/upload.middleware");
 
 const router = express.Router();
 
@@ -12,7 +12,7 @@ const router = express.Router();
  * notes). Lived at /messages/upload until human-to-human chat was removed;
  * the behaviour and response shape are unchanged.
  */
-router.post("/upload", verifyToken, upload.single("file"), sanitizeSvgUpload, (req, res, next) => {
+router.post("/upload", verifyToken, upload.single("file"), validateUploadedFileSignature, (req, res, next) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: "No file uploaded." });

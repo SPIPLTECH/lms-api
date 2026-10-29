@@ -19,7 +19,7 @@ const {
   updateUserSchema,
   updateUserRoleSchema,
 } = require("./user.validation");
-const { avatarUpload } = require("../../middleware/upload.middleware");
+const { avatarUpload, validateUploadedFileSignature } = require("../../middleware/upload.middleware");
 
 // Registered before the /:userId routes below — otherwise Express would
 // match "/profile/me" as "/:userId" with userId="profile" and gate it
@@ -42,6 +42,7 @@ router.post(
   "/profile/avatar",
   verifyToken,
   avatarUpload.single("avatar"),
+  validateUploadedFileSignature,
   userController.uploadAvatar
 );
 

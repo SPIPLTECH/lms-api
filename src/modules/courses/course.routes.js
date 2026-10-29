@@ -82,10 +82,8 @@ router.post(
   "/:courseId/publish",
   verifyToken,
   checkRole([
-    "ADMIN",
-    "INSTRUCTOR"
+    "ADMIN"
   ]),
-  verifyCourseOwnership,
   controller.publishCourse
 );
 
@@ -93,10 +91,8 @@ router.post(
   "/:courseId/unpublish",
   verifyToken,
   checkRole([
-    "ADMIN",
-    "INSTRUCTOR"
+    "ADMIN"
   ]),
-  verifyCourseOwnership,
   controller.unpublishCourse
 );
 
@@ -113,10 +109,8 @@ router.patch(
   "/:courseId/status",
   verifyToken,
   checkRole([
-    "ADMIN",
-    "INSTRUCTOR"
+    "ADMIN"
   ]),
-  verifyCourseOwnership,
   validate(updateCourseStatusSchema),
   controller.updateStatus
 );

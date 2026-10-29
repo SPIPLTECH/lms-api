@@ -41,14 +41,9 @@ const getQuizById = async (req, res, next) => {
         where: { userId: req.user.id },
       });
       studentId = student?.id ?? null;
-      // A sequence quiz opens only once the student has reached it (and only
-      // for a student enrolled in its course). Standalone quizzes — qualifying
-      // tests, practice quizzes — are not gated here.
-      if (studentId) {
-        await require("../progress/progress.service").assertSequenceItemAccessible(studentId, {
-          quizId: req.params.quizId,
-        });
-      }
+      await quizService.assertStudentQuizAccess(studentId, req.params.quizId);
+    } else if (req.user?.role === "INSTRUCTOR") {
+      await quizService.assertInstructorQuizOwnership(req.user.id, req.params.quizId);
     }
 
     const quiz = await quizService.getQuizById(req.params.quizId, req.user?.role, studentId);
@@ -123,6 +118,8 @@ const submitQuiz = async (req, res, next) => {
       });
     }
 
+    await quizService.assertStudentQuizAccess(student.id, req.params.quizId);
+
     const submission = await quizService.submitQuiz(
       student.id,
       req.params.quizId,
@@ -154,6 +151,31 @@ const getQuizResult = async (req, res, next) => {
       return res.status(404).json({
         success: false,
         message: "Student profile not found",
+      });
+    }
+
+    // Verify the quiz exists and the student is enrolled in its course before returning results.
+    const prisma = require("../../config/database");
+    const targetQuiz = await prisma.quiz.findUnique({
+      where: { id: req.params.quizId },
+      select: { id: true, courseId: true },
+    });
+    if (!targetQuiz) {
+      return res.status(404).json({
+        success: false,
+        message: "Quiz not found",
+      });
+    }
+    const enrollment = await prisma.enrollment.findUnique({
+      where: {
+        studentId_courseId: { studentId: student.id, courseId: targetQuiz.courseId },
+      },
+      select: { id: true },
+    });
+    if (!enrollment) {
+      return res.status(403).json({
+        success: false,
+        message: "Forbidden: you are not enrolled in this course",
       });
     }
 
@@ -279,6 +301,16 @@ const updateQuizQuestionMarks = async (req, res, next) => {
 const generateSelfAssessmentQuiz = async (req, res, next) => {
   try {
     const { courseId, questionCount } = req.body;
+    const student = await require("../../config/database").studentProfile.findUnique({
+      where: { userId: req.user.id },
+    });
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found",
+      });
+    }
+    await quizService.assertStudentCourseAccess(student.id, courseId);
     const quiz = await quizService.generateSelfAssessmentQuiz(courseId, questionCount);
 
     res.status(201).json({

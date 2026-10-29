@@ -41,7 +41,13 @@ router.get(
   controller.getMyQuizSubmissions
 );
 
-router.get("/:quizId/result", verifyToken, requireContentAccess, controller.getQuizResult);
+router.get(
+  "/:quizId/result",
+  verifyToken,
+  checkRole(["STUDENT"]),
+  requireContentAccess,
+  controller.getQuizResult
+);
 
 router.get(
   "/:quizId",
@@ -80,6 +86,7 @@ router.delete(
 router.post(
   "/:quizId/submit",
   verifyToken,
+  checkRole(["STUDENT"]),
   requireContentAccess,
   validate(submitQuizSchema),
   controller.submitQuiz

@@ -8,16 +8,17 @@ const verifyCourseImportOwnership = require("../middleware/courseImportOwnership
 const { packageUpload, jsonUpload } = require("../middleware/upload.middleware");
 
 const requireInstructor = [verifyToken, checkRole(["ADMIN", "INSTRUCTOR"])];
+const courseImportJsonParser = express.json({ limit: "25mb" });
 
 router.get("/template", ...requireInstructor, controller.getTemplate);
 router.post("/json", ...requireInstructor, jsonUpload.single("package"), controller.processJsonJob);
 router.post("/generate", ...requireInstructor, jsonUpload.single("package"), controller.processJsonJob);
-router.post("/apply", ...requireInstructor, controller.applyAiEntity);
+router.post("/apply", ...requireInstructor, courseImportJsonParser, controller.applyAiEntity);
 
 router.get("/jobs", ...requireInstructor, controller.listJobs);
 router.post("/jobs", ...requireInstructor, packageUpload.single("package"), controller.uploadPackage);
 router.get("/jobs/:jobId", ...requireInstructor, verifyCourseImportOwnership, controller.getJob);
-router.patch("/jobs/:jobId", ...requireInstructor, verifyCourseImportOwnership, controller.updateJob);
+router.patch("/jobs/:jobId", ...requireInstructor, verifyCourseImportOwnership, courseImportJsonParser, controller.updateJob);
 router.post("/jobs/:jobId/process", ...requireInstructor, verifyCourseImportOwnership, controller.processJob);
 router.post("/jobs/:jobId/import", ...requireInstructor, verifyCourseImportOwnership, controller.importJob);
 router.delete("/jobs/:jobId", ...requireInstructor, verifyCourseImportOwnership, controller.deleteJob);

@@ -26,12 +26,17 @@
  *   unset       -> on unless NODE_ENV === "production"
  */
 
-// Kept from src/socket/index.js so existing deployments keep working.
-const DEFAULT_ALLOWED_ORIGINS = [
-  "http://localhost:3000",
+// Kept from src/socket/index.js so existing deployments keep working;
+// localhost is excluded in production unless explicitly listed in env.
+const PRODUCTION_DEFAULT_ORIGINS = [
   "https://lms-web-demo.vercel.app",
   "https://otree-yzdp.onrender.com",
 ];
+
+const defaultAllowedOrigins = () =>
+  process.env.NODE_ENV === "production"
+    ? PRODUCTION_DEFAULT_ORIGINS
+    : ["http://localhost:3000", ...PRODUCTION_DEFAULT_ORIGINS];
 
 // Loopback + the three RFC1918 private ranges, with an optional port.
 // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16.
@@ -72,7 +77,7 @@ const lanOriginsAllowed = () => {
 const isAllowedOrigin = (origin) => {
   if (!origin) return true;
 
-  const explicit = [...configuredOrigins(), ...DEFAULT_ALLOWED_ORIGINS];
+  const explicit = [...configuredOrigins(), ...defaultAllowedOrigins()];
   if (explicit.includes(origin)) return true;
 
   return lanOriginsAllowed() && PRIVATE_ORIGIN_PATTERN.test(origin);
