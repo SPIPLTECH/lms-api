@@ -141,6 +141,16 @@ async function getInstructorProgress(req, res, next) {
  * Responds with the array itself under `data`, with the derived pointers
  * alongside it — a list endpoint returns a list.
  */
+// Derived from the same array, so a caller that only needs "where am I"
+// doesn't have to scan it and can't disagree with it.
+function summarizeLearningPath(path) {
+  return {
+    nextItem: progressService.resolveNextItem(path),
+    lockedCount: path.filter((entry) => entry.locked).length,
+    skippableCount: path.filter((entry) => entry.skippable).length
+  };
+}
+
 async function getLearningPath(req, res, next) {
   try {
     const studentId = await resolveStudentId(req);
@@ -159,11 +169,7 @@ async function getLearningPath(req, res, next) {
     res.json({
       success: true,
       data: path,
-      // Derived from the same array, so a caller that only needs "where am I"
-      // doesn't have to scan it and can't disagree with it.
-      nextItem: progressService.resolveNextItem(path),
-      lockedCount: path.filter((entry) => entry.locked).length,
-      skippableCount: path.filter((entry) => entry.skippable).length
+      ...summarizeLearningPath(path)
     });
   } catch (error) {
     next(error);
@@ -178,6 +184,9 @@ async function getLearningPath(req, res, next) {
  * plus the course tree the Course Map draws from the same steps. Each step
  * says whether it is complete, visited and locked; a locked step carries no
  * material. Same access guard as the progress tree.
+ *
+ * `&include=path` adds the learning path (GET /progress/learning-path's
+ * `data` plus its summary) as `data.learningPath`, from the same roll-up.
  */
 async function getLearningSequence(req, res, next) {
   try {
@@ -192,7 +201,11 @@ async function getLearningSequence(req, res, next) {
     }
 
     await progressService.assertCourseProgressAccess(req.user, studentId, courseId);
-    const data = await progressService.getStudentLearningSequence(studentId, courseId);
+    const includePath = req.query?.include === 'path';
+    const data = await progressService.getStudentLearningSequence(studentId, courseId, { includePath });
+    if (includePath) {
+      data.learningPath = { path: data.learningPath, ...summarizeLearningPath(data.learningPath) };
+    }
 
     res.json({ success: true, data });
   } catch (error) {

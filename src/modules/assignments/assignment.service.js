@@ -1,4 +1,5 @@
 const prisma = require("../../config/database");
+const learningHealth = require("../learning-health");
 const {
   claimContentOrder,
   releaseContentOrder,
@@ -254,6 +255,9 @@ const submitAssignment = async (assignmentId, studentId, data) => {
         } catch (err) {
             console.error("Progress rollup recalculation failed after assignment submission:", err);
         }
+
+        // Learning Health agent: background, debounced, never awaited, never throws.
+        learningHealth.scheduleRecompute(studentId, courseId);
     }
 
     // Auto-evaluation (only for assignments with a marking scheme): the job is

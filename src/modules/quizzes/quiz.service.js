@@ -2,6 +2,7 @@ const prisma = require("../../config/database");
 const { Prisma } = require("@prisma/client");
 const notificationService = require("../notifications/notification.service");
 const learnerModelService = require("../learner-model/learnerModel.service");
+const learningHealth = require("../learning-health");
 const { MISCONCEPTION_TAXONOMY, isKnownMisconceptionType } = require("../learner-model/misconceptionTaxonomy.config");
 const misconceptionClassifier = require("../learner-model/misconceptionClassifier.service");
 const {
@@ -1304,6 +1305,9 @@ const submitQuiz = async (
     } catch (err) {
       console.error("Progress rollup recalculation failed after quiz submission:", err);
     }
+
+    // Learning Health agent: background, debounced, never awaited, never throws.
+    learningHealth.scheduleRecompute(studentId, quiz.courseId);
 
     // Feed each answered question into the existing learner-model evidence
     // pipeline (BKT + misconception detection) as its own observation, so

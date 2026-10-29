@@ -9,6 +9,7 @@ const { validateLearningPosition, isSecurityViolation } = require("./access/vali
 const { select } = require("./retrieval/contentSelector");
 const { getSystemPrompt } = require("./prompts/scoped.prompts");
 const { buildTurn } = require("./prompts/userPrompt.builder");
+const agentContext = require("../agent-context");
 
 const newRequestId = () => crypto.randomUUID();
 
@@ -162,12 +163,21 @@ const prepareTurn = async ({ user, courseId, position, message, history, request
     );
   }
 
-  const retrieval = await select({
-    scope: resolved.scope,
-    courseId: resolved.courseId,
-    position: validPosition,
-    budget: LIMITS.MAX_CONTEXT_CHARS,
-  });
+  // Retrieval and the learner's agent context are independent: fetched
+  // together. The context is only ever gathered for an enrolled STUDENT, and
+  // resolves to null (never throws, never waits past its timeout) otherwise.
+  const isEnrolledStudent = resolved.scope === SCOPE.ENROLLED && resolved.role === "STUDENT" && resolved.enrollment?.studentId;
+  const [retrieval, learnerFacts] = await Promise.all([
+    select({
+      scope: resolved.scope,
+      courseId: resolved.courseId,
+      position: validPosition,
+      budget: LIMITS.MAX_CONTEXT_CHARS,
+    }),
+    isEnrolledStudent
+      ? agentContext.gatherLearnerContext({ studentId: resolved.enrollment.studentId, courseId: resolved.courseId })
+      : null,
+  ]);
 
   return {
     resolved,
@@ -175,7 +185,12 @@ const prepareTurn = async ({ user, courseId, position, message, history, request
     violations,
     retrieval,
     systemPrompt: getSystemPrompt(resolved.scope),
-    userPrompt: buildTurn({ message, history, contextChunks: retrieval.chunks }),
+    userPrompt: buildTurn({
+      message,
+      history,
+      contextChunks: retrieval.chunks,
+      learnerContext: agentContext.renderLearnerContext(learnerFacts),
+    }),
   };
 };
 

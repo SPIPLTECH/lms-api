@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
+const compression = require("compression");
 
 const path = require("path");
 
@@ -102,6 +103,15 @@ app.use(
 morgan.token("url", (req) => redactLoggedUrl(req.originalUrl || req.url));
 app.use(morgan("dev"));
 
+// gzip JSON responses: the learning sequence alone is >1 MB of lesson bodies.
+// Server-sent event streams (AI assistant, adaptive learning) are left alone —
+// compressing them would hold each event back until the buffer fills.
+app.use(compression({
+  filter: (req, res) =>
+    !String(res.getHeader("Content-Type") || "").includes("text/event-stream") &&
+    compression.filter(req, res),
+}));
+
 app.use(express.json({
   limit: "100mb",
   // Webhook signature verification (Razorpay) needs the exact raw bytes the
@@ -201,6 +211,17 @@ app.use(
   "/adaptive-learning",
   require("./modules/adaptive-learning/adaptiveLearning.routes")
 );
+// Learning Health agent (adaptive Phase 1) — instructor/admin at-risk roster.
+app.use(
+  "/learning-health",
+  require("./modules/learning-health/learningHealth.routes")
+);
+// Adaptive agents, Phases 2-6 (docs/superpowers/specs/2026-10-24-adaptive-agents-phase2-design.md).
+app.use("/motivation", require("./modules/motivation/motivation.routes"));
+app.use("/study-plan", require("./modules/study-plan/studyPlan.routes"));
+app.use("/career", require("./modules/career/career.routes"));
+app.use("/analytics", require("./modules/analytics/analytics.routes"));
+app.use("/admin-intelligence", require("./modules/admin-intelligence/adminIntelligence.routes"));
 app.use(errorHandler);
 
 module.exports = app;

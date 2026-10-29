@@ -141,6 +141,12 @@ model StudentProfile {
   moduleProgresses      ModuleProgress[]
   quizProgresses        QuizProgress[]
   assignmentProgresses  AssignmentProgress[]
+  learningHealth        LearningHealth[]
+  learningHealthHistory LearningHealthHistory[]
+  learningStreak        LearningStreak?
+  motivationNudges      MotivationNudge[]
+  studyPlans            StudyPlan[]
+  careerGoal            CareerGoal?
   user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -208,6 +214,10 @@ model Course {
   discussions         Discussion[]
   questions           Question[]
   aiConversations     AiConversation[]
+  learningHealth        LearningHealth[]
+  learningHealthHistory LearningHealthHistory[]
+  motivationNudges      MotivationNudge[]
+  studyPlans            StudyPlan[]
 
   @@index([creatorId])
 }
@@ -1810,4 +1820,162 @@ model EvaluationSynonymGroup {
   createdById String?
   createdAt   DateTime @default(now())
   createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+}
+
+/// Learning Health agent (adaptive Phase 1). One row per (student, course),
+/// recomputed in the background — see modules/learning-health.
+enum LearningRiskLevel {
+  NEW
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model LearningHealth {
+  id        String @id @default(cuid())
+  studentId String
+  courseId  String
+
+  engagementScore       Float  @default(0)
+  /// null = no performance evidence yet; never shown as 0.
+  performanceScore      Float?
+  consistencyScore      Float  @default(0)
+  progressPercent       Int    @default(0)
+  inactivityDays        Int    @default(0)
+  /// null = no activity in this course at all yet (inactivityDays then counts from enrolment).
+  lastActivityAt        DateTime?
+  deadlineRisk          Float  @default(0)
+  completionProbability Float  @default(0)
+  improvementTrend      String @default("STABLE")
+
+  riskScore   Float             @default(0)
+  riskLevel   LearningRiskLevel @default(NEW)
+  riskReasons Json?
+
+  computedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course  Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, courseId])
+  @@index([courseId, riskScore])
+}
+
+/// One row per (student, course, day) — the trend behind LearningHealth.
+model LearningHealthHistory {
+  id        String   @id @default(cuid())
+  studentId String
+  courseId  String
+  date      DateTime @db.Date
+
+  riskScore        Float
+  riskLevel        LearningRiskLevel
+  engagementScore  Float
+  performanceScore Float?
+  consistencyScore Float
+
+  createdAt DateTime @default(now())
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course  Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, courseId, date])
+  @@index([courseId, date])
+}
+
+/// Motivation agent (adaptive Phase 2). One row per student — the learning
+/// streak across all their courses.
+model LearningStreak {
+  id                   String    @id @default(cuid())
+  studentId            String    @unique
+  currentDays          Int       @default(0)
+  longestDays          Int       @default(0)
+  /// ACTIVE | AT_RISK | BROKEN
+  status               String    @default("BROKEN")
+  lastActiveDate       DateTime? @db.Date
+  celebratedMilestones Int[]     @default([])
+  computedAt           DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+}
+
+/// Motivation agent: one nudge per (student, type, dedupeKey). DISMISSED and
+/// EXPIRED rows are kept so the same nudge is never shown twice.
+model MotivationNudge {
+  id        String    @id @default(cuid())
+  studentId String
+  courseId  String?
+  type      String
+  dedupeKey String
+  /// LOW | MEDIUM | HIGH
+  priority  String
+  title     String
+  message   String
+  ctaHref   String?
+  /// ACTIVE | DISMISSED | EXPIRED
+  status    String    @default("ACTIVE")
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course  Course?        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, type, dedupeKey])
+  @@index([studentId, status])
+}
+
+/// Learning Path agent (adaptive Phase 3). One study plan per (student, course).
+model StudyPlan {
+  id                    String    @id @default(cuid())
+  studentId             String
+  courseId              String
+  dailyMinutes          Int
+  /// EASE_UP | STANDARD | ACCELERATE
+  adjustment            String    @default("STANDARD")
+  adjustmentReason      String?
+  remainingSteps        Int       @default(0)
+  remainingMinutes      Int       @default(0)
+  estimatedCompletionAt DateTime?
+  days                  Json
+  revision              Json?
+  computedAt            DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course  Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, courseId])
+}
+
+/// Career Guidance agent (adaptive Phase 4). The role a student is aiming for;
+/// roleKey refers to modules/career/career.roles.js.
+model CareerGoal {
+  id        String   @id @default(cuid())
+  studentId String   @unique
+  roleKey   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+}
+
+/// Analytics agent (adaptive Phase 5). One snapshot per scope per day; scopeId
+/// is a course id, or "platform". Deliberately no FK (one column, two scopes).
+model AnalyticsSnapshot {
+  id        String   @id @default(cuid())
+  /// COURSE | PLATFORM
+  scopeType String
+  scopeId   String
+  date      DateTime @db.Date
+  metrics   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([scopeType, scopeId, date])
+  @@index([scopeType, date])
 }

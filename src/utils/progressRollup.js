@@ -1,4 +1,5 @@
 const prisma = require('../config/database');
+const sequenceCache = require('./sequenceCache');
 const { QUALIFYING_TAG, getCourseQualifications } = require('./qualification');
 const {
   summarizeQuizAttempts,
@@ -164,6 +165,7 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       id: true,
       title: true,
       status: true,
+      language: true,
       sequentialLearning: true,
       contents: ownContents('course'),
       modules: {
@@ -832,6 +834,7 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     id: course.id,
     title: course.title,
     status: course.status,
+    language: course.language,
     ...courseDirect,
     modules: modulesTree,
     totalItems: courseTotalItems,
@@ -882,6 +885,9 @@ function runExclusive(key, fn) {
 }
 
 async function recomputeCourseProgress(studentId, courseId, tx = null, options = {}) {
+  // A persisted roll-up follows (or is) a progress write: any cached sequence
+  // for this student and course is now stale.
+  if (options.persist !== false) sequenceCache.invalidate(studentId, courseId);
   if (tx) return computeCourseProgress(studentId, courseId, tx, options);
   return runExclusive(`${studentId}:${courseId}`, () => computeCourseProgress(studentId, courseId, tx, options));
 }
