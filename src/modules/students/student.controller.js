@@ -45,8 +45,22 @@ const updateStudent = async (req, res, next) => {
   }
 };
 
+const completeOnboarding = async (req, res, next) => {
+  try {
+    const result = await studentService.completeOnboarding(req.user.id);
+
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getStudents,
   getStudentById,
-  updateStudent
+  updateStudent,
+  completeOnboarding
 };

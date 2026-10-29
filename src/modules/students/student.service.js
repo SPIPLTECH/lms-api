@@ -384,11 +384,39 @@ const updateStudent = async (studentId, data) => {
   });
 };
 
+/**
+ * Records that the signed-in student finished or set aside the first-run
+ * onboarding. Idempotent: the first time is kept.
+ */
+const completeOnboarding = async (userId) => {
+  const profile = await prisma.studentProfile.findUnique({
+    where: { userId },
+    select: { id: true, onboardingCompletedAt: true }
+  });
+
+  if (!profile) {
+    const error = new Error("Student profile not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (profile.onboardingCompletedAt) {
+    return { onboardingCompletedAt: profile.onboardingCompletedAt };
+  }
+
+  return prisma.studentProfile.update({
+    where: { id: profile.id },
+    data: { onboardingCompletedAt: new Date() },
+    select: { onboardingCompletedAt: true }
+  });
+};
+
 module.exports = {
   classifyStudent,
   overallStatus,
   treeStats,
   getStudents,
   getStudentById,
-  updateStudent
+  updateStudent,
+  completeOnboarding
 };

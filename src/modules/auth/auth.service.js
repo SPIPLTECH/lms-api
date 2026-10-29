@@ -658,8 +658,29 @@ const getProfile = async (userId) => {
     throw new Error("User not found");
   }
 
+  if (user.studentProfile) {
+    const onboardingCompletedAt = await studentOnboardingState(user.id);
+    if (onboardingCompletedAt !== undefined) user.studentProfile.onboardingCompletedAt = onboardingCompletedAt;
+  }
+
   return { ...user, evaluator: await evaluatorSummaryForUser(user.id) };
 };
+
+// StudentProfile.onboardingCompletedAt, read on its own: until
+// scripts/add-student-onboarding.sql has run and the client is regenerated,
+// asking for it fails, and the profile must still load. Then the field is
+// left out (undefined) and the frontend offers no onboarding.
+async function studentOnboardingState(userId) {
+  try {
+    const row = await prisma.studentProfile.findUnique({
+      where: { userId },
+      select: { onboardingCompletedAt: true },
+    });
+    return row ? row.onboardingCompletedAt : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 module.exports = {
   register,
