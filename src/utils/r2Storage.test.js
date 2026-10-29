@@ -70,7 +70,7 @@ test('signed URLs point at the object and expire', () => withR2Env(async () => {
 
 test('playback treats an R2 video as protected storage', () => withR2Env(() => {
   const url = `https://${HOST}/lms-private/content-uploads/lesson.mp4`;
-  assert.deepEqual(classifySource(url), { kind: 'blob', url, isPrivate: true, r2Key: 'content-uploads/lesson.mp4' });
+  assert.deepEqual(classifySource(url), { kind: 'blob', url, r2Key: 'content-uploads/lesson.mp4' });
   assert.equal(classifySource(`https://${HOST}/other-bucket/lesson.mp4`).kind, 'external');
 }));
 

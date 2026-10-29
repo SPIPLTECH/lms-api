@@ -13,10 +13,7 @@ const { parseR2Url, signedR2Url } = require("../../utils/r2Storage");
  *  local     a file under the API's uploads/ dir     signed GET /playback/media/…  the signed URL, yes — but the
  *                                                                                  static /uploads/... URL also
  *                                                                                  still serves it (see note)
- *  blob      a file in our R2 bucket, or a Vercel    signed GET /playback/media/…  yes for R2 and private blobs; a
- *            Blob URL, public or private                                           public blob's own URL stays
- *                                                                                  public, but students are no
- *                                                                                  longer told it
+ *  blob      a file in our R2 bucket                 signed GET /playback/media/…  yes
  *  youtube   YouTube                                 the YouTube URL               no — YouTube serves it
  *  vimeo     Vimeo                                   the Vimeo URL                 no — Vimeo serves it
  *  external  any other direct link                   the link itself               no — not ours to proxy
@@ -32,14 +29,13 @@ const { parseR2Url, signedR2Url } = require("../../utils/r2Storage");
  *
  * External links are deliberately not proxied: proxying arbitrary
  * instructor-entered URLs from the API would make it a server-side request
- * forgery vector. Only our R2 bucket and Vercel Blob hosts are fetched upstream.
+ * forgery vector. Only our R2 bucket is fetched upstream.
  */
 
 const UPLOADS_ROOT = path.resolve(__dirname, "../../../uploads");
 
 const YOUTUBE_HOSTS = /(^|\.)(youtube\.com|youtube-nocookie\.com|youtu\.be)$/i;
 const VIMEO_HOSTS = /(^|\.)vimeo\.com$/i;
-const BLOB_HOST = /\.blob\.vercel-storage\.com$/i;
 
 /** The VIDEO source a Content row plays, in the order the player has always used. */
 const sourceOf = (content) => content?.videoUrl || content?.fileUrl || content?.externalUrl || null;
@@ -58,7 +54,7 @@ function localUploadPath(parsed) {
   return fs.existsSync(absolute) && fs.statSync(absolute).isFile() ? absolute : null;
 }
 
-/** @returns {{ kind: "local"|"blob"|"youtube"|"vimeo"|"external"|"none", url?, filePath?, isPrivate?, r2Key? }} */
+/** @returns {{ kind: "local"|"blob"|"youtube"|"vimeo"|"external"|"none", url?, filePath?, r2Key? }} */
 function classifySource(rawUrl) {
   if (typeof rawUrl !== "string" || rawUrl.trim() === "") return { kind: "none" };
   const url = rawUrl.trim();
@@ -77,11 +73,7 @@ function classifySource(rawUrl) {
   if (filePath) return { kind: "local", url, filePath };
 
   const r2Key = parseR2Url(url);
-  if (r2Key) return { kind: "blob", url, isPrivate: true, r2Key };
-
-  if (parsed.protocol === "https:" && BLOB_HOST.test(parsed.hostname)) {
-    return { kind: "blob", url, isPrivate: /\.private\.blob\.vercel-storage\.com$/i.test(parsed.hostname) };
-  }
+  if (r2Key) return { kind: "blob", url, r2Key };
 
   if (parsed.hostname === "relative.invalid") return { kind: "none" };
   return { kind: "external", url };
@@ -117,26 +109,13 @@ function sendLocalFile(res, filePath) {
   });
 }
 
-/** Streams an R2 or Vercel Blob object to the client, forwarding Range. */
+/** Streams an R2 object to the client through a short-lived signed URL, forwarding Range. */
 async function streamBlob(req, res, source) {
   const headers = {};
   const range = req.get("range");
   if (range) headers.Range = range;
 
-  // R2 is read through a short-lived signed URL; private Vercel Blob with its token.
-  let upstreamUrl = source.url;
-  if (source.r2Key) {
-    upstreamUrl = await signedR2Url(source.r2Key);
-  } else if (source.isPrivate) {
-    const token = process.env.BLOB_READ_WRITE_TOKEN || process.env.VERCEL_BLOB_READ_WRITE_TOKEN;
-    if (!token) {
-      const error = new Error("Private video storage is not configured on the API.");
-      error.statusCode = 503;
-      error.code = "MEDIA_UNAVAILABLE";
-      throw error;
-    }
-    headers.Authorization = `Bearer ${token}`;
-  }
+  const upstreamUrl = await signedR2Url(source.r2Key);
 
   const controller = new AbortController();
   req.on("close", () => controller.abort());

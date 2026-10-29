@@ -12,6 +12,14 @@
  */
 process.env.DATABASE_URL = "postgresql://mock:mock@127.0.0.1:1/never";
 delete process.env.TEST_DATABASE_URL;
+// Fake R2 settings, so stored video links are recognised; nothing is fetched.
+Object.assign(process.env, {
+  R2_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",
+  R2_ACCESS_KEY_ID: "test-access-key",
+  R2_SECRET_ACCESS_KEY: "test-secret-key",
+  R2_PRIVATE_BUCKET: "lms-private",
+});
+const R2_VIDEO = "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/lms-private/content-uploads/v.mp4";
 
 const test = require("node:test");
 const assert = require("node:assert");
@@ -340,7 +348,7 @@ test("students and guests never receive a VIDEO source; other content is untouch
 test("learning-sequence step bodies are redacted too; locked rows stay unplayable", () => {
   const sequence = {
     steps: [
-      { type: "VIDEO", contentId: "v1", body: { videoUrl: "https://x.blob.vercel-storage.com/v.mp4", fileUrl: null, externalUrl: null, htmlContent: null } },
+      { type: "VIDEO", contentId: "v1", body: { videoUrl: R2_VIDEO, fileUrl: null, externalUrl: null, htmlContent: null } },
       { type: "VIDEO", contentId: "v2", locked: true, body: { videoUrl: null, fileUrl: null, externalUrl: null } },
       { type: "HTML", contentId: "h1", body: { videoUrl: null, htmlContent: "<p>hi</p>" } },
     ],
@@ -373,13 +381,10 @@ test("sources are classified by what the LMS can actually protect", () => {
   assert.strictEqual(classifySource("https://www.youtube.com/watch?v=abcdefghijk").kind, "youtube");
   assert.strictEqual(classifySource("https://youtu.be/abcdefghijk").kind, "youtube");
   assert.strictEqual(classifySource("https://vimeo.com/123").kind, "vimeo");
-  assert.deepStrictEqual(classifySource("https://store.private.blob.vercel-storage.com/v.mp4"), {
-    kind: "blob",
-    url: "https://store.private.blob.vercel-storage.com/v.mp4",
-    isPrivate: true,
-  });
-  assert.strictEqual(classifySource("https://store.public.blob.vercel-storage.com/v.mp4").isPrivate, false);
-  assert.strictEqual(classifySource("http://store.public.blob.vercel-storage.com/v.mp4").kind, "external", "blob over plain http is not proxied");
+  assert.deepStrictEqual(classifySource(R2_VIDEO), { kind: "blob", url: R2_VIDEO, r2Key: "content-uploads/v.mp4" });
+  assert.strictEqual(classifySource(R2_VIDEO.replace("https:", "http:")).kind, "external", "R2 over plain http is not proxied");
+  assert.strictEqual(classifySource(R2_VIDEO.replace("/lms-private/", "/other-bucket/")).kind, "external", "another bucket is not proxied");
+  assert.strictEqual(classifySource("https://store.private.blob.vercel-storage.com/v.mp4").kind, "external", "Vercel Blob is no longer our storage");
   assert.strictEqual(classifySource("https://cdn.example.com/v.mp4").kind, "external");
   assert.strictEqual(classifySource("http://169.254.169.254/latest/meta-data").kind, "external", "never proxied upstream");
   assert.strictEqual(classifySource("/uploads/../../.env").kind, "none", "path traversal is not a local file");
@@ -389,7 +394,7 @@ test("sources are classified by what the LMS can actually protect", () => {
 test("only lease-gated sources get a signed URL; the rest are handed out as-is after the lease", () => {
   const lease = { id: "lease-9" };
   const blob = buildMediaDescriptor(
-    { id: "v1", videoUrl: "https://s.private.blob.vercel-storage.com/v.mp4" },
+    { id: "v1", videoUrl: R2_VIDEO },
     lease,
     { maxAgeSeconds: 60 }
   );
@@ -397,7 +402,7 @@ test("only lease-gated sources get a signed URL; the rest are handed out as-is a
   assert.strictEqual(blob.protected, true);
   assert.match(blob.url, /^\/playback\/media\/[^/]+$/);
   assert.strictEqual(verifyMediaToken(blob.url.split("/").pop()).leaseId, "lease-9");
-  assert.ok(!blob.url.includes("vercel-storage"), "the storage URL is not disclosed");
+  assert.ok(!blob.url.includes("r2.cloudflarestorage"), "the storage URL is not disclosed");
 
   const youtube = buildMediaDescriptor({ id: "v2", videoUrl: "https://youtu.be/abcdefghijk" }, lease, { maxAgeSeconds: 60 });
   assert.deepStrictEqual(youtube, { kind: "youtube", url: "https://youtu.be/abcdefghijk", protected: false });
