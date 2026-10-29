@@ -2,31 +2,78 @@ const prisma = require("../../../config/database");
 const { SOURCE_TYPE, PRIORITY, LIMITS } = require("../constants/aiAssistant.constants");
 const { stripHtml, clamp } = require("./courseOverview.context");
 
-// Content types whose body is meaningful as text to an LLM. A VIDEO row's
-// URL teaches the model nothing, so only its title is used as a signpost.
+// Content types whose body is meaningful as text to an LLM.
 const TEXTUAL_TYPES = new Set(["HTML", "TEXT", "DOCUMENT", "MARKDOWN", "CODE"]);
+
+/**
+ * Extracts a readable filename from a storage or public URL.
+ */
+const fileNameFromUrl = (url) => {
+  if (!url || typeof url !== "string") return null;
+  try {
+    const cleanUrl = url.split("?")[0];
+    const raw = cleanUrl.substring(cleanUrl.lastIndexOf("/") + 1);
+    const decoded = decodeURIComponent(raw);
+    return decoded.replace(/^\d+[-_]/, "").replace(/[-_][A-Za-z0-9]{20,}\.pdf$/i, ".pdf");
+  } catch {
+    return null;
+  }
+};
 
 /**
  * Renders one Content row as grounding text.
  *
- * Note what is NOT selected anywhere in this file: Question, QuizQuestion,
- * correctAnswer, explanation, or any Assignment body. Assessment material
- * never enters AI context — that is a retrieval-layer guarantee, so no prompt
- * wording or model behaviour can undo it.
+ * Clearly tags the item with its active window type, title, location breadcrumb,
+ * and pedagogical context so the assistant immediately knows what the student
+ * is viewing and can provide summaries of videos, documents, or readings.
+ *
+ * Assessment material (quizzes, answer keys, assignments) is never selected.
  */
-const renderContent = (content) => {
+const renderContent = (content, { isActiveWindow = false } = {}) => {
   const label = content.title || `${content.type} item`;
+  const typeStr = String(content.type || "").toUpperCase();
+
+  const breadcrumb = [
+    content.module?.title ? `Module: ${content.module.title}` : null,
+    content.lesson?.title ? `Lesson: ${content.lesson.title}` : null,
+    content.topic?.title ? `Topic: ${content.topic.title}` : null,
+  ]
+    .filter(Boolean)
+    .join(" > ");
+
+  const windowHeader = isActiveWindow
+    ? `[CURRENTLY OPEN WINDOW / ACTIVE SCREEN: ${
+        typeStr === "VIDEO"
+          ? "VIDEO LESSON PLAYER"
+          : typeStr === "DOCUMENT" || typeStr === "PDF"
+          ? "PDF / DOCUMENT VIEWER"
+          : `${typeStr} READING`
+      }]\nActive Item Title: "${label}"\n${breadcrumb ? `Syllabus Location: ${breadcrumb}\n` : ""}`
+    : `[Content Item] "${label}" (${typeStr}):\n`;
 
   if (TEXTUAL_TYPES.has(content.type) && content.htmlContent) {
     const body = stripHtml(content.htmlContent);
-    if (body) return `${label}:\n${clamp(body, LIMITS.MAX_CHUNK_CHARS)}`;
+    if (body) {
+      return `${windowHeader}Lesson Reading Content:\n${clamp(body, LIMITS.MAX_CHUNK_CHARS)}`;
+    }
   }
 
   if (content.type === "VIDEO") {
-    return `${label}: a video lesson${content.duration ? ` (~${Math.round(content.duration / 60)} min)` : ""}.`;
+    const durStr = content.duration ? ` (~${Math.round(content.duration / 60)} min)` : "";
+    const topicDesc = content.topic?.description ? stripHtml(content.topic.description) : "";
+    const descPart = topicDesc ? `\nTopic Context & Subject Description: ${topicDesc}` : "";
+    return `${windowHeader}Type: Video lesson${durStr}.${descPart}\n(Pedagogical note for Assistant: The student has this video open on their screen. When asked for an overview or summary of this video, explain what it covers and summarize its core concepts using the title, topic description, and syllabus context.)`;
   }
 
-  return `${label}: ${String(content.type).toLowerCase()} learning material.`;
+  if (content.type === "DOCUMENT" || content.type === "PDF") {
+    const fname = fileNameFromUrl(content.fileUrl);
+    const filePart = fname ? `\nDocument File: ${fname}` : "";
+    const topicDesc = content.topic?.description ? stripHtml(content.topic.description) : "";
+    const descPart = topicDesc ? `\nTopic Context & Subject Description: ${topicDesc}` : "";
+    return `${windowHeader}Type: PDF / Document study material.${filePart}${descPart}\n(Pedagogical note for Assistant: The student has this PDF/document open on their screen. When asked for an overview or summary of this document, explain what it covers and summarize the concepts using the document title, topic description, and syllabus context.)`;
+  }
+
+  return `${windowHeader}Type: ${String(content.type).toLowerCase()} learning material.`;
 };
 
 const contentSelect = {
@@ -35,17 +82,16 @@ const contentSelect = {
   type: true,
   htmlContent: true,
   duration: true,
+  fileUrl: true,
   order: true,
+  topic: { select: { id: true, title: true, description: true } },
+  lesson: { select: { id: true, title: true, description: true } },
+  module: { select: { id: true, title: true, description: true } },
 };
 
 /**
  * Deep learning content for an ENROLLED student, assembled nearest-first
  * around where they actually are.
- *
- * Callers MUST have passed resolveScope -> ENROLLED and validateLearningPosition
- * before calling this. It performs no access checks of its own by design: it
- * is a retriever, and mixing authorization into retrieval is precisely how the
- * old Mentor ended up enforcing access in prompt text.
  *
  * @param {string} courseId
  * @param {{moduleId, lessonId, topicId, contentIds}} position already validated
@@ -66,14 +112,13 @@ const buildCourseContentContext = async (courseId, position = {}) => {
         sourceType: SOURCE_TYPE.CONTENT,
         sourceId: c.id,
         title: c.title || "Current content",
-        text: renderContent(c),
+        text: renderContent(c, { isActiveWindow: true }),
         priority: PRIORITY.ACTIVE_CONTENT,
       });
     }
   }
 
-  // 2. ACTIVE TOPIC — its description plus any content under it the client
-  //    did not already name.
+  // 2. ACTIVE TOPIC — its description plus sibling content under it.
   if (topicId) {
     const topic = await prisma.topic.findUnique({
       where: { id: topicId },
@@ -85,11 +130,16 @@ const buildCourseContentContext = async (courseId, position = {}) => {
       },
     });
     if (topic) {
-      const parts = [`Topic: ${topic.title}`];
-      if (topic.description) parts.push(stripHtml(topic.description));
+      const isTopicWindow = contentIds.length === 0;
+      const parts = [
+        isTopicWindow
+          ? `[CURRENTLY OPEN WINDOW / ACTIVE SCREEN: TOPIC OVERVIEW]\nTopic: ${topic.title}`
+          : `Topic: ${topic.title}`,
+      ];
+      if (topic.description) parts.push(`Description: ${stripHtml(topic.description)}`);
       for (const c of topic.contents) {
         if (contentIds.includes(c.id)) continue;
-        parts.push(renderContent(c));
+        parts.push(renderContent(c, { isActiveWindow: false }));
       }
       chunks.push({
         sourceType: SOURCE_TYPE.TOPIC,
@@ -101,8 +151,7 @@ const buildCourseContentContext = async (courseId, position = {}) => {
     }
   }
 
-  // 3. ACTIVE LESSON — description, lesson-direct content, and the titles of
-  //    sibling topics so the model can place the current topic in sequence.
+  // 3. ACTIVE LESSON — description, lesson-direct content, and topic sequence.
   if (lessonId) {
     const lesson = await prisma.lesson.findUnique({
       where: { id: lessonId },
@@ -120,11 +169,16 @@ const buildCourseContentContext = async (courseId, position = {}) => {
       },
     });
     if (lesson) {
-      const parts = [`Lesson: ${lesson.title}`];
-      if (lesson.description) parts.push(stripHtml(lesson.description));
+      const isLessonWindow = contentIds.length === 0 && !topicId;
+      const parts = [
+        isLessonWindow
+          ? `[CURRENTLY OPEN WINDOW / ACTIVE SCREEN: LESSON OVERVIEW]\nLesson: ${lesson.title}`
+          : `Lesson: ${lesson.title}`,
+      ];
+      if (lesson.description) parts.push(`Description: ${stripHtml(lesson.description)}`);
       for (const c of lesson.contents) {
         if (contentIds.includes(c.id)) continue;
-        parts.push(renderContent(c));
+        parts.push(renderContent(c, { isActiveWindow: false }));
       }
       if (lesson.topics.length) {
         parts.push(`Topics in this lesson, in order: ${lesson.topics.map((t) => t.title).join(" → ")}`);
@@ -139,8 +193,7 @@ const buildCourseContentContext = async (courseId, position = {}) => {
     }
   }
 
-  // 4. ACTIVE MODULE — titles only. Enough to answer "where does this sit?"
-  //    without pulling a second lesson's body into the budget.
+  // 4. ACTIVE MODULE — titles only.
   if (moduleId) {
     const mod = await prisma.module.findUnique({
       where: { id: moduleId },
@@ -208,4 +261,4 @@ const buildCourseContentContext = async (courseId, position = {}) => {
   return { chunks };
 };
 
-module.exports = { buildCourseContentContext, };
+module.exports = { buildCourseContentContext };

@@ -431,8 +431,33 @@ async function refreshSession({ refreshToken, deviceKey }) {
     },
   });
 
-  // Refreshing is activity: always push the idle deadline forward.
-  if (session) session.lastSeenAt = new Date(0);
+  if (!session) throw authError("SESSION_INVALID");
+
+  // Refreshing is activity: if within absoluteExpiry and not actively revoked/logged out,
+  // renew the idle deadline forward
+  const now = new Date();
+  if (
+    (session.status === STATUS.ACTIVE || session.status === STATUS.EXPIRED) &&
+    new Date(session.absoluteExpiry) > now &&
+    session.endReason !== END_REASONS.LOGOUT &&
+    session.endReason !== END_REASONS.ADMIN_REVOKE
+  ) {
+    const expiresAt = idleDeadline(now, session.absoluteExpiry);
+    await prisma.authSession.update({
+      where: { id: session.id },
+      data: {
+        status: STATUS.ACTIVE,
+        lastSeenAt: now,
+        expiresAt,
+        endedAt: null,
+        endReason: null,
+      },
+    });
+    session.status = STATUS.ACTIVE;
+    session.lastSeenAt = now;
+    session.expiresAt = expiresAt;
+  }
+
   await checkSession(session, { deviceKey });
   return session;
 }

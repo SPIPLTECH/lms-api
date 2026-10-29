@@ -35,14 +35,49 @@ const TARGETS = {
 };
 const TARGET_FIELDS = Object.keys(TARGETS);
 
-// Content, Quiz and Assignment share the same four-level parent shape, so
-// one select finds the lesson and course behind any of them.
+// Content, Quiz and Assignment share the canonical hierarchy shapes.
 const PARENT_SELECT = {
   lessonId: true,
   courseId: true,
-  module: { select: { courseId: true } },
-  lesson: { select: { module: { select: { courseId: true } } } },
-  topic: { select: { lessonId: true, lesson: { select: { module: { select: { courseId: true } } } } } }
+  moduleId: true,
+  module: { select: { id: true, courseId: true } },
+  lesson: { select: { id: true, moduleId: true, module: { select: { id: true, courseId: true } } } },
+  topic: {
+    select: {
+      id: true,
+      lessonId: true,
+      lesson: { select: { id: true, moduleId: true, module: { select: { id: true, courseId: true } } } }
+    }
+  },
+  subTopic: {
+    select: {
+      id: true,
+      topic: {
+        select: {
+          id: true,
+          lessonId: true,
+          lesson: { select: { id: true, moduleId: true, module: { select: { id: true, courseId: true } } } }
+        }
+      }
+    }
+  },
+  concept: {
+    select: {
+      id: true,
+      subTopic: {
+        select: {
+          id: true,
+          topic: {
+            select: {
+              id: true,
+              lessonId: true,
+              lesson: { select: { id: true, moduleId: true, module: { select: { id: true, courseId: true } } } }
+            }
+          }
+        }
+      }
+    }
+  }
 };
 
 const createQuery = async (userId, data) => {
@@ -55,6 +90,8 @@ const createQuery = async (userId, data) => {
     throw new ApiError(404, "Student profile not found");
   }
 
+  let courseId = data.courseId || null;
+  let moduleId = data.moduleId || null;
   let lessonId = data.lessonId || null;
   const targetField = TARGET_FIELDS.find((field) => data[field]) || null;
   let targetCourseId = null;
@@ -75,57 +112,96 @@ const createQuery = async (userId, data) => {
       target.module?.courseId ||
       target.lesson?.module?.courseId ||
       target.topic?.lesson?.module?.courseId ||
+      target.subTopic?.topic?.lesson?.module?.courseId ||
+      target.concept?.subTopic?.topic?.lesson?.module?.courseId ||
       null;
-    // An item inside a lesson (directly or via a topic) is filed under that
-    // lesson; a course/module-level item falls back to the lesson sent.
-    lessonId = target.lessonId || target.topic?.lessonId || lessonId;
+
+    lessonId =
+      target.lessonId ||
+      target.topic?.lessonId ||
+      target.subTopic?.topic?.lessonId ||
+      target.concept?.subTopic?.topic?.lessonId ||
+      lessonId;
+
+    moduleId =
+      target.moduleId ||
+      target.lesson?.moduleId ||
+      target.topic?.lesson?.moduleId ||
+      target.subTopic?.topic?.lesson?.moduleId ||
+      target.concept?.subTopic?.topic?.lesson?.moduleId ||
+      moduleId;
+
+    courseId = targetCourseId || courseId;
   }
 
-  if (!lessonId) {
-    throw new ApiError(400, "Ask your question from inside a lesson.");
-  }
-
-  const lesson = await prisma.lesson.findUnique({
-    where: { id: lessonId },
-    select: {
-      id: true,
-      module: {
-        select: {
-          courseId: true,
-          course: {
-            select: {
-              id: true,
-              title: true,
-              creatorId: true
-            }
-          }
-        }
-      }
+  let lessonCourseId = null;
+  if (lessonId) {
+    const lsn = await prisma.lesson.findUnique({
+      where: { id: lessonId },
+      select: { id: true, moduleId: true, module: { select: { id: true, courseId: true } } }
+    });
+    if (lsn) {
+      moduleId = lsn.moduleId || moduleId;
+      lessonCourseId = lsn.module?.courseId || null;
+      courseId = courseId || lessonCourseId;
     }
-  });
-
-  if (!lesson) {
-    throw new ApiError(404, "Lesson not found");
+  } else if (moduleId) {
+    const mod = await prisma.module.findUnique({
+      where: { id: moduleId },
+      select: { id: true, courseId: true }
+    });
+    if (mod) {
+      courseId = courseId || mod.courseId;
+    }
   }
 
-  if (targetField && targetCourseId && targetCourseId !== lesson.module.courseId) {
+  if (targetField && targetCourseId && lessonCourseId && targetCourseId !== lessonCourseId) {
     throw new ApiError(400, "That item isn't part of this lesson's course.");
   }
 
+  if (targetField && targetCourseId && data.courseId && targetCourseId !== data.courseId) {
+    throw new ApiError(400, "That item isn't part of this course.");
+  }
+
+  const finalCourseId = targetCourseId || courseId;
+  if (!finalCourseId) {
+    throw new ApiError(400, "A course must be specified to ask a question.");
+  }
+
   const enrollment = await prisma.enrollment.findFirst({
-    where: { studentId: student.id, courseId: lesson.module.courseId }
+    where: { studentId: student.id, courseId: finalCourseId }
   });
 
   if (!enrollment) {
     throw new ApiError(403, "Forbidden: you must be enrolled in this course to ask a question");
   }
 
+  // Backwards compatibility: if lessonId is still null, look for a lesson in
+  // the module or course so legacy tools that group queries by lessonId continue to work.
+  if (!lessonId && moduleId) {
+    const modLesson = await prisma.lesson.findFirst({
+      where: { moduleId },
+      orderBy: { order: "asc" },
+      select: { id: true }
+    });
+    if (modLesson) lessonId = modLesson.id;
+  }
+  if (!lessonId && finalCourseId) {
+    const crsLesson = await prisma.lesson.findFirst({
+      where: { module: { courseId: finalCourseId } },
+      orderBy: { order: "asc" },
+      select: { id: true }
+    });
+    if (crsLesson) lessonId = crsLesson.id;
+  }
+
   const newQuery = await prisma.lessonQuery.create({
     data: {
-      lessonId,
+      courseId: finalCourseId,
+      moduleId: moduleId || null,
+      lessonId: lessonId || null,
       studentId: student.id,
       question: data.question.trim(),
-      // Exactly the one item asked from; the others stay null.
       contentId: targetField === "contentId" ? data.contentId : null,
       quizId: targetField === "quizId" ? data.quizId : null,
       assignmentId: targetField === "assignmentId" ? data.assignmentId : null
@@ -133,10 +209,15 @@ const createQuery = async (userId, data) => {
   });
 
   // Notify the course instructor after successful query creation
-  const instructorUserId = lesson?.module?.course?.creatorId;
+  const courseRecord = await prisma.course.findUnique({
+    where: { id: finalCourseId },
+    select: { id: true, title: true, creatorId: true }
+  });
+
+  const instructorUserId = courseRecord?.creatorId;
   if (instructorUserId) {
     const studentName = student?.user?.name || "A student";
-    const courseTitle = lesson?.module?.course?.title || "Course";
+    const courseTitle = courseRecord?.title || "Course";
     try {
       await notificationService.createNotification(instructorUserId, {
         title: `New question from ${studentName} in ${courseTitle}`,
@@ -161,7 +242,11 @@ const getQueriesForInstructor = async (instructorId, filters = {}) => {
   }
 
   const where = {
-    lesson: { module: { course: courseWhere } }
+    OR: [
+      { course: courseWhere },
+      { module: { course: courseWhere } },
+      { lesson: { module: { course: courseWhere } } }
+    ]
   };
 
   if (filters.status) {
@@ -179,11 +264,11 @@ const getQueriesForInstructor = async (instructorId, filters = {}) => {
       student: {
         include: { user: { select: { id: true, name: true } } }
       },
-      // The item the question was asked about, so the instructor can
-      // read it right where they answer.
       content: CONTENT_FOR_QA,
       quiz: { select: { id: true, title: true, quizTag: true, description: true, instructions: true } },
       assignment: { select: { id: true, title: true, description: true } },
+      course: { select: { id: true, title: true } },
+      module: { select: { id: true, title: true, course: { select: { id: true, title: true } } } },
       lesson: {
         select: {
           id: true,
@@ -202,7 +287,7 @@ const getQueriesForInstructor = async (instructorId, filters = {}) => {
   });
 };
 
-/** A student's own questions across every lesson they've asked about. */
+/** A student's own questions across every lesson/module/course they've asked about. */
 const getQueriesForStudent = async (userId, filters = {}) => {
   const student = await prisma.studentProfile.findUnique({ where: { userId } });
 
@@ -212,18 +297,33 @@ const getQueriesForStudent = async (userId, filters = {}) => {
 
   const where = { studentId: student.id };
   if (filters.courseId) {
-    where.lesson = { module: { courseId: filters.courseId } };
+    where.OR = [
+      { courseId: filters.courseId },
+      { module: { courseId: filters.courseId } },
+      { lesson: { module: { courseId: filters.courseId } } }
+    ];
   }
-  // Narrow to one item (the Ask Instructor popover) and/or one lesson.
   TARGET_FIELDS.forEach((field) => {
     if (filters[field]) where[field] = filters[field];
   });
   if (filters.lessonId) {
     where.lessonId = filters.lessonId;
   }
-  // Lesson-wide view: only questions not tied to any one item, so a question
-  // asked about a specific item is never listed anywhere but on that item.
-  if (filters.lessonOnly === true || filters.lessonOnly === "true") {
+  if (filters.moduleId) {
+    where.moduleId = filters.moduleId;
+  }
+  if (filters.courseOnly === true || filters.courseOnly === "true") {
+    TARGET_FIELDS.forEach((field) => {
+      where[field] = null;
+    });
+    where.moduleId = null;
+    where.lessonId = null;
+  } else if (filters.moduleOnly === true || filters.moduleOnly === "true") {
+    TARGET_FIELDS.forEach((field) => {
+      where[field] = null;
+    });
+    where.lessonId = null;
+  } else if (filters.lessonOnly === true || filters.lessonOnly === "true") {
     TARGET_FIELDS.forEach((field) => {
       where[field] = null;
     });
@@ -235,6 +335,8 @@ const getQueriesForStudent = async (userId, filters = {}) => {
       content: { select: { id: true, title: true, type: true } },
       quiz: { select: { id: true, title: true } },
       assignment: { select: { id: true, title: true } },
+      course: { select: { id: true, title: true } },
+      module: { select: { id: true, title: true, course: { select: { id: true, title: true } } } },
       lesson: {
         select: {
           id: true,
@@ -259,6 +361,12 @@ const findQueryWithCourseOwner = async (queryId) => {
     where: { id: queryId },
     include: {
       student: { select: { userId: true } },
+      course: { select: { id: true, title: true, creatorId: true } },
+      module: {
+        include: {
+          course: { select: { id: true, title: true, creatorId: true } }
+        }
+      },
       lesson: {
         include: {
           module: {
@@ -281,7 +389,10 @@ const findQueryWithCourseOwner = async (queryId) => {
 const assertInstructorOwnsQuery = (query, user) => {
   if (user.role === "ADMIN") return;
 
-  const creatorId = query.lesson?.module?.course?.creatorId;
+  const creatorId =
+    query.course?.creatorId ||
+    query.module?.course?.creatorId ||
+    query.lesson?.module?.course?.creatorId;
   if (user.role !== "INSTRUCTOR" || !creatorId || creatorId !== user.id) {
     throw new ApiError(403, "Forbidden: you do not own the course behind this query");
   }
@@ -299,7 +410,11 @@ const replyToQuery = async (queryId, user, reply) => {
   // Notify the original student after successful reply creation
   const studentUserId = query?.student?.userId;
   if (studentUserId) {
-    const courseTitle = query?.lesson?.module?.course?.title || "Course";
+    const courseTitle =
+      query.course?.title ||
+      query.module?.course?.title ||
+      query.lesson?.module?.course?.title ||
+      "Course";
     try {
       await notificationService.createNotification(studentUserId, {
         title: `Instructor replied to your question in ${courseTitle}`,
