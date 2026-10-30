@@ -1,7 +1,8 @@
 const fs = require("fs");
 const courseService = require("./course.service");
+const { resolveCourseKey: resolveKey } = require("../../utils/courseKey");
 
-const getCourses = async (req, res) => {
+const getCourses = async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
@@ -32,10 +33,24 @@ const getCourses = async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
+    next(error);
+  }
+};
+
+/**
+ * GET /courses/resolve/:key — the course a staff URL's readable key (or a
+ * course id) names among this user's courses: their own for an instructor,
+ * every course for an admin (utils/courseKey.js). 404 when it names none.
+ */
+const resolveCourseKey = async (req, res, next) => {
+  try {
+    const id = await resolveKey(req.params.key, req.user?.role, req.user?.id);
+    if (!id) {
+      return res.status(404).json({ success: false, message: "Course not found" });
+    }
+    res.json({ success: true, data: { id } });
+  } catch (error) {
+    next(error);
   }
 };
 
@@ -227,6 +242,7 @@ const trackCourseView = async (req, res, next) => {
 module.exports = {
   getCourses,
   getCourseById,
+  resolveCourseKey,
   createCourse,
   updateCourse,
   updateStatus,

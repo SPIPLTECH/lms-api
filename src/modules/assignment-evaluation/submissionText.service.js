@@ -2,14 +2,15 @@ const fs = require("fs");
 const path = require("path");
 
 const { createPdfExtractor } = require("./pdf/pdfExtractor");
+const { parseR2Url, signedR2Url } = require("../../utils/r2Storage");
 
 // Same ceiling as the student upload route (lms_web_demo /api/upload).
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
 // The student upload route writes every submission under this prefix
 // (STUDENT_UPLOAD_PREFIX in lms_web_demo src/app/api/upload/route.js). With the
-// server's token the evaluator could read any file in the store, so it reads
+// server's R2 keys the evaluator could read any file in the bucket, so it reads
 // only these: a submission cannot point it at instructor material.
-const SUBMISSION_BLOB_PREFIX = "/assignment-submissions/";
+const SUBMISSION_PREFIX = "assignment-submissions/";
 const DOWNLOAD_TIMEOUT_MS = 30000;
 const LOCAL_ATTACHMENTS_DIR = path.join(__dirname, "../../../uploads/attachments");
 
@@ -24,13 +25,18 @@ const extractor = createPdfExtractor({
 /**
  * Where a submission's PDF lives, or null if it is somewhere we must not
  * fetch from. Only two places are trusted: the student-submission folder of
- * Vercel Blob (where the student upload route stores files) and this API's own
- * uploads/attachments folder (older submissions). Anything else is never
+ * our R2 bucket (where the student upload route stores files) and this API's
+ * own uploads/attachments folder (older submissions). Anything else is never
  * downloaded, so a crafted fileUrl cannot make the server request arbitrary
- * addresses or send its storage token anywhere else.
+ * addresses.
  */
 function resolvePdfLocation(fileUrl) {
     if (!fileUrl || typeof fileUrl !== "string") return null;
+
+    const r2Key = parseR2Url(fileUrl);
+    if (r2Key) {
+        return r2Key.startsWith(SUBMISSION_PREFIX) ? { kind: "r2", key: r2Key } : null;
+    }
 
     let url;
     try {
@@ -40,17 +46,12 @@ function resolvePdfLocation(fileUrl) {
     }
 
     const local = /^\/uploads\/attachments\/([\w.-]+)$/.exec(url.pathname);
-    if (local && (url.hostname === "local.invalid" || !url.hostname.endsWith(".blob.vercel-storage.com"))) {
+    if (local) {
         const filePath = path.join(LOCAL_ATTACHMENTS_DIR, local[1]);
         if (path.dirname(filePath) !== LOCAL_ATTACHMENTS_DIR) return null;
         return { kind: "local", filePath };
     }
 
-    if (url.protocol === "https:" && /^[a-z0-9-]+\.(public|private)\.blob\.vercel-storage\.com$/.test(url.hostname)
-        && !url.username && !url.password && !url.port
-        && url.pathname.startsWith(SUBMISSION_BLOB_PREFIX) && !url.pathname.includes("..")) {
-        return { kind: "blob", url: url.toString(), isPrivate: url.hostname.includes(".private.") };
-    }
     return null;
 }
 
@@ -79,12 +80,7 @@ async function downloadPdf(fileUrl, { fetchImpl = fetch } = {}) {
         return fs.promises.readFile(location.filePath);
     }
 
-    const token = process.env.BLOB_READ_WRITE_TOKEN || process.env.VERCEL_BLOB_READ_WRITE_TOKEN;
-    if (location.isPrivate && !token) {
-        throw new Error("the file is in private storage and BLOB_READ_WRITE_TOKEN is not set on the API server");
-    }
-    const response = await fetchImpl(location.url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+    const response = await fetchImpl(await signedR2Url(location.key), {
         redirect: "error",
         signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
     });

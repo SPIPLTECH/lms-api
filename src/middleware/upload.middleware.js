@@ -11,11 +11,6 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-const avatarUploadDir = path.join(__dirname, "../../uploads/avatars");
-if (!fs.existsSync(avatarUploadDir)) {
-  fs.mkdirSync(avatarUploadDir, { recursive: true });
-}
-
 const badUploadError = (message) => {
   const err = new Error(message);
   err.statusCode = 400;
@@ -330,8 +325,10 @@ const importFileFilter = (req, file, cb) => {
   return cb(null, true);
 };
 
+// Attachments are kept in memory and stored in R2 by the route
+// (utils/r2Storage.js) — the uploads/ folder does not survive a redeploy.
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   fileFilter: attachmentFileFilter,
   limits: {
     fileSize: 50 * 1024 * 1024,
@@ -354,15 +351,6 @@ const questionBufferUpload = multer({
   },
 });
 
-const avatarStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, avatarUploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, `avatar-${uniqueSuffix}${ext}`);
-  },
-});
-
 const avatarFileFilter = (req, file, cb) => {
   const ext = path.extname(String(file.originalname || "")).toLowerCase();
   if (!Object.prototype.hasOwnProperty.call(ALLOWED_AVATAR_TYPES, ext)) {
@@ -374,8 +362,9 @@ const avatarFileFilter = (req, file, cb) => {
   return cb(null, true);
 };
 
+// Kept in memory; the controller stores the image in R2.
 const avatarUpload = multer({
-  storage: avatarStorage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: avatarFileFilter,
 });

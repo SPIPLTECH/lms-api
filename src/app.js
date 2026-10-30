@@ -71,6 +71,11 @@ app.use(
   })
 );
 
+// PERF_TIMING=1 only: one log line per request with its time and Prisma
+// operation count (utils/perfTiming.js).
+const { PERF_TIMING_ENABLED, perfTimingMiddleware } = require("./utils/perfTiming");
+if (PERF_TIMING_ENABLED) app.use(perfTimingMiddleware);
+
 // Every API call from the frontend is cross-origin with an Authorization
 // header, so the browser preflights it. Without Access-Control-Max-Age that
 // preflight result is only cached for ~5s, adding an extra OPTIONS round trip

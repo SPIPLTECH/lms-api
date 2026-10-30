@@ -24,6 +24,13 @@
 process.env.DATABASE_URL = "postgresql://mock:mock@127.0.0.1:1/never";
 delete process.env.TEST_DATABASE_URL;
 process.env.JWT_ACCESS_SECRET = "student-playback-policy-secret";
+// Fake R2 settings, so the stored video link below is recognised; nothing is fetched.
+Object.assign(process.env, {
+  R2_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",
+  R2_ACCESS_KEY_ID: "test-access-key",
+  R2_SECRET_ACCESS_KEY: "test-secret-key",
+  R2_PRIVATE_BUCKET: "lms-private",
+});
 
 const test = require("node:test");
 const assert = require("node:assert");
@@ -264,7 +271,7 @@ test.afterEach(restoreAll);
 
 const PASSWORD = "Str0ng!Pass";
 const PASSWORD_HASH = bcrypt.hashSync(PASSWORD, 4);
-const PRIVATE_BLOB = "https://store.private.blob.vercel-storage.com/lesson-1.mp4";
+const PRIVATE_VIDEO = "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/lms-private/content-uploads/lesson-1.mp4";
 
 function addUser(id, role) {
   db.users.set(id, { id, email: `${id}@example.com`, role, status: "ACTIVE", isVerified: true, password: PASSWORD_HASH, refreshToken: null });
@@ -272,7 +279,7 @@ function addUser(id, role) {
   return { id, role };
 }
 
-function addVideo(id = "video-1", videoUrl = PRIVATE_BLOB) {
+function addVideo(id = "video-1", videoUrl = PRIVATE_VIDEO) {
   db.contents.set(id, { id, type: "VIDEO", videoUrl, fileUrl: null, externalUrl: null, module: { courseId: "course-1" } });
   return id;
 }
@@ -373,7 +380,7 @@ test("3/4. B cannot start while A holds the lease: 409, exact message, no media"
     assert.strictEqual(error.statusCode, 409);
     assert.strictEqual(error.code, "PLAYBACK_ACTIVE_ON_ANOTHER_DEVICE");
     assert.strictEqual(error.message, EXACT_CONFLICT_MESSAGE);
-    assert.ok(!JSON.stringify(error).includes("blob.vercel-storage"));
+    assert.ok(!JSON.stringify(error).includes("r2.cloudflarestorage"));
     return true;
   });
   assert.strictEqual(activeLeases(student.id).length, 1);
@@ -381,6 +388,26 @@ test("3/4. B cannot start while A holds the lease: 409, exact message, no media"
   // B playing a different item is the same account watching twice: refused.
   addVideo("video-2");
   await expectCode(playbackService.startPlayback(await requestUser(b), "video-2"), "PLAYBACK_ACTIVE_ON_ANOTHER_DEVICE");
+});
+
+test("3/4. B's conflict is answered before the slow sequence check runs", async () => {
+  const student = addUser("student-1", "STUDENT");
+  const contentId = addVideo();
+  const a = await signIn(student);
+  const b = await signIn(student);
+  await playbackService.startPlayback(await requestUser(a), contentId);
+
+  let accessChecks = 0;
+  stub(progressService, "assertContentsAccessible", async () => {
+    accessChecks += 1;
+  });
+  await expectCode(playbackService.startPlayback(await requestUser(b), contentId), "PLAYBACK_ACTIVE_ON_ANOTHER_DEVICE");
+  assert.strictEqual(accessChecks, 0);
+  assert.ok(db.auditEvent.some((e) => e.eventType === "PLAYBACK_CONFLICT" && e.reasonCode === "ACTIVE_ELSEWHERE"));
+
+  // The holder itself still goes through the access check.
+  await playbackService.startPlayback(await requestUser(a), contentId);
+  assert.strictEqual(accessChecks, 1);
 });
 
 test("4. over HTTP: B's start is 409 with the exact message and no video URL", async () => {
@@ -411,7 +438,7 @@ test("4. over HTTP: B's start is 409 with the exact message and no video URL", a
     assert.strictEqual(body.code, "PLAYBACK_ACTIVE_ON_ANOTHER_DEVICE");
     assert.strictEqual(body.message, EXACT_CONFLICT_MESSAGE);
     assert.strictEqual(body.data, undefined);
-    assert.ok(!/blob\.vercel-storage|\/playback\/media\/|leaseId/.test(second.text));
+    assert.ok(!/r2\.cloudflarestorage|\/playback\/media\/|leaseId/.test(second.text));
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -522,7 +549,7 @@ for (const role of ["ADMIN", "INSTRUCTOR"]) {
       assert.strictEqual(started.leaseId, null);
       assert.strictEqual(started.leaseRequired, false);
       // The source staff already see in content responses — not a lease URL.
-      assert.deepStrictEqual(started.media, { kind: "file", url: PRIVATE_BLOB, protected: false });
+      assert.deepStrictEqual(started.media, { kind: "file", url: PRIVATE_VIDEO, protected: false });
     }
     assert.strictEqual(db.playbackLease.length, 0);
     await playbackService.heartbeat(a, "anything");
@@ -766,7 +793,7 @@ test("login over HTTP: STUDENT, ADMIN and INSTRUCTOR all sign in on two browsers
         assert.strictEqual(startB.status, 409);
         assert.strictEqual(body.code, "PLAYBACK_ACTIVE_ON_ANOTHER_DEVICE");
         assert.strictEqual(body.message, EXACT_CONFLICT_MESSAGE);
-        assert.ok(!/blob\.vercel-storage|\/playback\/media\//.test(startB.text), "no video URL in the refusal");
+        assert.ok(!/r2\.cloudflarestorage|\/playback\/media\//.test(startB.text), "no video URL in the refusal");
         assert.strictEqual(activeLeases(user.id).length, 1);
       } else {
         assert.strictEqual(startB.status, 201, `${role} B plays too: ${startB.text}`);
@@ -910,7 +937,7 @@ test("Option B 3/4. while A holds the lease, B is refused on EVERY course-conten
       assert.ok(isContentBlock(r), `${method} ${path} → ${r.status} ${r.text.slice(0, 120)}`);
       assert.strictEqual(r.json.message, CONTENT_BLOCK_MESSAGE, `${method} ${path}`);
       assert.strictEqual(r.json.data, undefined, `${method} ${path} carries no data`);
-      assert.ok(!/blob\.vercel-storage|youtu|\/playback\/media\//.test(r.text), `${method} ${path} leaks no source`);
+      assert.ok(!/r2\.cloudflarestorage|youtu|\/playback\/media\//.test(r.text), `${method} ${path} leaks no source`);
     }
     // B is still signed in: the refusal is not a session error.
     await requestUser(b);

@@ -42,10 +42,10 @@ Without a marking scheme (or with it switched off), an assignment works exactly 
 
 `submissionText.service.js` combines the typed answer with the text of the PDF:
 
-* PDFs are read only from the student-submission folder of **Vercel Blob** (`https://*.public|private.blob.vercel-storage.com/assignment-submissions/…`) or this API's `uploads/attachments` folder. Nothing else is fetched, and the storage token is sent nowhere else. Limit 20 MB, 30 pages.
+* PDFs are read only from the student-submission folder of our **R2** bucket (`https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com/<R2_PRIVATE_BUCKET>/assignment-submissions/…`, read through a short-lived signed URL) or this API's `uploads/attachments` folder. Nothing else is fetched. Limit 20 MB, 30 pages.
 * Typed PDFs: text layer (`pdf-parse`). Scanned pages: local OCR (`tesseract.js`; the English model downloads to `.cache/tesseract` on first use).
 * OCR'd pages, PDFs without readable text, PDFs with images, and unreadable or untrusted files are flagged for review, with confidence capped at 50%.
-* A **private** Blob store needs `BLOB_READ_WRITE_TOKEN` in the API's environment.
+* R2 needs the `R2_*` settings in the API's environment.
 
 Each result records what is needed to reproduce it: the scheme snapshot and version (`inputMeta.rubric`), the synonym-dictionary fingerprint, the engine version and the evaluated text.
 

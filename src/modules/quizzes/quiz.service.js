@@ -430,7 +430,7 @@ const assertStudentCourseAccess = async (studentId, courseId) => {
  *  1. Quiz exists.
  *  2. Student is enrolled in the quiz's course.
  *  3. Course is PUBLISHED, quiz is published & not archived, and no ancestor
- *     container (module/lesson/topic/subTopic/concept) or Content wrapper is unpublished.
+ *     container (module/lesson/topic/subTopic/concept) is unpublished.
  *  4. Sequence lock (for sequence-wrapped quizzes) allows opening/submitting it.
  */
 const assertStudentQuizAccess = async (studentId, quizId) => {
@@ -451,7 +451,6 @@ const assertStudentQuizAccess = async (studentId, quizId) => {
       topic: QUIZ_TOPIC_PUB,
       subTopic: QUIZ_SUBTOPIC_PUB,
       concept: QUIZ_CONCEPT_PUB,
-      content: { select: { id: true, isPublished: true } },
     },
   });
 
@@ -472,7 +471,6 @@ const assertStudentQuizAccess = async (studentId, quizId) => {
     quiz.course?.status !== "PUBLISHED" ||
     quiz.isPublished === false ||
     quiz.status === "ARCHIVED" ||
-    quiz.content?.isPublished === false ||
     hasUnpublishedQuizContainer({
       module: quiz.module,
       lesson: quiz.lesson,

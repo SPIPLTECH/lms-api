@@ -12,6 +12,14 @@
  */
 process.env.DATABASE_URL = "postgresql://mock:mock@127.0.0.1:1/never";
 delete process.env.TEST_DATABASE_URL;
+// Fake R2 settings, so stored video links are recognised; nothing is fetched.
+Object.assign(process.env, {
+  R2_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",
+  R2_ACCESS_KEY_ID: "test-access-key",
+  R2_SECRET_ACCESS_KEY: "test-secret-key",
+  R2_PRIVATE_BUCKET: "lms-private",
+});
+const R2_VIDEO = "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/lms-private/content-uploads/v.mp4";
 
 const test = require("node:test");
 const assert = require("node:assert");
@@ -340,7 +348,7 @@ test("students and guests never receive a VIDEO source; other content is untouch
 test("learning-sequence step bodies are redacted too; locked rows stay unplayable", () => {
   const sequence = {
     steps: [
-      { type: "VIDEO", contentId: "v1", body: { videoUrl: "https://x.blob.vercel-storage.com/v.mp4", fileUrl: null, externalUrl: null, htmlContent: null } },
+      { type: "VIDEO", contentId: "v1", body: { videoUrl: R2_VIDEO, fileUrl: null, externalUrl: null, htmlContent: null } },
       { type: "VIDEO", contentId: "v2", locked: true, body: { videoUrl: null, fileUrl: null, externalUrl: null } },
       { type: "HTML", contentId: "h1", body: { videoUrl: null, htmlContent: "<p>hi</p>" } },
     ],
@@ -373,13 +381,10 @@ test("sources are classified by what the LMS can actually protect", () => {
   assert.strictEqual(classifySource("https://www.youtube.com/watch?v=abcdefghijk").kind, "youtube");
   assert.strictEqual(classifySource("https://youtu.be/abcdefghijk").kind, "youtube");
   assert.strictEqual(classifySource("https://vimeo.com/123").kind, "vimeo");
-  assert.deepStrictEqual(classifySource("https://store.private.blob.vercel-storage.com/v.mp4"), {
-    kind: "blob",
-    url: "https://store.private.blob.vercel-storage.com/v.mp4",
-    isPrivate: true,
-  });
-  assert.strictEqual(classifySource("https://store.public.blob.vercel-storage.com/v.mp4").isPrivate, false);
-  assert.strictEqual(classifySource("http://store.public.blob.vercel-storage.com/v.mp4").kind, "external", "blob over plain http is not proxied");
+  assert.deepStrictEqual(classifySource(R2_VIDEO), { kind: "blob", url: R2_VIDEO, r2Key: "content-uploads/v.mp4" });
+  assert.strictEqual(classifySource(R2_VIDEO.replace("https:", "http:")).kind, "external", "R2 over plain http is not proxied");
+  assert.strictEqual(classifySource(R2_VIDEO.replace("/lms-private/", "/other-bucket/")).kind, "external", "another bucket is not proxied");
+  assert.strictEqual(classifySource("https://store.private.blob.vercel-storage.com/v.mp4").kind, "external", "Vercel Blob is no longer our storage");
   assert.strictEqual(classifySource("https://cdn.example.com/v.mp4").kind, "external");
   assert.strictEqual(classifySource("http://169.254.169.254/latest/meta-data").kind, "external", "never proxied upstream");
   assert.strictEqual(classifySource("/uploads/../../.env").kind, "none", "path traversal is not a local file");
@@ -389,7 +394,7 @@ test("sources are classified by what the LMS can actually protect", () => {
 test("only lease-gated sources get a signed URL; the rest are handed out as-is after the lease", () => {
   const lease = { id: "lease-9" };
   const blob = buildMediaDescriptor(
-    { id: "v1", videoUrl: "https://s.private.blob.vercel-storage.com/v.mp4" },
+    { id: "v1", videoUrl: R2_VIDEO },
     lease,
     { maxAgeSeconds: 60 }
   );
@@ -397,7 +402,7 @@ test("only lease-gated sources get a signed URL; the rest are handed out as-is a
   assert.strictEqual(blob.protected, true);
   assert.match(blob.url, /^\/playback\/media\/[^/]+$/);
   assert.strictEqual(verifyMediaToken(blob.url.split("/").pop()).leaseId, "lease-9");
-  assert.ok(!blob.url.includes("vercel-storage"), "the storage URL is not disclosed");
+  assert.ok(!blob.url.includes("r2.cloudflarestorage"), "the storage URL is not disclosed");
 
   const youtube = buildMediaDescriptor({ id: "v2", videoUrl: "https://youtu.be/abcdefghijk" }, lease, { maxAgeSeconds: 60 });
   assert.deepStrictEqual(youtube, { kind: "youtube", url: "https://youtu.be/abcdefghijk", protected: false });
@@ -411,4 +416,65 @@ test("device labels are coarse (browser + OS), not a fingerprint", () => {
     "Chrome on Windows"
   );
   assert.strictEqual(sessionService.deviceLabelFrom(null), null);
+});
+
+// ---------------------------------------------------------------------------
+// Error responses never carry internals
+// ---------------------------------------------------------------------------
+
+test("an unexpected error answers with a generic message and the request id, not its internals", () => {
+  const original = console.error;
+  console.error = () => {};
+  try {
+    const prismaError = Object.assign(
+      new Error("\nInvalid `prisma.authSession.findUnique()` invocation in\nC:\SP Nagpur\lms-api\src\modules\sessions\session.service.js:380:5"),
+      { name: "PrismaClientKnownRequestError", code: "P1001" }
+    );
+    for (const error of [prismaError, new TypeError("Cannot read properties of undefined (reading 'id')"), Object.assign(new Error("connect ECONNREFUSED 10.0.0.5:443"), { isAxiosError: true })]) {
+      const res = fakeRes();
+      errorHandler(error, { requestId: "req-9" }, res, () => {});
+      assert.strictEqual(res.statusCode, 500);
+      assert.strictEqual(res.body.message, "Something went wrong on our side. Please try again.");
+      assert.strictEqual(res.body.requestId, "req-9");
+      assert.ok(!JSON.stringify(res.body).includes("lms-api") && !JSON.stringify(res.body).includes("10.0.0.5"));
+    }
+
+    // Errors raised on purpose keep their message, as before.
+    const own = fakeRes();
+    errorHandler(Object.assign(new Error("Course not found"), { statusCode: 404 }), { requestId: "req-9" }, own, () => {});
+    assert.strictEqual(own.body.message, "Course not found");
+    const plain = fakeRes();
+    errorHandler(new Error("Student profile not found"), { requestId: "req-9" }, plain, () => {});
+    assert.strictEqual(plain.body.message, "Student profile not found");
+    assert.strictEqual(plain.body.requestId, undefined);
+  } finally {
+    console.error = original;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Presence is visible to admins only
+// ---------------------------------------------------------------------------
+
+test("who is online is sent to admins only", () => {
+  const registerPresenceEvents = require("../src/socket/presence.socket");
+  const sent = [];
+  const io = { to: (room) => ({ emit: (event, data) => sent.push({ room, event, data }) }), emit: (event) => sent.push({ room: "*", event }) };
+  const socketFor = (role) => {
+    const handlers = {};
+    const socket = { id: `s-${role}`, user: { id: `u-${role}`, name: role, role }, rooms: [], join: (r) => socket.rooms.push(r), on: (e, h) => (handlers[e] = h), emitted: [], emit: (e, d) => socket.emitted.push({ e, d }) };
+    registerPresenceEvents(io, socket);
+    return { socket, handlers };
+  };
+
+  const student = socketFor("STUDENT");
+  const admin = socketFor("ADMIN");
+  assert.ok(sent.every((m) => m.room === "presence_admins"), "never broadcast to everyone");
+  assert.deepStrictEqual(student.socket.rooms, []);
+  assert.deepStrictEqual(admin.socket.rooms, ["presence_admins"]);
+
+  student.handlers.get_online_users();
+  admin.handlers.get_online_users();
+  assert.strictEqual(student.socket.emitted.length, 0, "a student is told nothing");
+  assert.ok(admin.socket.emitted[0].d.includes("u-STUDENT"));
 });

@@ -138,6 +138,17 @@ async function startPlayback(user, contentId) {
   }
   if (!content) throw authError("MEDIA_UNAVAILABLE", "Content not found.");
 
+  const claim = { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, contentId: content.id };
+  const audit = { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, contentId: content.id };
+
+  // Playing on another device is one indexed read; the access check below can
+  // take seconds. Answer the conflict first, so "Playing on another device"
+  // shows at once. The claim transaction stays the authority either way.
+  if (requiresPlaybackLease(user.role) && (await isPlaybackHeldElsewhere(user))) {
+    await recordAuditEvent({ ...audit, eventType: AUDIT_EVENTS.PLAYBACK_CONFLICT, reasonCode: "ACTIVE_ELSEWHERE" });
+    throw authError("PLAYBACK_ACTIVE_ON_ANOTHER_DEVICE");
+  }
+
   await assertMayPlay(user, content, profile);
 
   // ADMIN and INSTRUCTOR are not limited to one active video (accessPolicy):
@@ -152,9 +163,6 @@ async function startPlayback(user, contentId) {
       media: directMediaDescriptor(content),
     };
   }
-
-  const claim = { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, contentId: content.id };
-  const audit = { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, contentId: content.id };
 
   let result;
   for (let attempt = 0; ; attempt += 1) {
