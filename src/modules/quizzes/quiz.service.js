@@ -17,6 +17,7 @@ const { QUALIFYING_TAG } = require("../../utils/qualification");
 // student is never told a limit that submit would not enforce.
 const { effectiveMaxAttempts, buildAttemptAllowance } = require("../../utils/attemptAllowance");
 const { choiceMatches } = require("../../utils/choiceAnswer");
+const { buildQuizWeakAreas, getCourseTestReview, notifyTestReviewUnlocked } = require("./testReview.service");
 
 
 // Tracks classifyAndApply() calls dispatched below fire-and-forget (never
@@ -1634,6 +1635,13 @@ const submitQuiz = async (
     } catch (error) {
       console.error("Error creating quiz submission notification:", error.message);
     }
+
+    // Test-series courses: tell the student once their review unlocks.
+    try {
+      await notifyTestReviewUnlocked(studentId, quiz.courseId, notificationService);
+    } catch (error) {
+      console.error("Error creating test review notification:", error.message);
+    }
   })()
     .catch((error) => {
       console.error(
@@ -1731,8 +1739,9 @@ const getQuizResult = async (studentId, quizId, attemptId = null) => {
     prisma.quiz.findUnique({
       where: { id: quizId },
       include: {
-        // Titles for the result page header.
-        course: { select: { id: true, title: true } },
+        // Titles for the result page header; testReview switches on the
+        // weak-area feedback (testReview.service.js).
+        course: { select: { id: true, title: true, testReview: true } },
         module: { select: { id: true, title: true } },
         quizQuestions: {
           orderBy: { order: "asc" },
@@ -1789,11 +1798,18 @@ const getQuizResult = async (studentId, quizId, attemptId = null) => {
           )
         : [];
 
+  // Test-series courses only: this attempt's weak areas, and — once every
+  // Final quiz in the course is submitted — the whole-course review.
+  const testReview = quiz ? buildQuizWeakAreas(quiz, questionAttempts) : null;
+  const courseReview = testReview ? await getCourseTestReview(studentId, quiz.courseId) : null;
+
   return {
     id: selected.id,
     quizId,
     studentId,
     answers: selected.answers,
+    testReview,
+    courseReview: courseReview?.isComplete ? courseReview : null,
     score: selected.score,
     totalMarks: selected.totalMarks,
     percentage: selected.percentage,

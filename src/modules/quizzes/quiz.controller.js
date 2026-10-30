@@ -1,5 +1,6 @@
 const quizService = require("./quiz.service");
 const quizImportService = require("./services/quizImport.service");
+const testReviewService = require("./testReview.service");
 
 const getQuizzes = async (req, res, next) => {
   try {
@@ -228,6 +229,46 @@ const getMyQuizSubmissions = async (req, res, next) => {
   }
 };
 
+// The signed-in student's test-series review for a course they are enrolled
+// in: progress until every Final quiz is submitted, then the full review.
+// data is null for a course without the review switched on.
+const getCourseTestReview = async (req, res, next) => {
+  try {
+    const prisma = require("../../config/database");
+    const student = await prisma.studentProfile.findUnique({
+      where: { userId: req.user.id },
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found",
+      });
+    }
+
+    const enrollment = await prisma.enrollment.findFirst({
+      where: { studentId: student.id, courseId: req.params.courseId },
+      select: { id: true },
+    });
+
+    if (!enrollment) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not enrolled in this course",
+      });
+    }
+
+    const review = await testReviewService.getCourseTestReview(student.id, req.params.courseId);
+
+    res.json({
+      success: true,
+      data: review,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // =====================================
 // Import Repository Questions to Quiz
 // =====================================
@@ -331,6 +372,7 @@ module.exports = {
   submitQuiz,
   getQuizResult,
   getMyQuizSubmissions,
+  getCourseTestReview,
   generateSelfAssessmentQuiz,
   importQuestionsToQuiz,
   removeQuestionFromQuiz,

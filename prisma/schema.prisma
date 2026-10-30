@@ -193,6 +193,13 @@ model Course {
   /// no progress is kept (progress.service isProgressTracked).
   sequentialLearning     Boolean          @default(true)
 
+  /// Test-series feedback: weak areas after each Final quiz, and a review
+  /// recommending a course once every quiz is submitted. Null = off.
+  /// { enabled, weakThreshold, purchaseUrl, sections: { [moduleId]: { label, course } } }
+  /// Added by targeted ALTER TABLE, not db push (the shared DB has tables
+  /// this schema does not model).
+  testReview Json?
+
   publishedAt  DateTime?
   creatorId    String
   createdAt    DateTime      @default(now())
