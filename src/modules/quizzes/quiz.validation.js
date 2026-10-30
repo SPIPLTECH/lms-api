@@ -118,8 +118,6 @@ const generateSelfAssessmentQuizSchema = Joi.object({
 });
 
 module.exports = {
-  QUIZ_TAGS,
-  QUESTION_ATTEMPT_STATUSES,
   createQuizSchema,
   updateQuizSchema,
   submitQuizSchema,

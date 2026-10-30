@@ -939,7 +939,6 @@ module.exports = {
     override,
     reEvaluate,
     evaluateAll,
-    evaluationStatus,
     summariesForSubmissions,
     studentView,
     listSynonyms,
@@ -947,7 +946,4 @@ module.exports = {
     removeSynonymGroup,
     addStarterSynonyms,
     assertMarksEditable,
-    gradeText,
-    feedbackText,
-    toEngineQuestion,
 };

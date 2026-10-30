@@ -26,7 +26,6 @@ const validate = require("../../middleware/joiValidation.middleware");
 const {
   createLessonSchema,
   updateLessonSchema,
-  reorderLessonsSchema
 } = require("./lesson.validation");
 const requireContentAccess = require("../../middleware/contentAccess.middleware");
 
@@ -44,13 +43,6 @@ router.get(
   checkRole(["ADMIN", "INSTRUCTOR", "STUDENT"]),
   requireContentAccess,
   lessonController.getLessonById
-);
-
-router.get(
-  "/:lessonId/transcript",
-  verifyToken,
-  requireContentAccess,
-  lessonController.getLessonTranscript
 );
 
 router.post(
@@ -86,18 +78,6 @@ router.delete(
   ]),
   verifyLessonOwnership,
   lessonController.deleteLesson
-);
-
-router.patch(
-  "/reorder",
-  verifyToken,
-  checkRole([
-    "ADMIN",
-    "INSTRUCTOR"
-  ]),
-  validate(reorderLessonsSchema),
-  verifyModuleOwnership.fromBody,
-  lessonController.reorderLessons
 );
 
 module.exports = router;

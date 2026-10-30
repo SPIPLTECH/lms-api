@@ -1,13 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { detectRelationships } = require("../services/relationshipDetector.service");
-const { groupLessons } = require("../services/lessonGrouping.service");
 const {
-  isDayLessonHeading,
-  isDocumentTitleHeading,
   inspectTopicHeading,
   detectTopicsForSection,
-  detectTopicsForCourse
 } = require("../services/topicDetection.service");
 
 test("1. Numbered topic detection (1.1, 1.2, 1.6)", () => {

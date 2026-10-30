@@ -6,7 +6,6 @@ const recommendationService = require("../src/modules/learner-model/recommendati
 const nextActionService = require("../src/modules/learner-model/nextAction.service");
 const retentionService = require("../src/modules/learner-model/retention.service");
 const progressService = require("../src/modules/progress/progress.service");
-const insightsService = require("../src/modules/learner-model/instructorInsights.service");
 const { buildLearningPath, PATH_STATUS } = require("../src/utils/learningPath");
 const { effectiveMaxAttempts, buildAttemptAllowance } = require("../src/utils/attemptAllowance");
 const { classifierOutputSchema } = require("../src/modules/learner-model/misconceptionClassifier.validation");
@@ -480,8 +479,7 @@ test("F: no adaptive caller reads Quiz.attempts directly", async () => {
   // caller cannot reintroduce it unnoticed.
   const fs = require("fs");
   const files = [
-    "src/modules/learner-model/nextAction.service.js",
-    "src/modules/learner-model/instructorInsights.service.js"
+    "src/modules/learner-model/nextAction.service.js"
   ];
 
   for (const file of files) {
@@ -780,7 +778,6 @@ test("LLM: no decision service imports the LLM at all", async () => {
     "src/modules/learner-model/recommendation.service.js",
     "src/modules/learner-model/retention.service.js",
     "src/modules/learner-model/bkt.service.js",
-    "src/modules/learner-model/instructorInsights.service.js",
     "src/utils/learningPath.js",
     "src/utils/attemptAllowance.js",
     "src/utils/qualification.js"
@@ -952,42 +949,6 @@ test("security: a student cannot reach another student's adaptive state", async 
       }),
     (error) => error.statusCode === 403
   );
-});
-
-test("security: an instructor cannot reach another instructor's course analytics", async (t) => {
-  const original = prisma.course.findFirst;
-  t.after(() => {
-    prisma.course.findFirst = original;
-  });
-  prisma.course.findFirst = async ({ where }) =>
-    where.creatorId && where.creatorId !== "owner" ? null : { id: COURSE, title: "Course" };
-
-  await assert.rejects(
-    () => insightsService.assertInstructorCourseAccess({ id: "stranger", role: "INSTRUCTOR" }, COURSE),
-    (error) => error.statusCode === 404
-  );
-
-  const allowed = await insightsService.assertInstructorCourseAccess({ id: "owner", role: "INSTRUCTOR" }, COURSE);
-  assert.strictEqual(allowed.id, COURSE);
-});
-
-test("security: not-yours and does-not-exist are indistinguishable", async (t) => {
-  const original = prisma.course.findFirst;
-  t.after(() => {
-    prisma.course.findFirst = original;
-  });
-  prisma.course.findFirst = async () => null;
-
-  const errors = [];
-  for (const user of [{ id: "stranger", role: "INSTRUCTOR" }, { id: "owner", role: "INSTRUCTOR" }]) {
-    try {
-      await insightsService.assertInstructorCourseAccess(user, "whatever");
-    } catch (e) {
-      errors.push({ status: e.statusCode, message: e.message });
-    }
-  }
-
-  assert.deepStrictEqual(errors[0], errors[1], "identical refusal, so nothing can be enumerated");
 });
 
 test("security: the signal query cannot be run unbounded", async (t) => {

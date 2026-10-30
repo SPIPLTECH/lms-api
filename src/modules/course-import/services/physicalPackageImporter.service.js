@@ -1059,11 +1059,7 @@ const importPhysicalJob = async (job, instructorId) => {
 };
 
 module.exports = {
-  DIR,
   detectPhysicalPackage,
-  parseFrontmatter,
-  parsePhysicalPackage,
   processPhysicalPackage,
-  importPhysicalPackage,
   importPhysicalJob,
 };

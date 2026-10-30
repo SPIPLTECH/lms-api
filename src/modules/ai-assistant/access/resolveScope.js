@@ -72,7 +72,4 @@ const resolveScope = async (user, courseId) => {
   };
 };
 
-/** True only for the one scope permitted to see lesson/topic/content bodies. */
-const canAccessLearningContent = (scope) => scope === SCOPE.ENROLLED;
-
-module.exports = { resolveScope, canAccessLearningContent };
+module.exports = { resolveScope, };

@@ -29,7 +29,7 @@ const parsePDF = async (filePath) => {
         // Question
         if (/^\d+[\.\)]/.test(line)) {
             if (currentQuestion) {
-                questions.push(normalizeQuestion(currentQuestion));
+                questions.push(normalizeQuestion(currentQuestion, { answerByPosition: true }));
             }
 
             currentQuestion = {
@@ -67,7 +67,7 @@ const parsePDF = async (filePath) => {
     }
 
     if (currentQuestion) {
-        questions.push(normalizeQuestion(currentQuestion));
+        questions.push(normalizeQuestion(currentQuestion, { answerByPosition: true }));
     }
 
     return questions;

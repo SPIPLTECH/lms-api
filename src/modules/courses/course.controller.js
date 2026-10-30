@@ -1,7 +1,8 @@
 const fs = require("fs");
 const courseService = require("./course.service");
+const { resolveCourseKey: resolveKey } = require("../../utils/courseKey");
 
-const getCourses = async (req, res) => {
+const getCourses = async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
@@ -32,16 +33,22 @@ const getCourses = async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
+    next(error);
   }
 };
-const getCourseStatusCounts = async (req, res, next) => {
+
+/**
+ * GET /courses/resolve/:key — the course a staff URL's readable key (or a
+ * course id) names among this user's courses: their own for an instructor,
+ * every course for an admin (utils/courseKey.js). 404 when it names none.
+ */
+const resolveCourseKey = async (req, res, next) => {
   try {
-    const counts = await courseService.getCourseStatusCounts(req.user.id);
-    res.json({ success: true, data: counts });
+    const id = await resolveKey(req.params.key, req.user?.role, req.user?.id);
+    if (!id) {
+      return res.status(404).json({ success: false, message: "Course not found" });
+    }
+    res.json({ success: true, data: { id } });
   } catch (error) {
     next(error);
   }
@@ -161,23 +168,6 @@ const unpublishCourse = async (req, res, next) => {
   }
 };
 
-const archiveCourse = async (req, res, next) => {
-  try {
-    const course = await courseService.archiveCourse(
-      req.params.courseId,
-      req.user.id,
-      req.user.role
-    );
-    res.json({
-      success: true,
-      data: course,
-      message: "Course archived successfully"
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 const restoreCourse = async (req, res, next) => {
   try {
     const course = await courseService.restoreCourse(
@@ -239,94 +229,6 @@ const deleteCourse = async (
     next(error);
   }
 };
-const duplicateCourse = async (
-  req,
-  res,
-  next
-) => {
-  try {
-    const course = await courseService.duplicateCourse(
-      req.params.courseId,
-      req.user.id
-    );
-
-    res.status(201).json({
-      success: true,
-      data: course,
-      message: "Course duplicated successfully"
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-const getCourseStudents = async (
-  req,
-  res,
-  next
-) => {
-  try {
-    const students =
-      await courseService.getCourseStudents(
-        req.params.courseId
-      );
-
-    res.json({
-      success: true,
-      data: students
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-const sendAnnouncement = async (req, res, next) => {
-  try {
-    const { title, message } = req.body;
-    const notificationService = require("../notifications/notification.service");
-    const announcementService = require("../announcements/announcement.service");
-    await announcementService.createAnnouncement({
-      courseId: req.params.courseId,
-      instructorId: req.user.id,
-      title,
-      message
-    });
-    await notificationService.notifyEnrolledStudents(
-      req.params.courseId,
-      { title, message, actorId: req.user.id },
-      null,
-      req.user.id
-    );
-    res.json({
-      success: true,
-      message: "Announcement broadcasted successfully."
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-const exportCourse = async (req, res, next) => {
-  try {
-    const packageResult = await courseService.exportCourse(req.params.courseId);
-
-    res.download(packageResult.filePath, packageResult.filename, (err) => {
-      // Clean up temporary ZIP file on disk after response finishes
-      if (fs.existsSync(packageResult.filePath)) {
-        try {
-          fs.unlinkSync(packageResult.filePath);
-        } catch (unlinkErr) {
-          // Ignore unlink cleanup error
-        }
-      }
-      if (err && !res.headersSent) {
-        next(err);
-      }
-    });
-  } catch (error) {
-    next(error);
-  }
-};
 
 const trackCourseView = async (req, res, next) => {
   try {
@@ -340,18 +242,13 @@ const trackCourseView = async (req, res, next) => {
 module.exports = {
   getCourses,
   getCourseById,
+  resolveCourseKey,
   createCourse,
   updateCourse,
   updateStatus,
   deleteCourse,
   publishCourse,
   unpublishCourse,
-  archiveCourse,
   restoreCourse,
-  duplicateCourse,
-  getCourseStudents,
-  sendAnnouncement,
-  getCourseStatusCounts,
-  exportCourse,
   trackCourseView
 };

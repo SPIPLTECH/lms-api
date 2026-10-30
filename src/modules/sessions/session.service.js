@@ -402,7 +402,7 @@ async function touchSession(session, now = new Date()) {
   try {
     // Conditional on ACTIVE, so a touch can never resurrect an ended session.
     // One write per minute per active session; the device's lastSeenAt is
-    // kept by sign-in and POST /devices/register, not on every request.
+    // kept by sign-in, not on every request.
     await prisma.authSession.updateMany({
       where: { id: session.id, status: STATUS.ACTIVE },
       data: { lastSeenAt: now, expiresAt },
@@ -431,8 +431,33 @@ async function refreshSession({ refreshToken, deviceKey }) {
     },
   });
 
-  // Refreshing is activity: always push the idle deadline forward.
-  if (session) session.lastSeenAt = new Date(0);
+  if (!session) throw authError("SESSION_INVALID");
+
+  // Refreshing is activity: if within absoluteExpiry and not actively revoked/logged out,
+  // renew the idle deadline forward
+  const now = new Date();
+  if (
+    (session.status === STATUS.ACTIVE || session.status === STATUS.EXPIRED) &&
+    new Date(session.absoluteExpiry) > now &&
+    session.endReason !== END_REASONS.LOGOUT &&
+    session.endReason !== END_REASONS.ADMIN_REVOKE
+  ) {
+    const expiresAt = idleDeadline(now, session.absoluteExpiry);
+    await prisma.authSession.update({
+      where: { id: session.id },
+      data: {
+        status: STATUS.ACTIVE,
+        lastSeenAt: now,
+        expiresAt,
+        endedAt: null,
+        endReason: null,
+      },
+    });
+    session.status = STATUS.ACTIVE;
+    session.lastSeenAt = now;
+    session.expiresAt = expiresAt;
+  }
+
   await checkSession(session, { deviceKey });
   return session;
 }
@@ -488,30 +513,6 @@ async function revokeOtherSessions(userId, keepSessionId, reason = END_REASONS.P
     disconnectSessionSockets(ended);
   }
   return ended;
-}
-
-/**
- * Changes an account's status; any status other than ACTIVE revokes the
- * account's session and playback lease in the same transaction, so a
- * suspended/blocked/inactive user is out immediately, not at token expiry.
- */
-async function setAccountStatus(userId, status) {
-  const { user, ended } = await prisma.$transaction(async (tx) => {
-    const updated = await tx.user.update({ where: { id: userId }, data: { status } });
-    const revoked = status === "ACTIVE" ? [] : await revokeUserSessions(userId, END_REASONS.ACCOUNT_STATUS, tx);
-    return { user: updated, ended: revoked };
-  });
-
-  if (ended.length > 0) {
-    await recordAuditEvent({
-      userId,
-      eventType: AUDIT_EVENTS.SESSION_REVOKED,
-      reasonCode: END_REASONS.ACCOUNT_STATUS,
-      metadata: { status, sessions: ended.length },
-    });
-    disconnectSessionSockets(ended);
-  }
-  return user;
 }
 
 /**
@@ -616,7 +617,6 @@ module.exports = {
   logout,
   revokeUserSessions,
   revokeOtherSessions,
-  setAccountStatus,
   adminRevokeSession,
   getCurrentSession,
   listUserSessions,

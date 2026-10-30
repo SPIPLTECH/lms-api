@@ -1,7 +1,7 @@
 const prisma =
   require("../../config/database");
 const ApiError = require("../../utils/ApiError");
-const { claimContainerOrder, releaseContainerOrder, moveContainers } = require("../contents/contentOrder.util");
+const { claimContainerOrder, releaseContainerOrder } = require("../contents/contentOrder.util");
 const notificationService = require("../notifications/notification.service");
 const youtubeTranscript = require("../../utils/youtubeTranscript");
 
@@ -254,118 +254,10 @@ const deleteLesson = async (
   });
 };
 
-// Resolves the transcript for a lesson's video content. Keyed off
-// content.type so additional sources (uploaded captions, AI-generated,
-// cached transcripts) can be added here without touching the controller.
-const getTranscriptForContent = async (
-  content
-) => {
-  switch (content.type) {
-    case "VIDEO": {
-      const videoId = youtubeTranscript.extractVideoId(
-        content.videoUrl
-      );
-
-      if (!videoId) {
-        const error = new Error(
-          "The lesson video URL is not a valid YouTube link."
-        );
-        error.statusCode = 400;
-        throw error;
-      }
-
-      try {
-        const segments = await youtubeTranscript.fetchTranscript(videoId);
-        return { videoId, segments };
-      } catch (err) {
-        console.warn(`Could not fetch YouTube transcript for videoId ${videoId}:`, err.message);
-        return { videoId, segments: [] };
-      }
-    }
-
-    default: {
-      const error = new Error(
-        "Transcripts are not supported for this content type."
-      );
-      error.statusCode = 400;
-      throw error;
-    }
-  }
-};
-
-const getLessonTranscript = async (
-  lessonId,
-  role
-) => {
-  const lesson = await getLessonById(
-    lessonId,
-    role
-  );
-
-  if (!lesson) {
-    const error = new Error(
-      "Lesson not found"
-    );
-    error.statusCode = 404;
-    throw error;
-  }
-
-  const videoContent = lesson.topics
-    .flatMap((topic) => topic.contents || [])
-    .concat(lesson.contents || [])
-    .find(
-      (content) =>
-        content.type === "VIDEO" &&
-        content.videoUrl
-    );
-
-  if (!videoContent) {
-    return {
-      lessonId,
-      videoId: null,
-      segments: []
-    };
-  }
-
-  const { videoId, segments } =
-    await getTranscriptForContent(
-      videoContent
-    );
-
-  return {
-    lessonId,
-    videoId,
-    segments
-  };
-};
-
-/**
- * Moves lessons within their module's learning sequence, which they share
- * with the module's Content rows: each listed lesson goes to its requested
- * position, everything else keeps its relative order, and the sequence stays
- * 1..n. A lesson of another module is refused.
- */
-const reorderLessons = async (moduleId, lessons) => {
-  const existing = await prisma.lesson.findMany({
-    where: { moduleId },
-    select: { id: true }
-  });
-  const validIds = new Set(existing.map((row) => row.id));
-  if (!lessons.every((row) => validIds.has(row.id))) {
-    throw new ApiError(403, "One or more lessons do not belong to this module.");
-  }
-
-  return prisma.$transaction((tx) =>
-    moveContainers("lesson", moduleId, lessons.map(({ id, order }) => ({ id, order })), tx)
-  );
-};
-
 module.exports = {
   getLessons,
   getLessonById,
   createLesson,
   updateLesson,
   deleteLesson,
-  reorderLessons,
-  getLessonTranscript
 };

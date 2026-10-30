@@ -13,18 +13,7 @@ const updateLessonSchema = Joi.object({
   isPublished: Joi.boolean().optional()
 });
 
-const reorderLessonsSchema = Joi.object({
-  moduleId: Joi.string().required(),
-  lessons: Joi.array().items(
-    Joi.object({
-      id: Joi.string().required(),
-      order: Joi.number().integer().min(0).required()
-    })
-  ).min(1).required()
-});
-
 module.exports = {
   createLessonSchema,
   updateLessonSchema,
-  reorderLessonsSchema
 };

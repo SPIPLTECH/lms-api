@@ -28,14 +28,6 @@ router.post(
   controller.createAchievement
 );
 
-// Admin: award an achievement to a specific student
-router.post(
-  "/:achievementId/award/:studentProfileId",
-  verifyToken,
-  checkRole(["ADMIN"]),
-  controller.awardAchievement
-);
-
 // Internal: auto-check and award achievements for a student (called by other services)
 router.post(
   "/check",

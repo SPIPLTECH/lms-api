@@ -37,7 +37,7 @@ const parseCSV = (filePath) => {
           (row) => {
 
             questions.push(
-    normalizeQuestion(row)
+    normalizeQuestion(row, { answerByPosition: true })
 );
 
           }

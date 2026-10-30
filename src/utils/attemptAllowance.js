@@ -32,7 +32,6 @@ const buildAttemptAllowance = (maxAttempts, attemptsUsed) => {
 };
 
 module.exports = {
-  isUnlimitedAttempts,
   effectiveMaxAttempts,
   buildAttemptAllowance
 };

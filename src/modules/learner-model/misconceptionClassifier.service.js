@@ -174,7 +174,4 @@ const classifyAndApply = async ({
 
 module.exports = {
   classifyAndApply,
-  buildClassifierPrompt,
-  parseClassifierResponse,
-  CLASSIFIER_SYSTEM_PROMPT,
 };

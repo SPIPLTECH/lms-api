@@ -65,24 +65,10 @@ const deleteSubTopic = async (req, res, next) => {
   }
 };
 
-const reorderSubTopics = async (req, res, next) => {
-  try {
-    const result = await subTopicService.reorderSubTopics(
-      req.body.topicId,
-      req.body.subTopics
-    );
-
-    res.json(result);
-  } catch (error) {
-    next(error);
-  }
-};
-
 module.exports = {
   getSubTopics,
   getSubTopicById,
   createSubTopic,
   updateSubTopic,
   deleteSubTopic,
-  reorderSubTopics,
 };

@@ -43,13 +43,17 @@ const leaseExpiry = (now) => new Date(now.getTime() + LEASE_TTL_MS);
  * Whether `user` may play `content`. Students: enrolled, and the item is not
  * locked by the learning sequence. Instructors: own the course. Admins: yes.
  */
-async function assertMayPlay(user, content) {
+async function assertMayPlay(user, content, profile = undefined) {
   const courseId = resolveCourseId(content);
   if (!courseId) throw authError("CONTENT_ACCESS_DENIED");
 
   try {
     if (user.role === "STUDENT") {
-      const profile = await prisma.studentProfile.findUnique({ where: { userId: user.id }, select: { id: true } });
+      // startPlayback looks the profile up alongside the content; anyone else
+      // calling this without one still gets it looked up here.
+      if (profile === undefined) {
+        profile = await prisma.studentProfile.findUnique({ where: { userId: user.id }, select: { id: true } });
+      }
       if (!profile) throw authError("CONTENT_ACCESS_DENIED");
       await progressService.assertCourseProgressAccess(user, profile.id, courseId);
       await progressService.assertContentsAccessible(profile.id, courseId, [content.id]);
@@ -114,7 +118,13 @@ const claimOnce = ({ userId, sessionId, deviceId, contentId }, now) =>
  * issues the media descriptor.
  */
 async function startPlayback(user, contentId) {
-  let content = await prisma.content.findUnique({ where: { id: contentId }, include: COURSE_ID_INCLUDE });
+  // Independent reads, one round trip instead of two.
+  let [content, profile] = await Promise.all([
+    prisma.content.findUnique({ where: { id: contentId }, include: COURSE_ID_INCLUDE }),
+    user.role === "STUDENT"
+      ? prisma.studentProfile.findUnique({ where: { userId: user.id }, select: { id: true } })
+      : undefined,
+  ]);
   if (!content) {
     content = await prisma.content.findFirst({
       where: {
@@ -128,7 +138,18 @@ async function startPlayback(user, contentId) {
   }
   if (!content) throw authError("MEDIA_UNAVAILABLE", "Content not found.");
 
-  await assertMayPlay(user, content);
+  const claim = { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, contentId: content.id };
+  const audit = { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, contentId: content.id };
+
+  // Playing on another device is one indexed read; the access check below can
+  // take seconds. Answer the conflict first, so "Playing on another device"
+  // shows at once. The claim transaction stays the authority either way.
+  if (requiresPlaybackLease(user.role) && (await isPlaybackHeldElsewhere(user))) {
+    await recordAuditEvent({ ...audit, eventType: AUDIT_EVENTS.PLAYBACK_CONFLICT, reasonCode: "ACTIVE_ELSEWHERE" });
+    throw authError("PLAYBACK_ACTIVE_ON_ANOTHER_DEVICE");
+  }
+
+  await assertMayPlay(user, content, profile);
 
   // ADMIN and INSTRUCTOR are not limited to one active video (accessPolicy):
   // no lease, and the source they already see in content responses.
@@ -142,9 +163,6 @@ async function startPlayback(user, contentId) {
       media: directMediaDescriptor(content),
     };
   }
-
-  const claim = { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, contentId: content.id };
-  const audit = { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, contentId: content.id };
 
   let result;
   for (let attempt = 0; ; attempt += 1) {
@@ -249,8 +267,10 @@ async function stopPlayback(user, { leaseId, contentId = null, reason = null }) 
   if (contentId && lease.contentId !== contentId) return false;
 
   const stopReason = STOP_REASONS.has(reason) ? reason : "USER_STOPPED";
+  // The item is checked again in the update itself: a start switching this
+  // lease to another item between the read and the write keeps it ACTIVE.
   const { count } = await prisma.playbackLease.updateMany({
-    where: { id: leaseId, status: ACTIVE },
+    where: { id: leaseId, status: ACTIVE, ...(contentId ? { contentId } : {}) },
     data: { status: "STOPPED", stoppedAt: new Date(), stopReason },
   });
   if (count > 0) {
@@ -276,8 +296,23 @@ async function getStatus(user) {
     return { active: false, heldByThisDevice: false, leaseRequired: false, heartbeatIntervalSeconds: null };
   }
   const now = new Date();
-  await prisma.$transaction((tx) => expireStaleLeases(user.id, tx, now));
-  const lease = await prisma.playbackLease.findFirst({ where: { userId: user.id, status: ACTIVE } });
+  const activeLease = () =>
+    prisma.playbackLease.findFirst({
+      where: { userId: user.id, status: ACTIVE },
+      include: { session: { select: { status: true } } },
+    });
+
+  // Polled every few seconds by every open content page, so the common case
+  // is one read. The account has at most one ACTIVE lease (partial unique
+  // index); only when that one is stale — timed out, or its session ended —
+  // does the cleanup transaction (with its audit events) run, exactly as
+  // expireStaleLeases always did.
+  let lease = await activeLease();
+  const stale = lease && (new Date(lease.expiresAt) <= now || lease.session?.status !== "ACTIVE");
+  if (stale) {
+    await prisma.$transaction((tx) => expireStaleLeases(user.id, tx, now));
+    lease = await activeLease();
+  }
 
   if (!lease) return { active: false, heldByThisDevice: false, heartbeatIntervalSeconds: PLAYBACK_HEARTBEAT_SECONDS };
   if (!ownsLease(lease, user)) return { active: true, heldByThisDevice: false, heartbeatIntervalSeconds: PLAYBACK_HEARTBEAT_SECONDS };
@@ -348,7 +383,5 @@ module.exports = {
   stopPlayback,
   getStatus,
   isPlaybackHeldElsewhere,
-  authorizeMedia,
   serveMedia,
-  STOP_REASONS,
 };

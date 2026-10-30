@@ -2,9 +2,7 @@ const prisma = require("../../config/database");
 const notificationService = require("../notifications/notification.service");
 const ApiError = require("../../utils/ApiError");
 const { buildLessonLockMap } = require("../../utils/dripAccess");
-// const verifyToken = require(
-//   "../../middleware/auth.middleware"
-// );
+const { loadCourseKeys } = require("../../utils/courseKey");
 
 /**
  * Batched stats block for the course card / workspace overview — one set of
@@ -317,7 +315,6 @@ const getCourses = async (
   };
   // Student should see only published courses
 
-
   const commonInclude = {
     creator: {
       select: {
@@ -355,57 +352,158 @@ const getCourses = async (
   if (category) where.category = category;
   if (level) where.level = level;
 
-  const [courses, total] = await Promise.all([
+  // Staff URLs name a course by its readable key (utils/courseKey.js).
+  const [courses, total, keys] = await Promise.all([
     prisma.course.findMany(query),
     prisma.course.count({ where }),
+    loadCourseKeys(role, userId),
   ]);
 
-  return { courses: await attachCourseStats(courses), total };
+  const withStats = await attachCourseStats(courses);
+  return {
+    courses: keys.size ? withStats.map((course) => ({ ...course, urlKey: keys.get(course.id) || course.id })) : withStats,
+    total,
+  };
+};
+
+// The course tree's levels, top down, with the id column each level's items
+// (Content, Quiz, Assignment) point at it by.
+const TREE_LEVELS = ["course", "module", "lesson", "topic", "subTopic", "concept"];
+const LEVEL_KEY = {
+  course: "courseId",
+  module: "moduleId",
+  lesson: "lessonId",
+  topic: "topicId",
+  subTopic: "subTopicId",
+  concept: "conceptId",
+};
+
+// Every level's learning items, in Content.order — ordinary content plus
+// the Content(type=QUIZ/ASSIGNMENT) rows that place quizzes and
+// assignments, each carrying the Quiz/Assignment it stands for.
+const CONTENT_ITEM_INCLUDE = {
+  quiz: {
+    select: {
+      id: true,
+      title: true,
+      quizTag: true,
+      passingScore: true,
+      timeLimit: true,
+      attempts: true,
+      isPublished: true,
+      _count: { select: { quizQuestions: true } },
+    },
+  },
+  assignment: {
+    select: { id: true, title: true, description: true, dueDate: true, marks: true, isPublished: true },
+  },
+};
+
+const groupRows = (rows, key) => {
+  const groups = new Map();
+  for (const row of rows) {
+    const id = row[key];
+    if (id == null) continue;
+    if (!groups.has(id)) groups.set(id, []);
+    groups.get(id).push(row);
+  }
+  return groups;
 };
 
 /**
- * Summary counts for the instructor's own courses.
+ * Every row of a course's tree: modules, lessons, topics, subtopics and
+ * concepts (published ones only for students and guests), plus every Content
+ * and Assignment placed anywhere in it. One flat read per table, all in
+ * parallel.
  *
- * Backs both the My Courses summary cards and the instructor dashboard's KPI
- * strip. Every value here is computed by the database and returns a single
- * number — nothing loads a list in order to take its `.length`.
- *
- * `students` is a COUNT(DISTINCT) rather than a groupBy/findMany, because a
- * groupBy would still return one row per student (248 rows to display "248").
- * Prisma has no first-class distinct-count, so this is the one place raw SQL
- * is the right tool; the instructor id is parameterised, never interpolated.
+ * This replaces a nested Prisma include. Under relationJoins that include is
+ * a single SQL query, and on a deep course (hundreds of subtopics and
+ * concepts) it took the database server down; run as one query per level
+ * instead, it cost ~6s of round trips.
  */
-const getCourseStatusCounts = async (instructorId) => {
-  const [total, published, draft, archived, activeQuizzes, lessons, studentRows] =
-    await Promise.all([
-      prisma.course.count({ where: { creatorId: instructorId } }),
-      prisma.course.count({ where: { creatorId: instructorId, status: "PUBLISHED" } }),
-      prisma.course.count({ where: { creatorId: instructorId, status: "DRAFT" } }),
-      prisma.course.count({ where: { creatorId: instructorId, status: "ARCHIVED" } }),
-      prisma.quiz.count({
-        where: { isPublished: true, course: { creatorId: instructorId } },
-      }),
-      // Lessons hang off the course through Module, so the filter walks
-      // lesson -> module -> course rather than counting a fetched list.
-      prisma.lesson.count({
-        where: { module: { course: { creatorId: instructorId } } },
-      }),
-      prisma.$queryRaw`
-        SELECT COUNT(DISTINCT e."studentId")::int AS count
-        FROM "Enrollment" e
-        JOIN "Course" c ON c."id" = e."courseId"
-        WHERE c."creatorId" = ${instructorId}
-      `,
-    ]);
+const loadCourseTreeRows = (courseId, publishedOnly) => {
+  const inCourse = {
+    module: { courseId },
+    lesson: { module: { courseId } },
+    topic: { lesson: { module: { courseId } } },
+    subTopic: { topic: { lesson: { module: { courseId } } } },
+    concept: { subTopic: { topic: { lesson: { module: { courseId } } } } },
+  };
+  const containers = (level) =>
+    prisma[level].findMany({ where: { ...inCourse[level], ...publishedOnly }, orderBy: { order: "asc" } });
+  const placedInCourse = {
+    OR: [{ courseId }, ...TREE_LEVELS.slice(1).map((level) => ({ [level]: inCourse[level] }))],
+  };
+
+  return Promise.all([
+    containers("module"),
+    containers("lesson"),
+    containers("topic"),
+    containers("subTopic"),
+    containers("concept"),
+    prisma.content.findMany({ where: placedInCourse, orderBy: { order: "asc" }, include: CONTENT_ITEM_INCLUDE }),
+    prisma.assignment.findMany({ where: placedInCourse, orderBy: { createdAt: "asc" } }),
+  ]).then(([modules, lessons, topics, subTopics, concepts, contents, assignments]) => ({
+    modules, lessons, topics, subTopics, concepts, contents, assignments,
+  }));
+};
+
+/**
+ * Nests loadCourseTreeRows' rows into the shape the old include returned:
+ * course.contents/assignments and course.modules -> lessons -> topics ->
+ * subTopics -> concepts, each node with its contents (every Content pointing
+ * at it), its own quizzes and assignments (items whose most specific parent
+ * it is), and, from topics down, _count.contents.
+ *
+ * `quizzes` is the course's quiz list, already filtered for the viewer.
+ */
+const assembleCourseTree = (courseId, quizzes, rows, publishedOnly) => {
+  const contentsBy = Object.fromEntries(
+    TREE_LEVELS.map((level) => [level, groupRows(rows.contents, LEVEL_KEY[level])])
+  );
+  // Own items only at each level — a quiz may still carry ancestor ids, but
+  // it belongs to its most specific parent alone.
+  const ownBy = (items, level) => {
+    const deeper = TREE_LEVELS.slice(TREE_LEVELS.indexOf(level) + 1).map((l) => LEVEL_KEY[l]);
+    return groupRows(items.filter((item) => deeper.every((key) => item[key] == null)), LEVEL_KEY[level]);
+  };
+  // Course-level assignments are not filtered by publication; every other
+  // level's are, for students and guests.
+  const publishedAssignments = publishedOnly ? rows.assignments.filter((a) => a.isPublished) : rows.assignments;
+  const quizzesBy = Object.fromEntries(TREE_LEVELS.map((level) => [level, ownBy(quizzes, level)]));
+  const assignmentsBy = Object.fromEntries(
+    TREE_LEVELS.map((level) => [level, ownBy(level === "course" ? rows.assignments : publishedAssignments, level)])
+  );
+
+  const children = {
+    lesson: groupRows(rows.lessons, "moduleId"),
+    topic: groupRows(rows.topics, "lessonId"),
+    subTopic: groupRows(rows.subTopics, "topicId"),
+    concept: groupRows(rows.concepts, "subTopicId"),
+  };
+  const counted = new Set(["topic", "subTopic", "concept"]);
+  const childList = { module: ["lessons", "lesson"], lesson: ["topics", "topic"], topic: ["subTopics", "subTopic"], subTopic: ["concepts", "concept"] };
+
+  const node = (row, level) => {
+    const contents = contentsBy[level].get(row.id) || [];
+    const built = {
+      ...row,
+      contents,
+      quizzes: quizzesBy[level].get(row.id) || [],
+      assignments: assignmentsBy[level].get(row.id) || [],
+      ...(counted.has(level) ? { _count: { contents: contents.length } } : {}),
+    };
+    if (childList[level]) {
+      const [field, childLevel] = childList[level];
+      built[field] = (children[childLevel].get(row.id) || []).map((child) => node(child, childLevel));
+    }
+    return built;
+  };
 
   return {
-    total,
-    published,
-    draft,
-    archived,
-    activeQuizzes,
-    lessons,
-    students: Number(studentRows?.[0]?.count ?? 0),
+    contents: contentsBy.course.get(courseId) || [],
+    assignments: assignmentsBy.course.get(courseId) || [],
+    modules: rows.modules.map((moduleRow) => node(moduleRow, "module")),
   };
 };
 
@@ -413,8 +511,8 @@ const getCourseStatusCounts = async (instructorId) => {
  * @param {object}  [options]
  * @param {boolean} [options.includeModules=true]
  *   When false, the `modules` relation (modules -> lessons -> topics ->
- *   contents, plus quizzes -> quizQuestions -> question at four levels) is
- *   omitted and only course-level data is returned.
+ *   contents, plus each level's quizzes and assignments) is omitted and only
+ *   course-level data is returned.
  *
  *   Defaults to true so every existing caller keeps its current payload.
  *   Callers that only render course metadata — the breadcrumb in
@@ -425,99 +523,39 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
   const { includeModules = true } = options;
   const isStudentOrGuest = role === "STUDENT" || role === "GUEST";
 
-  // A student reads quizzes through GET /quizzes/:id (sequence-gated, answers
-  // withheld); the course tree only says how many questions there are, so a
-  // quiz the student has not reached cannot be read off this response.
-  // Instructors get the full question list, answer key included.
+  // Every role reads a quiz's questions through GET /quizzes/:id (for a
+  // student sequence-gated, answers withheld); the course tree only says how
+  // many questions there are. Carrying every question of every quiz here made
+  // a large course's response megabytes long, metadata-only calls included.
   const quizzesInclude = (where = {}) => ({
     where: { ...where, ...(isStudentOrGuest ? { quizTag: { not: "QUALIFYING" } } : {}) },
     orderBy: { createdAt: "asc" },
-    include: isStudentOrGuest
-      ? { _count: { select: { quizQuestions: true } } }
-      : {
-          quizQuestions: {
-            orderBy: { order: "asc" },
-            select: {
-              id: true,
-              quizId: true,
-              order: true,
-              marks: true,
-              question: {
-                select: {
-                  id: true,
-                  question: true,
-                  questionType: true,
-                  options: true,
-                  difficulty: true,
-                  correctAnswer: true,
-                  explanation: true,
-                },
-              },
-            },
-          },
-        },
+    include: { _count: { select: { quizQuestions: true } } },
   });
 
-  // Every level's learning items, in Content.order — ordinary content plus
-  // the Content(type=QUIZ/ASSIGNMENT) rows that place quizzes and
-  // assignments, each carrying the Quiz/Assignment it stands for.
-  const contentsInclude = {
-    orderBy: { order: "asc" },
-    include: {
-      quiz: {
-        select: {
-          id: true,
-          title: true,
-          quizTag: true,
-          passingScore: true,
-          timeLimit: true,
-          attempts: true,
-          isPublished: true,
-          _count: { select: { quizQuestions: true } },
-        },
-      },
-      assignment: {
-        select: { id: true, title: true, description: true, dueDate: true, marks: true, isPublished: true },
-      },
-    },
-  };
-
-  // Own items only at each level — a quiz may still carry ancestor ids, but
-  // it belongs to its most specific parent alone.
-  const OWN = {
-    course: { moduleId: null, lessonId: null, topicId: null, subTopicId: null, conceptId: null },
-    module: { lessonId: null, topicId: null, subTopicId: null, conceptId: null },
-    lesson: { topicId: null, subTopicId: null, conceptId: null },
-    topic: { subTopicId: null, conceptId: null },
-    subTopic: { conceptId: null },
-    concept: {},
-  };
-
-  // If role is STUDENT, check if student holds an active enrollment
+  // If role is STUDENT, check if student holds an active enrollment — profile
+  // and enrollment in one round trip.
   let isEnrolledStudent = false;
   let studentProfileId = null;
   if (role === "STUDENT" && userId) {
     const studentProfile = await prisma.studentProfile.findUnique({
       where: { userId },
-      select: { id: true }
+      select: { id: true, enrollments: { where: { courseId }, select: { id: true }, take: 1 } }
     });
     if (studentProfile) {
       studentProfileId = studentProfile.id;
-      const enrollment = await prisma.enrollment.findUnique({
-        where: {
-          studentId_courseId: {
-            studentId: studentProfile.id,
-            courseId
-          }
-        }
-      });
-      if (enrollment) isEnrolledStudent = true;
+      isEnrolledStudent = studentProfile.enrollments.length > 0;
     }
   }
 
   const publishedOnly = isStudentOrGuest ? { isPublished: true } : undefined;
 
-  const course = await prisma.course.findUnique({
+  // The student's lock state does not depend on the tree query, so the two
+  // run side by side instead of one after the other.
+  const lockMapPromise =
+    role === "STUDENT" && includeModules ? buildLessonLockMap(courseId, studentProfileId) : null;
+
+  const coursePromise = prisma.course.findUnique({
     where: {
       id: courseId
     },
@@ -542,77 +580,37 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
         },
       },
 
-      // The deep tree. Omitted entirely when includeModules is false so
-      // metadata-only callers don't transfer every content cell and quiz.
-      ...(includeModules ? {
-      contents: contentsInclude,
-      assignments: { where: OWN.course, orderBy: { createdAt: "asc" } },
-      modules: {
-        where: publishedOnly,
-        orderBy: { order: "asc" },
-        include: {
-          contents: contentsInclude,
-          quizzes: quizzesInclude(OWN.module),
-          assignments: { where: { ...OWN.module, ...publishedOnly }, orderBy: { createdAt: "asc" } },
-          lessons: {
-            where: publishedOnly,
-            orderBy: { order: "asc" },
-            include: {
-              contents: contentsInclude,
-              quizzes: quizzesInclude(OWN.lesson),
-              assignments: { where: { ...OWN.lesson, ...publishedOnly }, orderBy: { createdAt: "asc" } },
-              topics: {
-                where: publishedOnly,
-                orderBy: { order: "asc" },
-                include: {
-                  contents: contentsInclude,
-                  quizzes: quizzesInclude(OWN.topic),
-                  assignments: { where: { ...OWN.topic, ...publishedOnly }, orderBy: { createdAt: "asc" } },
-                  _count: { select: { contents: true } },
-                  subTopics: {
-                    where: publishedOnly,
-                    orderBy: { order: "asc" },
-                    include: {
-                      contents: contentsInclude,
-                      quizzes: quizzesInclude(OWN.subTopic),
-                      assignments: { where: { ...OWN.subTopic, ...publishedOnly }, orderBy: { createdAt: "asc" } },
-                      _count: { select: { contents: true } },
-                      concepts: {
-                        where: publishedOnly,
-                        orderBy: { order: "asc" },
-                        include: {
-                          contents: contentsInclude,
-                          quizzes: quizzesInclude(OWN.concept),
-                          assignments: { where: publishedOnly, orderBy: { createdAt: "asc" } },
-                          _count: { select: { contents: true } }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      } : {}),
-
-      // Every quiz of the course, for counts and the instructor's quiz lists.
+      // Every quiz of the course, for counts and the instructor's quiz lists
+      // — and the pool the tree's per-level quiz lists are taken from.
       quizzes: quizzesInclude(),
-      // Students and guests (this route is public for published courses) get
-      // the enrollment rows' ids only — never other students' profile ids.
-      enrollments: isStudentOrGuest ? { select: { id: true } } : true
+      // Enrollment row ids only — never other students' profile ids, and no
+      // client reads more than the list's length (the count is in _count).
+      enrollments: { select: { id: true } }
     }
   });
 
+  // The deep tree, read alongside the course. Omitted entirely when
+  // includeModules is false so metadata-only callers don't transfer it.
+  const treePromise = includeModules ? loadCourseTreeRows(courseId, publishedOnly) : null;
+
+  // Staff URLs name a course by its readable key (utils/courseKey.js); the
+  // set it is unique in is read alongside the course, not after it.
+  const keysPromise = role === "ADMIN" || role === "INSTRUCTOR" ? loadCourseKeys(role, userId) : null;
+
+  const [course, treeRows, lockState, keys] = await Promise.all([coursePromise, treePromise, lockMapPromise, keysPromise]);
+
   if (!course) return null;
+
+  if (keys) course.urlKey = keys.get(course.id) || course.id;
+
+  if (treeRows) Object.assign(course, assembleCourseTree(courseId, course.quizzes, treeRows, publishedOnly));
 
   if (isStudentOrGuest && course.status !== "PUBLISHED" && !isEnrolledStudent) {
     return null;
   }
 
-  if (role === "STUDENT" && includeModules) {
-    const { lockMap, completedSet, qualifiedSet, lockedContentIds } = await buildLessonLockMap(courseId, studentProfileId);
+  if (lockState) {
+    const { lockMap, completedSet, qualifiedSet, lockedContentIds } = lockState;
 
     // A student never receives the material of an item they may not open yet —
     // ordinary content, quiz or assignment, at any level.
@@ -656,7 +654,9 @@ const getCourseById = async (courseId, role, userId, options = {}) => {
     });
   }
 
-  return attachCourseStats(course);
+  // No card stats here: they are read only by the course cards, which come
+  // from GET /courses, and building them costs ~10 queries per request.
+  return course;
 };
 
 const createCourse = async (data, userId) => {
@@ -1110,355 +1110,6 @@ const updateStatus = async (courseId, status, userId, userRole) => {
 };
 
 /**
- * Deep-clones a course's structure (modules -> lessons -> contents) into a
- * new DRAFT course. Enrollments, submissions, reviews, and certificates are
- * intentionally NOT copied — a duplicate is a fresh course, not a snapshot
- * of another course's student data.
- */
-/**
- * The Content columns a duplicate copies, minus the parent id (the caller
- * supplies whichever of the six parents applies). Matches the field list the
- * four existing levels already inline above.
- */
-const copyContentFields = (content) => ({
-  type: content.type,
-  title: content.title,
-  videoUrl: content.videoUrl,
-  fileUrl: content.fileUrl,
-  htmlContent: content.htmlContent,
-  externalUrl: content.externalUrl,
-  duration: content.duration,
-  data: content.data
-});
-
-const SINGLE_PARENT = { courseId: null, moduleId: null, lessonId: null, topicId: null, subTopicId: null, conceptId: null };
-
-/**
- * Copies one container's Content rows into its duplicate at the SAME
- * positions — a container's Content rows and its child containers share one
- * sequence, and the child containers are copied with their own orders too:
- *   - ordinary content is copied as is;
- *   - an assignment item is copied as a new Assignment with its own
- *     Content(type=ASSIGNMENT) row — assignments were always duplicated as
- *     part of the content (the lesson composer's assignment blocks), and an
- *     assignment row must never point at the source course's assignment;
- *   - quizzes are not duplicated, exactly as before (a quiz carries its own
- *     question bank links and attempt history and is rebuilt deliberately).
- */
-const copyContentSequence = async (tx, rows, parent) => {
-  const parentData = { ...SINGLE_PARENT, ...parent };
-  const plain = [];
-  for (const content of rows) {
-    const order = content.order;
-    if (content.type === "QUIZ") continue;
-    if (content.type === "ASSIGNMENT") {
-      if (!content.assignment) continue;
-      const a = content.assignment;
-      const copy = await tx.assignment.create({
-        data: {
-          title: a.title,
-          description: a.description,
-          dueDate: a.dueDate,
-          totalQuestions: a.totalQuestions,
-          estimatedTime: a.estimatedTime,
-          resources: a.resources,
-          marks: a.marks,
-          assessmentType: a.assessmentType,
-          attachments: a.attachments ?? undefined,
-          isPublished: a.isPublished,
-          ...parentData
-        }
-      });
-      await tx.content.create({
-        data: { type: "ASSIGNMENT", title: content.title, order, assignmentId: copy.id, ...parentData }
-      });
-      continue;
-    }
-    plain.push({ ...copyContentFields(content), order, ...parentData });
-  }
-  if (plain.length > 0) await tx.content.createMany({ data: plain });
-};
-
-const duplicateCourse = async (courseId, instructorId) => {
-  const contentsWithAssignments = { orderBy: { order: "asc" }, include: { assignment: true } };
-  const source = await prisma.course.findUnique({
-    where: { id: courseId },
-    include: {
-      contents: contentsWithAssignments,
-      modules: {
-        orderBy: { order: "asc" },
-        include: {
-          contents: contentsWithAssignments,
-          lessons: {
-            orderBy: { order: "asc" },
-            include: {
-              contents: contentsWithAssignments,
-              topics: {
-                orderBy: { order: "asc" },
-                include: {
-                  contents: contentsWithAssignments,
-                  subTopics: {
-                    orderBy: { order: "asc" },
-                    include: {
-                      contents: contentsWithAssignments,
-                      concepts: {
-                        orderBy: { order: "asc" },
-                        include: { contents: contentsWithAssignments }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  });
-
-  if (!source) {
-    const error = new Error("Course not found");
-    error.statusCode = 404;
-    throw error;
-  }
-
-  return prisma.$transaction(async (tx) => {
-    const newCourse = await tx.course.create({
-      data: {
-        title: `${source.title} (Copy)`,
-        description: source.description,
-        category: source.category,
-        level: source.level,
-        thumbnailUrl: source.thumbnailUrl,
-        status: "DRAFT",
-        creatorId: instructorId,
-        visibility: source.visibility,
-        language: source.language,
-        tags: source.tags,
-        certificatesEnabled: source.certificatesEnabled,
-        discussionEnabled: source.discussionEnabled,
-        sequentialLearning: source.sequentialLearning,
-
-        estimatedLearningHours: source.estimatedLearningHours
-      }
-    });
-
-    await copyContentSequence(tx, source.contents, { courseId: newCourse.id });
-
-    for (const module of source.modules) {
-      const newModule = await tx.module.create({
-        data: {
-          title: module.title,
-          description: module.description,
-          order: module.order,
-          isPublished: false,
-          courseId: newCourse.id
-        }
-      });
-      await copyContentSequence(tx, module.contents, { moduleId: newModule.id });
-
-      for (const lesson of module.lessons) {
-        const newLesson = await tx.lesson.create({
-          data: {
-            title: lesson.title,
-            description: lesson.description,
-            order: lesson.order,
-            isPublished: false,
-            moduleId: newModule.id
-          }
-        });
-        await copyContentSequence(tx, lesson.contents, { lessonId: newLesson.id });
-
-        for (const topic of lesson.topics) {
-          const newTopic = await tx.topic.create({
-            data: {
-              title: topic.title,
-              description: topic.description,
-              order: topic.order,
-              isPublished: false,
-              lessonId: newLesson.id
-            }
-          });
-          await copyContentSequence(tx, topic.contents, { topicId: newTopic.id });
-
-          // SubTopics and their Concepts. Without this a duplicate would
-          // silently drop everything below Topic -- no error, just a course
-          // missing whole branches.
-          for (const subTopic of topic.subTopics || []) {
-            const newSubTopic = await tx.subTopic.create({
-              data: {
-                title: subTopic.title,
-                description: subTopic.description,
-                order: subTopic.order,
-                isPublished: false,
-                topicId: newTopic.id
-              }
-            });
-            await copyContentSequence(tx, subTopic.contents, { subTopicId: newSubTopic.id });
-
-            for (const concept of subTopic.concepts || []) {
-              const newConcept = await tx.concept.create({
-                data: {
-                  title: concept.title,
-                  description: concept.description,
-                  order: concept.order,
-                  isPublished: false,
-                  subTopicId: newSubTopic.id
-                }
-              });
-              await copyContentSequence(tx, concept.contents, { conceptId: newConcept.id });
-            }
-          }
-        }
-      }
-    }
-
-    return newCourse;
-  });
-};
-
-const getCourseStudents = async (courseId) => {
-  const enrollments = await prisma.enrollment.findMany({
-    where: {
-      courseId
-    },
-    include: {
-      student: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true
-            }
-          }
-        }
-      }
-    }
-  });
-
-  const studentIds = enrollments.map((e) => e.studentId);
-
-  const lessons = await prisma.lesson.findMany({
-    where: { module: { courseId } },
-    select: { id: true }
-  });
-  const lessonIds = lessons.map((l) => l.id);
-
-  const [progressRows, submissionRows] = await Promise.all([
-    lessonIds.length > 0 && studentIds.length > 0
-      ? prisma.lessonProgress.findMany({
-          where: { studentId: { in: studentIds }, lessonId: { in: lessonIds }, completed: true },
-          select: { studentId: true }
-        })
-      : [],
-    studentIds.length > 0
-      ? prisma.quizSubmission.findMany({
-          where: { studentId: { in: studentIds }, quiz: { courseId } },
-          select: { studentId: true, percentage: true }
-        })
-      : []
-  ]);
-
-  const completedCountByStudent = {};
-  progressRows.forEach((p) => {
-    completedCountByStudent[p.studentId] = (completedCountByStudent[p.studentId] || 0) + 1;
-  });
-
-  const scoresByStudent = {};
-  submissionRows.forEach((s) => {
-    if (!scoresByStudent[s.studentId]) scoresByStudent[s.studentId] = [];
-    scoresByStudent[s.studentId].push(s.percentage);
-  });
-
-  return enrollments.map((enrollment) => {
-    const studentId = enrollment.studentId;
-    const completed = completedCountByStudent[studentId] || 0;
-    const progress = lessonIds.length > 0 ? Math.round((completed / lessonIds.length) * 100) : 0;
-
-    const scores = scoresByStudent[studentId] || [];
-    const avgGrade =
-      scores.length > 0 ? Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length) : null;
-
-    return {
-      id: enrollment.student.user.id,
-      studentProfileId: enrollment.studentId,
-      name: enrollment.student.user.name,
-      email: enrollment.student.user.email,
-      enrolledAt: enrollment.enrolledAt,
-      progress,
-      avgGrade
-    };
-  });
-};
-
-/**
- * Exports a full 5-layer course into a portable ZIP package containing course.json and physical assets.
- * 
- * @param {string} courseId Database course ID
- * @returns {Promise<{ filePath: string, filename: string, totalEntries: number }>}
- */
-const exportCourse = async (courseId) => {
-  const { collectCourseAssets } = require("../import/collectors/assetCollector");
-  const { mapCourseToPackageData } = require("../import/mappers/courseMapper");
-  const { buildCoursePackage } = require("../import/builders/packageBuilder");
-
-  const course = await prisma.course.findUnique({
-    where: { id: courseId },
-    include: {
-      modules: {
-        orderBy: { order: "asc" },
-        include: {
-          lessons: {
-            orderBy: { order: "asc" },
-            include: {
-              topics: {
-                orderBy: { order: "asc" },
-                // Quiz/assignment items are not part of the package format
-                // (quizzes and assignments were never exported); their
-                // Content rows carry no material of their own.
-                include: { contents: { where: { type: { notIn: ["QUIZ", "ASSIGNMENT"] } }, orderBy: { order: "asc" } } }
-              }
-            }
-          }
-        }
-      }
-    }
-  });
-
-  if (!course) {
-    const error = new Error("Course not found");
-    error.statusCode = 404;
-    throw error;
-  }
-
-  // 1. Run Asset Collector
-  const assetCollection = collectCourseAssets(course);
-  if (!assetCollection.success) {
-    const errorMsg = Array.isArray(assetCollection.errors) && assetCollection.errors.length > 0
-      ? assetCollection.errors.join("; ")
-      : "Missing course assets on disk.";
-    const error = new Error(`Asset collection failed: ${errorMsg}`);
-    error.statusCode = 400;
-    error.details = assetCollection;
-    throw error;
-  }
-
-  // 2. Map course to canonical JSON v2 using collision-safe assetMap
-  const courseJson = mapCourseToPackageData(course, { assetMap: assetCollection.assetMap });
-
-  // 3. Build portable ZIP package
-  const packageResult = buildCoursePackage({ courseJson, assetCollection });
-  if (!packageResult.success) {
-    const error = new Error(`Package creation failed: ${packageResult.errors.join("; ")}`);
-    error.statusCode = 500;
-    throw error;
-  }
-
-  return packageResult;
-};
-
-/**
  * Restores an archived course (ARCHIVED -> DRAFT). Admin-only lifecycle action.
  */
 const restoreCourse = async (courseId, userId, userRole) => {
@@ -1536,12 +1187,7 @@ module.exports = {
   deleteCourse,
   publishCourse,
   unpublishCourse,
-  archiveCourse,
   restoreCourse,
-  duplicateCourse,
-  getCourseStudents,
-  getCourseStatusCounts,
-  exportCourse,
   trackCourseView,
   validateCourseForPublish
 };

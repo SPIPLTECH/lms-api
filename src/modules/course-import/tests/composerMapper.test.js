@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { toContentPayload, BLOCK_TO_CONTENT_TYPE, getEffectiveBlockType } = require("../services/composerMapper.service");
+const { toContentPayload } = require("../services/composerMapper.service");
 
 test("1. Canonical text block with kind: 'text' and markdown maps to type 'HTML' with htmlContent", () => {
   const block = {

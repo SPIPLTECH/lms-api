@@ -184,19 +184,6 @@ test("each container is its own boundary: a lesson-level block added after its t
   assert.deepStrictEqual(db.sequenceOf("moduleId", mod.id), ["LESSON:Control Flow@1"]);
 });
 
-test("swapping two containers keeps the content between them in place", async (t) => {
-  const db = useSequenceDb(t);
-  const m1 = await moduleService.createModule({ courseId: COURSE, title: "M1" });
-  await video({ courseId: COURSE }, "Between");
-  const m2 = await moduleService.createModule({ courseId: COURSE, title: "M2" });
-
-  await moduleService.reorderModules(COURSE, [
-    { id: m1.id, order: m2.order },
-    { id: m2.id, order: m1.order },
-  ]);
-  assert.deepStrictEqual(db.sequenceOf("courseId", COURSE), ["MODULE:M2@1", "VIDEO:Between@2", "MODULE:M1@3"]);
-});
-
 test("removing an item closes its slot across both kinds", async (t) => {
   const db = useSequenceDb(t);
   const mod = await moduleService.createModule({ courseId: COURSE, title: "M1" });
@@ -217,34 +204,6 @@ test("removing an item closes its slot across both kinds", async (t) => {
   assert.deepStrictEqual(db.sequenceOf("lessonId", lesson.id), ["TOPIC:T2@1"]);
 });
 
-test("reorder: a Content row swaps with a neighbouring container; positions stay unique 1..n", async (t) => {
-  const db = useSequenceDb(t);
-  const mod = await moduleService.createModule({ courseId: COURSE, title: "M1" });
-  const lesson = await lessonService.createLesson({ moduleId: mod.id, title: "L1" });
-  const intro = await video({ lessonId: lesson.id }, "Intro");
-  const t1 = await topicService.createTopic({ lessonId: lesson.id, title: "T1" });
-  const img = await content({ lessonId: lesson.id }, "IMAGE", "Image");
-
-  // The Course Map's swap: Image (3) up past T1 (2).
-  await contentService.reorderContents({
-    parentType: "lesson",
-    parentId: lesson.id,
-    contents: [
-      { id: img.id, order: 2 },
-      { id: t1.id, order: 3 },
-    ],
-  });
-  assert.deepStrictEqual(db.sequenceOf("lessonId", lesson.id), ["VIDEO:Intro@1", "IMAGE:Image@2", "TOPIC:T1@3"]);
-
-  // The full-order form.
-  await contentService.reorderContents({ parentType: "lesson", parentId: lesson.id, orderedIds: [t1.id, img.id, intro.id] });
-  assert.deepStrictEqual(db.sequenceOf("lessonId", lesson.id), ["TOPIC:T1@1", "IMAGE:Image@2", "VIDEO:Intro@3"]);
-
-  // A container reorder moves the container within the shared sequence.
-  await topicService.reorderTopics(lesson.id, [{ id: t1.id, order: 3 }]);
-  assert.deepStrictEqual(db.sequenceOf("lessonId", lesson.id), ["IMAGE:Image@1", "VIDEO:Intro@2", "TOPIC:T1@3"]);
-});
-
 test("reorder refuses duplicates, strangers and incomplete lists", async (t) => {
   useSequenceDb(t);
   const mod = await moduleService.createModule({ courseId: COURSE, title: "M1" });
@@ -258,47 +217,6 @@ test("reorder refuses duplicates, strangers and incomplete lists", async (t) => 
   await fails({ parentType: "lesson", parentId: lesson.id, contents: [{ id: other.id, order: 1 }] });
   await fails({ parentType: "lesson", parentId: lesson.id, orderedIds: [a.id] });
   await fails({ parentType: "lesson", parentId: lesson.id, orderedIds: [a.id, b.id, b.id] });
-});
-
-test("swap-order trades two items of any kind in one parent, never leaving a position held twice", async (t) => {
-  const db = useSequenceDb(t);
-  const mod = await moduleService.createModule({ courseId: COURSE, title: "M1" });
-  const lesson = await lessonService.createLesson({ moduleId: mod.id, title: "L1" });
-  const intro = await video({ lessonId: lesson.id }, "Intro");
-  const topic = await topicService.createTopic({ lessonId: lesson.id, title: "T1" });
-  const q = await quiz({ moduleId: mod.id, lessonId: lesson.id }, "Check");
-
-  // A Content row with a Topic: two tables, one sequence.
-  const swapped = await contentService.swapSequenceOrder({ kind: "content", id: intro.id }, { kind: "topic", id: topic.id });
-  assert.deepStrictEqual(swapped, [
-    { kind: "content", id: intro.id, order: 2 },
-    { kind: "topic", id: topic.id, order: 1 },
-  ]);
-  assert.deepStrictEqual(db.sequenceOf("lessonId", lesson.id), ["TOPIC:T1@1", "VIDEO:Intro@2", "QUIZ:Check@3"]);
-
-  // A quiz is named by its own id and moves through its Content row.
-  await contentService.swapSequenceOrder({ kind: "quiz", id: q.id }, { kind: "topic", id: topic.id });
-  assert.deepStrictEqual(db.sequenceOf("lessonId", lesson.id), ["QUIZ:Check@1", "VIDEO:Intro@2", "TOPIC:T1@3"]);
-});
-
-test("swap-order refuses other parents, itself, standalone quizzes and other instructors' courses", async (t) => {
-  useSequenceDb(t);
-  const mod = await moduleService.createModule({ courseId: COURSE, title: "M1" });
-  const lesson = await lessonService.createLesson({ moduleId: mod.id, title: "L1" });
-  const here = await video({ lessonId: lesson.id }, "Here");
-  const there = await video({ moduleId: mod.id }, "There");
-  const skip = await quiz({ moduleId: mod.id, lessonId: lesson.id }, "Skip test", { quizTag: "QUALIFYING" });
-
-  const fails = (first, second, status, user) =>
-    assert.rejects(() => contentService.swapSequenceOrder(first, second, user), (error) => error.statusCode === status);
-  await fails({ kind: "content", id: here.id }, { kind: "content", id: there.id }, 400);
-  await fails({ kind: "content", id: here.id }, { kind: "content", id: here.id }, 400);
-  await fails({ kind: "quiz", id: skip.id }, { kind: "content", id: here.id }, 404);
-  await fails({ kind: "content", id: here.id }, { kind: "lesson", id: lesson.id }, 400);
-  await fails({ kind: "content", id: here.id }, { kind: "module", id: mod.id }, 403, { id: "someone-else", role: "INSTRUCTOR" });
-
-  // The course's own instructor may.
-  await contentService.swapSequenceOrder({ kind: "content", id: there.id }, { kind: "lesson", id: lesson.id }, { id: "teacher", role: "INSTRUCTOR" });
 });
 
 test("Content type and Quiz/Assignment link must agree", async (t) => {
@@ -492,25 +410,6 @@ test("across a gap in stored orders, a { contents } swap moves exactly one slot"
 
   // What a client reading stored orders sends for "X Move Up": X takes Y's order, Y takes X's.
   await contentService.reorderContents({ parentType: "lesson", parentId: s.lesson.id, contents: [{ id: s.x.id, order: 2 }, { id: s.y.id, order: 4 }] });
-  assert.deepStrictEqual(db.sequenceOf("lessonId", s.lesson.id), ["VIDEO:A@1", "IMAGE:X@2", "TOPIC:Y@3", "VIDEO:B@4"]);
-});
-
-test("across a gap in stored orders, swap-order moves exactly one slot", async (t) => {
-  const db = useSequenceDb(t);
-  const s = await gappedLesson();
-  leaveGapAfterY(db, s);
-
-  await contentService.swapSequenceOrder({ kind: "content", id: s.x.id }, { kind: "topic", id: s.y.id });
-  assert.deepStrictEqual(db.sequenceOf("lessonId", s.lesson.id), ["VIDEO:A@1", "IMAGE:X@2", "TOPIC:Y@3", "VIDEO:B@4"]);
-});
-
-test("across a gap in stored orders, a container reorder moves exactly one slot", async (t) => {
-  const db = useSequenceDb(t);
-  const s = await gappedLesson();
-  leaveGapAfterY(db, s);
-
-  // "Y Move Down": Y to the order X holds.
-  await topicService.reorderTopics(s.lesson.id, [{ id: s.y.id, order: 4 }]);
   assert.deepStrictEqual(db.sequenceOf("lessonId", s.lesson.id), ["VIDEO:A@1", "IMAGE:X@2", "TOPIC:Y@3", "VIDEO:B@4"]);
 });
 

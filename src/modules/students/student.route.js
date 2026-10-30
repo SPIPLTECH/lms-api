@@ -11,6 +11,15 @@ const { updateStudentSchema } = require("./student.validation");
 
 router.use("/state", studentStateRoutes);
 
+// The signed-in student finished or set aside the first-run onboarding
+// (StudentProfile.onboardingCompletedAt). Their own record only.
+router.post(
+  "/me/onboarding",
+  verifyToken,
+  checkRole(["STUDENT"]),
+  studentController.completeOnboarding
+);
+
 router.get(
   "/",
   verifyToken,

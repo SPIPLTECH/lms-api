@@ -1,5 +1,5 @@
 const prisma = require("../../config/database");
-const { recomputeCourseProgress } = require("../../utils/progressRollup");
+const { computeCourseProgressForStudents } = require("../../utils/progressRollup");
 
 // Thresholds behind each Student Directory status (see classifyStudent).
 const STATUS_RULES = { topPerformerAt: 80, failingFinalBelow: 50, behindClassBy: 15 };
@@ -177,25 +177,28 @@ const getStudents = async (user) => {
   const enrollmentsOf = (student) => student.enrollments.filter((e) => inScope(e.courseId));
 
   // Real progress per (student, course) from the same roll-up the course
-  // player uses — read-only (persist: false), so viewing the directory never
-  // writes progress rows or bumps anyone's "last accessed" time.
+  // player uses — read-only, so viewing the directory never writes progress
+  // rows or bumps anyone's "last accessed" time. Batched per course (a fixed
+  // handful of queries for all its students) and one course at a time: a
+  // roll-up per pair, all in parallel, exhausted the connection pool and
+  // failed this and every concurrent request with P2024.
   const pairs = students.flatMap((student) =>
     enrollmentsOf(student).map((e) => ({ studentId: student.id, courseId: e.courseId }))
   );
+  const studentsByCourse = new Map(); // courseId -> studentIds
+  for (const { studentId, courseId } of pairs) {
+    if (!studentsByCourse.has(courseId)) studentsByCourse.set(courseId, []);
+    studentsByCourse.get(courseId).push(studentId);
+  }
   const rollups = new Map(); // `${studentId}:${courseId}` -> roll-up with tree
-  await Promise.all(
-    pairs.map(async ({ studentId, courseId }) => {
-      try {
-        const rollup = await recomputeCourseProgress(studentId, courseId, null, {
-          includeTree: true,
-          persist: false,
-        });
-        rollups.set(`${studentId}:${courseId}`, rollup);
-      } catch {
-        // Course removed mid-request — that enrollment simply has no data.
-      }
-    })
-  );
+  for (const [courseId, studentIds] of studentsByCourse) {
+    try {
+      const byStudent = await computeCourseProgressForStudents(studentIds, courseId, { includeTree: true });
+      for (const [studentId, rollup] of byStudent) rollups.set(`${studentId}:${courseId}`, rollup);
+    } catch {
+      // Course removed mid-request — its enrollments simply have no data.
+    }
+  }
 
   // What each student has done per course — items, not whole modules. Used
   // for module-by-module breakdown, "started", assignment counts, AND (below)
@@ -381,11 +384,39 @@ const updateStudent = async (studentId, data) => {
   });
 };
 
+/**
+ * Records that the signed-in student finished or set aside the first-run
+ * onboarding. Idempotent: the first time is kept.
+ */
+const completeOnboarding = async (userId) => {
+  const profile = await prisma.studentProfile.findUnique({
+    where: { userId },
+    select: { id: true, onboardingCompletedAt: true }
+  });
+
+  if (!profile) {
+    const error = new Error("Student profile not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (profile.onboardingCompletedAt) {
+    return { onboardingCompletedAt: profile.onboardingCompletedAt };
+  }
+
+  return prisma.studentProfile.update({
+    where: { id: profile.id },
+    data: { onboardingCompletedAt: new Date() },
+    select: { onboardingCompletedAt: true }
+  });
+};
+
 module.exports = {
   classifyStudent,
   overallStatus,
   treeStats,
   getStudents,
   getStudentById,
-  updateStudent
+  updateStudent,
+  completeOnboarding
 };

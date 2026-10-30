@@ -14,7 +14,7 @@ const parseExcel = async (filePath) => {
         defval: "",
     });
 
-    return rows.map((row) => normalizeQuestion(row));
+    return rows.map((row) => normalizeQuestion(row, { answerByPosition: true }));
 };
 
 module.exports = {

@@ -32,8 +32,6 @@ const defaultClient = () => {
   return sharedClient;
 };
 
-const isGoogleSignInConfigured = () => configuredAudiences().length > 0;
-
 /**
  * @param {string} idToken
  * @param {{ client?: OAuth2Client, audiences?: string[] }} [options]
@@ -71,7 +69,5 @@ async function verifyGoogleIdToken(idToken, { client = null, audiences = null } 
 }
 
 module.exports = {
-  GOOGLE_ISSUER,
   verifyGoogleIdToken,
-  isGoogleSignInConfigured,
 };

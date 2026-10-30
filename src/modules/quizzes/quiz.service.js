@@ -17,6 +17,7 @@ const { QUALIFYING_TAG } = require("../../utils/qualification");
 // One rule for the attempt allowance, shared with nextAction.service so a
 // student is never told a limit that submit would not enforce.
 const { effectiveMaxAttempts, buildAttemptAllowance } = require("../../utils/attemptAllowance");
+const { choiceMatches } = require("../../utils/choiceAnswer");
 
 
 // Tracks classifyAndApply() calls dispatched below fire-and-forget (never
@@ -47,12 +48,25 @@ const flushPendingMisconceptionClassifications = async () => {
   return Promise.allSettled([...pendingMisconceptionClassifications]);
 };
 
-const evaluateAnswer = (answer, correctAnswer, questionType) => {
+// Questions answered by picking an option. The student's answer is an
+// option's own text, so it is compared with the key by choiceMatches
+// (utils/choiceAnswer.js): exactly, case included, because options can differ
+// only by case ("int float" / "int Float") or, in code, only by indentation.
+// `options` are the question's own, which stop the loose match for plain
+// options from confusing two of them. Typed answers (fill-in-the-blank and
+// the like) keep the case-insensitive comparison.
+const CHOICE_TYPES = new Set(["MCQ", "MCQ_SINGLE", "MCQ_MULTI", "MULTIPLE_CORRECT", "TRUE_FALSE"]);
+
+const evaluateAnswer = (answer, correctAnswer, questionType, options) => {
   if (answer === undefined || answer === null || answer === "") {
     return 0;
   }
 
   const type = String(questionType || '').toUpperCase();
+  const comparable = (value) => String(value).trim().toLowerCase();
+  const same = CHOICE_TYPES.has(type)
+    ? (selected, correct) => choiceMatches(selected, correct, options)
+    : (selected, correct) => comparable(selected) === comparable(correct);
 
   // 1. MATCH_PAIRS (Object mapping match)
   if (type === "MATCH_PAIRS" || (typeof correctAnswer === "object" && correctAnswer !== null && !Array.isArray(correctAnswer))) {
@@ -89,20 +103,16 @@ const evaluateAnswer = (answer, correctAnswer, questionType) => {
 
   // 3. MCQ_MULTI / MULTIPLE_CORRECT (Order-independent Array match)
   if (type === "MCQ_MULTI" || type === "MULTIPLE_CORRECT" || Array.isArray(correctAnswer) || Array.isArray(answer)) {
-    const selArr = Array.isArray(answer)
-      ? answer.map(s => String(s).trim().toLowerCase())
-      : [String(answer).trim().toLowerCase()];
-    const corrArr = Array.isArray(correctAnswer)
-      ? correctAnswer.map(c => String(c).trim().toLowerCase())
-      : [String(correctAnswer).trim().toLowerCase()];
+    const selArr = Array.isArray(answer) ? answer : [answer];
+    const corrArr = Array.isArray(correctAnswer) ? correctAnswer : [correctAnswer];
 
     if (corrArr.length === 0) return 0;
-    
+
     let correctCount = 0;
     let incorrectCount = 0;
 
     selArr.forEach((val) => {
-      if (corrArr.includes(val)) {
+      if (corrArr.some((correct) => same(val, correct))) {
         correctCount++;
       } else {
         incorrectCount++;
@@ -114,9 +124,7 @@ const evaluateAnswer = (answer, correctAnswer, questionType) => {
   }
 
   // 4. Primitive types (MCQ_SINGLE, MCQ, TRUE_FALSE, FILL_BLANK, SHORT_ANSWER, LONG_ANSWER)
-  const selStr = String(answer).trim().toLowerCase();
-  const corrStr = String(correctAnswer).trim().toLowerCase();
-  return selStr === corrStr ? 1 : 0;
+  return same(answer, correctAnswer) ? 1 : 0;
 };
 
 const normalizeOptionText = (value) => String(value).trim().toLowerCase();
@@ -145,7 +153,12 @@ const resolveMisconceptionTag = (options, studentAnswerRaw) => {
   if (!Array.isArray(options) || options.length === 0) return null;
 
   const normalizedAnswer = normalizeOptionText(studentAnswerRaw);
+  const exactAnswer = studentAnswerRaw.trim();
   const candidates = [];
+  // The option the student picked is the one with exactly their answer's
+  // text; case is only ignored when nothing matches exactly, so options
+  // that differ only by case ("int float" / "int Float") stay apart.
+  const exactCandidates = [];
 
   for (const entry of options) {
     let optText = null;
@@ -162,6 +175,9 @@ const resolveMisconceptionTag = (options, studentAnswerRaw) => {
 
     if (typeof optText !== "string" || !optText.trim()) continue;
 
+    if (optText.trim() === exactAnswer) {
+      exactCandidates.push({ optText, optTag });
+    }
     if (normalizeOptionText(optText) === normalizedAnswer) {
       candidates.push({ optText, optTag });
     }
@@ -169,9 +185,10 @@ const resolveMisconceptionTag = (options, studentAnswerRaw) => {
 
   // Zero matches (e.g. free-text answer) or duplicate option text
   // (ambiguous — never guess which one was actually selected).
-  if (candidates.length !== 1) return null;
+  const matches = exactCandidates.length > 0 ? exactCandidates : candidates;
+  if (matches.length !== 1) return null;
 
-  const tag = candidates[0].optTag;
+  const tag = matches[0].optTag;
   if (!isKnownMisconceptionType(tag)) return null; // no tag, or a stale/invalid one
 
   return tag;
@@ -206,6 +223,45 @@ const formatAnswerForDisplay = (value) => {
   }
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+};
+
+const shuffled = (list) => {
+  const copy = [...list];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+};
+
+/**
+ * Question.options as a student may see them wherever the answer key is
+ * withheld (a Final or Qualifying attempt, a retakeable result). Everything
+ * that points at the answer goes:
+ *
+ *  - each option object is reduced to its bare text — `isCorrect` names the
+ *    answer outright, a `misconceptionTag` or `explanation` only ever sits on
+ *    a wrong option, and an authored `id` (opt-1, opt-2…) gives the authored
+ *    order away;
+ *  - the order is shuffled — options are often authored correct-first,
+ *    ARRANGE_TOKENS options ARE the correct order, and MATCH_PAIRS' right
+ *    column is aligned with its left.
+ *
+ * Nothing downstream needs the stored order: the attempt UI shuffles again
+ * for display, and answers are submitted and graded as option text.
+ */
+const withheldOptions = (options) => {
+  if (Array.isArray(options)) {
+    return shuffled(options.map((opt) => (opt && typeof opt === "object" ? String(opt.optionText ?? opt.text ?? "") : opt)));
+  }
+  if (options && typeof options === "object") {
+    const safe = { ...options };
+    for (const column of ["right", "columnB"]) {
+      if (Array.isArray(safe[column])) safe[column] = shuffled(safe[column]);
+    }
+    return safe;
+  }
+  return options;
 };
 
 const calculateSubmissionResult = (quiz, answers = []) => {
@@ -250,7 +306,7 @@ const calculateSubmissionResult = (quiz, answers = []) => {
 
     {
       const qType = question.questionType || question.type;
-      const scoreMultiplier = evaluateAnswer(answer, question.correctAnswer, qType);
+      const scoreMultiplier = evaluateAnswer(answer, question.correctAnswer, qType, question.options);
 
       const questionMarks = questionMaxMarks;
       const negativeMarks = question.negativeMarks ? Number(question.negativeMarks) : 0;
@@ -425,13 +481,24 @@ const getQuizById = async (
   const currentAttemptNumber = attemptsUsed + 1;
   const hintsUnlocked = quiz.quizTag === QUALIFYING_TAG && currentAttemptNumber >= 2;
 
+  // A Self-Test is practice — unlimited attempts, done once attempted — and
+  // the student checks each answer as they go, seeing the correct one, why
+  // it is right and why each other option is wrong. So its answer key
+  // travels with the questions. Every other quiz keeps it back.
+  const revealAnswers = quiz.quizTag === "SELF_TEST";
+
   // Students attempting the quiz should not receive the answer key up front —
   // nor a hint they have not earned. Withheld here rather than hidden in the
   // client: a hint that reached the browser on a first attempt would be
   // readable in the network response however the UI chose to render it.
+  // That includes anything in the options that points at the answer — see
+  // withheldOptions.
   if (role === "STUDENT" || role === "GUEST") {
     allQuestions = allQuestions.map(({ correctAnswer, explanation, hint, ...rest }) => ({
       ...rest,
+      ...(revealAnswers
+        ? { correctAnswer, explanation }
+        : { options: withheldOptions(rest.options) }),
       // `hasHint` travels regardless, so the attempt UI can tell "there is no
       // hint for this question" from "you cannot see it yet" without being
       // told what the hint says.
@@ -456,6 +523,9 @@ const getQuizById = async (
   return {
     ...(isStudentOrGuest ? quizFields : quiz),
     questions: allQuestions,
+    // Tells the attempt UI the answer key above is there to be checked
+    // against, so it offers "Check Answer" — decided here, like hints.
+    ...(isStudentOrGuest && { revealAnswers }),
     ...(attemptStatus && {
       attemptStatus,
       // What the attempt UI needs to render the hint control, decided here.
@@ -1443,28 +1513,32 @@ const submitQuiz = async (
 /**
  * Whether this result may show the answer key.
  *
- * For every ordinary quiz: yes. The attempt is over and reviewing the answers
- * is the point of a result page.
+ * For a Self-Test: yes. It is practice, and its answer key was already
+ * shown answer by answer during the attempt.
  *
- * For a QUALIFYING test it is yes ONLY once the student can no longer change
- * the outcome — they passed, or they are out of attempts. While a retake is
- * still available, handing over the answer key would let a student fail
- * attempt 1, read every correct answer off their own result page, and score
- * 100% on attempt 2. That is qualification forged through a legitimate
- * endpoint: the lesson gets skipped without the knowledge the test exists to
- * establish, and it makes the attempt-2 hint rule pointless, since the
- * answers themselves were already handed over.
+ * For any graded quiz — a QUALIFYING test or a FINAL — it is yes ONLY once
+ * the student can no longer change the outcome: they passed, or they are out
+ * of attempts. While a retake is still available, handing over the answer key
+ * would let a student fail attempt 1, read every correct answer off their own
+ * result page, and score 100% on attempt 2. For a qualifying test that is
+ * qualification forged through a legitimate endpoint (and it makes the
+ * attempt-2 hint rule pointless); for a Final with more than one attempt it
+ * is a forged grade. A Final with the default single attempt is out of
+ * attempts the moment it is submitted, so its result shows the key as before.
  *
  * Their own answers, score and per-question correctness are still shown —
  * the student learns exactly what they got wrong, just not what was right.
  */
 const mayRevealAnswerKey = ({ quiz, passed, canAttempt }) => {
-  if (!quiz || quiz.quizTag !== QUALIFYING_TAG) return true;
+  if (!quiz || quiz.quizTag === "SELF_TEST") return true;
   return passed === true || canAttempt !== true;
 };
 
 /** Question fields that give the answer away, stripped as a set. */
-const stripAnswerKey = ({ correctAnswer, explanation, hint, ...rest }) => rest;
+const stripAnswerKey = ({ correctAnswer, explanation, hint, ...rest }) => ({
+  ...rest,
+  options: withheldOptions(rest.options)
+});
 
 /** One attempt as it appears in an attempt-history list. */
 const toAttemptSummary = (attempt) => ({

@@ -2,9 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { detectRelationships } = require("../services/relationshipDetector.service");
 const {
-  formatLessonTitle,
   deriveLessonTitle,
-  groupLessons
+  groupLessons,
 } = require("../services/lessonGrouping.service");
 
 test("1. Day 1 becomes one Lesson", () => {

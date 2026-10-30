@@ -66,10 +66,14 @@ const validateQuestion = (question) => {
             ? question.correctAnswer
             : [question.correctAnswer];
 
+        // Exact text, case included: options that differ only by case
+        // ("int float" / "int Float") are different answers. A key is
+        // normalized to its option's exact text before it gets here.
+        const comparable = (value) => String(value).trim().replace(/\s+/g, " ");
         answers.forEach(answer => {
             const ansStr = String(answer).trim();
             const optionMatches = question.options.some(
-                opt => optionCompareText(opt).trim().toLowerCase() === ansStr.toLowerCase()
+                opt => comparable(optionCompareText(opt)) === comparable(ansStr)
             );
 
             if (!optionMatches && isChoiceType) {

@@ -39,7 +39,7 @@ const parseHTML = async (filePath) => {
                 });
 
             if (Object.keys(data).length > 0) {
-                questions.push(normalizeQuestion(data));
+                questions.push(normalizeQuestion(data, { answerByPosition: true }));
             }
         });
 

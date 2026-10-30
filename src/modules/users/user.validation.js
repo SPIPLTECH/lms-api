@@ -44,16 +44,6 @@ const updateUserSchema = Joi.object({
   themeMode: Joi.string().max(50).optional(),
 });
 
-const updateUserStatusSchema = Joi.object({
-  status: Joi.string()
-    .valid("ACTIVE", "INACTIVE", "SUSPENDED", "BLOCKED")
-    .required()
-    .messages({
-      "any.only": "Status must be one of: ACTIVE, INACTIVE, SUSPENDED, BLOCKED",
-      "any.required": "Status is required",
-    }),
-});
-
 const updateUserRoleSchema = Joi.object({
   role: Joi.string()
     .valid("ADMIN", "INSTRUCTOR", "STUDENT", "GUEST")
@@ -66,6 +56,5 @@ const updateUserRoleSchema = Joi.object({
 
 module.exports = {
   updateUserSchema,
-  updateUserStatusSchema,
   updateUserRoleSchema,
 };

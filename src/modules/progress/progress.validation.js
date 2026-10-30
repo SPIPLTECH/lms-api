@@ -14,14 +14,6 @@ const completeContentSchema = Joi.object({
   "object.missing": "contentId is required"
 });
 
-const completeLessonSchema = Joi.object({
-  lessonId: Joi.string().required().messages({
-    "any.required": "lessonId is required",
-    "string.empty": "lessonId cannot be empty"
-  }),
-  completed: Joi.boolean().optional().default(true)
-});
-
 const markVisitedSchema = Joi.object({
   // SUBTOPIC/CONCEPT added: without them the two new container levels would be
   // rejected at the validation layer with a 400 before ever reaching the
@@ -53,6 +45,5 @@ const markVisitedSchema = Joi.object({
 
 module.exports = {
   completeContentSchema,
-  completeLessonSchema,
   markVisitedSchema
 };

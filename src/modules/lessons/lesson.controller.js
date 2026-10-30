@@ -41,27 +41,6 @@ const getLessonById = async (
   }
 };
 
-const getLessonTranscript = async (
-  req,
-  res,
-  next
-) => {
-  try {
-    const transcript =
-      await lessonService.getLessonTranscript(
-        req.params.lessonId,
-        req.user.role
-      );
-
-    res.json({
-      success: true,
-      data: transcript
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 const createLesson = async (
   req,
   res,
@@ -115,30 +94,10 @@ const deleteLesson = async (
   }
 };
 
-const reorderLessons = async (
-  req,
-  res,
-  next
-) => {
-  try {
-    const result =
-      await lessonService.reorderLessons(
-        req.body.moduleId,
-        req.body.lessons
-      );
-
-    res.json(result);
-  } catch (error) {
-    next(error);
-  }
-};
-
 module.exports = {
   getLessons,
   getLessonById,
-  getLessonTranscript,
   createLesson,
   updateLesson,
   deleteLesson,
-  reorderLessons
 };

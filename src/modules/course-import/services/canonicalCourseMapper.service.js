@@ -227,10 +227,6 @@ function buildCanonicalCourse({
 }
 
 module.exports = {
-  cleanText,
-  deriveCourseMetadata,
   mapCanonicalContents,
-  buildCanonicalTopics,
-  buildCanonicalResources,
   buildCanonicalCourse
 };

@@ -2,6 +2,7 @@ const dns = require("dns");
 dns.setDefaultResultOrder("ipv4first");
 
 const { PrismaClient } = require("@prisma/client");
+const { prismaTimingExtension } = require("../utils/requestTiming");
 
 /**
  * Which database this process talks to.
@@ -36,7 +37,7 @@ if (isTestRun && !testUrl) {
   );
 }
 
-const prisma = new PrismaClient({
+const baseClient = new PrismaClient({
   ...(testUrl ? { datasources: { db: { url: testUrl } } } : {}),
   // Creating/deleting any course item claims its slot in the parent's common
   // sequence (contentOrder.util) inside an interactive transaction: one
@@ -47,4 +48,12 @@ const prisma = new PrismaClient({
   transactionOptions: { maxWait: 10000, timeout: 30000 }
 });
 
-module.exports = prisma;
+// Every operation is timed against the request it runs for (utils/requestTiming:
+// the Server-Timing header and the [timing] log line). Outside a request it is
+// a pass-through.
+const prisma = baseClient.$extends(prismaTimingExtension);
+
+// PERF_TIMING=1 also counts Prisma operations per request (utils/perfTiming.js).
+const { PERF_TIMING_ENABLED, instrumentPrisma } = require("../utils/perfTiming");
+
+module.exports = PERF_TIMING_ENABLED ? instrumentPrisma(prisma) : prisma;

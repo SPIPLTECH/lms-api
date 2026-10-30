@@ -23,7 +23,10 @@ const parseFile = async (file) => {
             throw new Error("File did not contain valid questions.");
         }
 
-        // 1. Normalize each question first (so options/correctAnswer/types are formatted)
+        // 1. Normalize each question first (so options/correctAnswer/types are formatted).
+        // The file reader has already read the answer as option numbers and
+        // turned it into option text; read again by text, so an option whose
+        // text is a number is not mistaken for a position a second time.
         const normalizedRows = parsedQuestions.map(q => normalizeQuestion(q));
 
         // 2. Validate normalized questions
@@ -72,12 +75,26 @@ const TYPE_NAMES = {
 };
 
 const optionText = (opt) => (opt && typeof opt === "object" ? String(opt.optionText ?? opt.text ?? "") : String(opt));
+// Why an option is wrong, or "" — index-aligned with `options` below, which the
+// composer's editor keeps as plain strings.
+const optionExplanation = (opt) => (opt && typeof opt === "object" && opt.explanation ? String(opt.explanation) : "");
 
 const toPreviewItem = (row, index) => {
     // CSVs written by hand often call the column "type".
     const source = row && typeof row === "object" ? { ...row, questionType: row.questionType ?? row.type } : row;
+    // The file reader has already read the answer as option numbers (or
+    // letters) and turned it into option text; this pass reads by text, so
+    // an option whose text is a number is not taken as a position twice.
     const q = normalizeQuestion(source);
-    const problems = [...validateQuestion(q).errors];
+    const optionCount = Array.isArray(q.options) ? q.options.length : 0;
+    // A number that names no option gets said plainly, in the words the
+    // file used ("5" with 4 options), rather than as a missing option text.
+    const problems = validateQuestion(q).errors.map((error) => {
+        const missing = error.match(/^Correct answer "(\d+)" does not exist in options\.$/);
+        return missing
+            ? `Correct answer ${missing[1]} is not an option number — this question has ${optionCount} option${optionCount === 1 ? "" : "s"}.`
+            : error;
+    });
 
     const questionType = COMPOSER_TYPES[q.questionType] || null;
     if (!questionType) {
@@ -99,6 +116,7 @@ const toPreviewItem = (row, index) => {
         question: q.question,
         questionType: questionType || q.questionType,
         options: (q.options || []).map(optionText),
+        optionExplanations: (q.options || []).map(optionExplanation),
         correctAnswer,
         explanation: q.explanation || "",
         marks: q.marks || 1,

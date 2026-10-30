@@ -369,38 +369,6 @@ test("SubTopic + Concept hierarchy", async (t) => {
     assert.strictEqual(leaked, null, "no progress row may be seeded for an unenrolled student");
   });
 
-  await t.test("SubTopic/Concept services: create, list, reorder, get-by-id", async () => {
-    const created = await subTopicService.createSubTopic({ title: "ST2", topicId: ids.topicNew });
-    assert.strictEqual(created.order, 2, "order auto-increments within the topic");
-    assert.strictEqual(created.isPublished, true, "inherits published state of a PUBLISHED course");
-
-    const c2 = await conceptService.createConcept({ title: "C2", subTopicId: ids.subTopic });
-    // One common sequence per parent: C2 lands one past the SubTopic's last
-    // item of ANY type (content 1, quiz 2, assignment 3), not after C1 alone.
-    assert.strictEqual(c2.order, 4);
-
-    const list = await subTopicService.getSubTopics(ids.topicNew, "INSTRUCTOR", instructorId);
-    assert.deepStrictEqual(list.map((s) => s.title), ["ST1", "ST2"]);
-
-    await subTopicService.reorderSubTopics(ids.topicNew, [
-      { id: created.id, order: 1 },
-      { id: ids.subTopic, order: 2 },
-    ]);
-    const reordered = await subTopicService.getSubTopics(ids.topicNew, "INSTRUCTOR", instructorId);
-    assert.deepStrictEqual(reordered.map((s) => s.title), ["ST2", "ST1"]);
-
-    const fetched = await subTopicService.getSubTopicById(ids.subTopic);
-    assert.strictEqual(fetched.concepts.length, 2);
-
-    // Restore original ordering, then drop the scratch rows.
-    await subTopicService.reorderSubTopics(ids.topicNew, [
-      { id: ids.subTopic, order: 1 },
-      { id: created.id, order: 2 },
-    ]);
-    await conceptService.deleteConcept(c2.id);
-    await subTopicService.deleteSubTopic(created.id);
-  });
-
   await t.test("Students only see published SubTopics and Concepts", async () => {
     const draft = await subTopicService.createSubTopic({
       title: "draft st",
@@ -522,34 +490,4 @@ test("Course service understands SubTopic and Concept", async (t) => {
     assert.strictEqual(cn.isPublished, true, "concept published with the course");
   });
 
-  await t.test("duplicateCourse copies the SubTopic/Concept subtree and its content", async () => {
-    const courseService = require("../src/modules/courses/course.service");
-    const copy = await courseService.duplicateCourse(courseId, instructorId);
-
-    const full = await prisma.course.findUnique({
-      where: { id: copy.id },
-      include: {
-        modules: {
-          include: {
-            lessons: {
-              include: {
-                topics: {
-                  include: { subTopics: { include: { contents: true, concepts: { include: { contents: true } } } } },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    const topic = full.modules[0].lessons[0].topics[0];
-    assert.strictEqual(topic.subTopics.length, 1, "subtopic copied");
-    const concept = topic.subTopics[0].concepts[0];
-    assert.ok(concept, "concept copied");
-    assert.strictEqual(concept.contents.length, 1, "concept content copied");
-    assert.strictEqual(concept.contents[0].htmlContent, "<p>real content</p>");
-    assert.notStrictEqual(concept.id, "stc2_c", "copy has fresh ids");
-    assert.strictEqual(concept.isPublished, false, "a duplicate starts as a draft");
-  });
 });

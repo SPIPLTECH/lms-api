@@ -26,6 +26,5 @@ const passwordField = (label = "Password") =>
 
 module.exports = {
   PASSWORD_REGEX,
-  PASSWORD_POLICY_MESSAGE,
   passwordField,
 };

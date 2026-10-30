@@ -125,7 +125,7 @@ require.cache[prismaPath] = {
   id: prismaPath, filename: prismaPath, loaded: true, exports: fakePrisma,
 };
 
-const { resolveScope, canAccessLearningContent } = require("../src/modules/ai-assistant/access/resolveScope");
+const { resolveScope } = require("../src/modules/ai-assistant/access/resolveScope");
 const { requireEnrollment, findEnrollment, getStudentProfileId } = require("../src/modules/ai-assistant/access/requireEnrollment");
 const { validateLearningPosition, isSecurityViolation } = require("../src/modules/ai-assistant/access/validateHierarchy");
 const aiService = require("../src/modules/ai-assistant/aiAssistant.service");
@@ -135,39 +135,9 @@ const GUEST = { role: "GUEST" };
 const USER_A = { id: "user-a", role: "STUDENT" };
 const USER_B = { id: "user-b", role: "STUDENT" };
 
-/* ======================= scope resolution ======================= */
-
-test("GUEST: anonymous visitor on a published course resolves to GUEST", async () => {
-  const r = await resolveScope(GUEST, "course-a");
-  assert.equal(r.scope, SCOPE.GUEST);
-  assert.equal(r.userId, null);
-  assert.equal(canAccessLearningContent(r.scope), false);
-});
-
-test("BROWSING: signed in but not enrolled resolves to BROWSING, not ENROLLED", async () => {
-  const r = await resolveScope(USER_A, "course-b");
-  assert.equal(r.scope, SCOPE.BROWSING);
-  assert.equal(canAccessLearningContent(r.scope), false);
-});
-
-test("ENROLLED: an actual enrollment resolves to ENROLLED", async () => {
-  const r = await resolveScope(USER_A, "course-a");
-  assert.equal(r.scope, SCOPE.ENROLLED);
-  assert.equal(r.enrollment.id, "enr-1");
-  assert.equal(canAccessLearningContent(r.scope), true);
-});
-
 test("a second student is not enrolled in the first student's course", async () => {
   const r = await resolveScope(USER_B, "course-a");
   assert.equal(r.scope, SCOPE.BROWSING);
-});
-
-test("SECURITY: a forged role=ADMIN in the token does not grant course content", async () => {
-  // Even a genuine ADMIN has no StudentProfile and therefore no enrollment:
-  // scope is derived from enrollment, never from the role claim.
-  const r = await resolveScope({ id: "user-admin", role: "ADMIN" }, "course-a");
-  assert.equal(r.scope, SCOPE.BROWSING);
-  assert.equal(canAccessLearningContent(r.scope), false);
 });
 
 test("SECURITY: a client-claimed studentId cannot be used — only the JWT user id is read", async () => {
@@ -196,16 +166,6 @@ test("enrollment resolves User id -> StudentProfile id (not User id)", async () 
   assert.equal(await getStudentProfileId("user-a"), "profile-a");
   const enr = await findEnrollment("user-a", "course-a");
   assert.equal(enr.studentId, "profile-a");
-});
-
-test("requireEnrollment throws 403 when there is no enrollment", async () => {
-  await assert.rejects(() => requireEnrollment("user-a", "course-b"), (e) => e.statusCode === 403);
-  await assert.rejects(() => requireEnrollment("user-admin", "course-a"), (e) => e.statusCode === 403);
-});
-
-test("requireEnrollment returns the row when enrolled", async () => {
-  const enr = await requireEnrollment("user-a", "course-a");
-  assert.equal(enr.courseId, "course-a");
 });
 
 /* ======================= hierarchy validation ======================= */

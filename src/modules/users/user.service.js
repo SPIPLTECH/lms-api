@@ -1,19 +1,6 @@
 const prisma = require("../../config/database");
 const sessionService = require("../sessions/session.service");
 
-const getUsers = async () => {
-  return await prisma.user.findMany({
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true,
-      status: true,
-      createdAt: true
-    }
-  });
-};
-
 const getUserById = async (userId) => {
   const user = await prisma.user.findUnique({
     where: {
@@ -51,11 +38,6 @@ const updateUser = async (userId, data) => {
     },
     data
   });
-};
-
-// A non-ACTIVE status also revokes the user's session and playback lease.
-const updateUserStatus = async (userId, status) => {
-  return await sessionService.setAccountStatus(userId, status);
 };
 
 const updateUserRole = async (userId, role) => {
@@ -246,11 +228,9 @@ const updateMyProfile = async (userId, data) => {
 };
 
 module.exports = {
-  getUsers,
   getUserById,
   updateUser,
   deleteUser,
   updateUserRole,
-  updateUserStatus,
   updateMyProfile,
 };

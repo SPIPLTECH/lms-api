@@ -125,4 +125,4 @@ const otpEmail = ({ purpose, otp, expiresInMinutes, name }) => {
   return { subject: copy.subject, html };
 };
 
-module.exports = { otpEmail, escapeHtml };
+module.exports = { otpEmail, };

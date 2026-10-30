@@ -72,13 +72,4 @@ const checkFeedback = async (req, res, next) => {
   }
 };
 
-const adminConfirmFeedback = async (req, res, next) => {
-  try {
-    const data = await evaluatorService.adminConfirmFeedback(req.body.email, req.user.id);
-    res.json({ success: true, message: "Feedback confirmed.", data });
-  } catch (error) {
-    next(error);
-  }
-};
-
-module.exports = { registrationInfo, sendEmailCode, verifyEmailCode, register, status, checkFeedback, adminConfirmFeedback };
+module.exports = { registrationInfo, sendEmailCode, verifyEmailCode, register, status, checkFeedback, };

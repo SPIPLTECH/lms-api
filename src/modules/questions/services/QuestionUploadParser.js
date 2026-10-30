@@ -5,6 +5,7 @@
 
 const XLSX = require("xlsx");
 const prisma = require("../../../config/database");
+const { findChoiceIndex } = require("../../../utils/choiceAnswer");
 
 class QuestionUploadParser {
   /**
@@ -367,6 +368,10 @@ class QuestionUploadParser {
             id: `opt-${oIdx + 1}`,
             optionText: typeof opt === "object" ? String(opt.optionText || opt.text || "") : String(opt),
             isCorrect: typeof opt === "object" ? Boolean(opt.isCorrect) : false,
+            // Why this option is wrong, kept when the file supplies one.
+            ...(typeof opt === "object" && opt?.explanation && String(opt.explanation).trim()
+              ? { explanation: String(opt.explanation).trim() }
+              : {}),
           }));
         } else {
           const foundOpts = QuestionUploadParser.extractOptionCells(row);
@@ -379,30 +384,52 @@ class QuestionUploadParser {
         }
 
         // Correct Answer processing
-        const rawAns = row.correctAnswer || row["Correct Answer"] || row.correct_answer || row.answer;
+        // The first column that holds an answer — `||` skipped a numeric 0
+        // and nothing read a plain number at all.
+        const rawAns = [row.correctAnswer, row["Correct Answer"], row.correct_answer, row.answer].find(
+          (v) => v !== undefined && v !== null && v !== ""
+        );
         // An MCQ_MULTI row names every correct option in the one cell,
-        // pipe- or semicolon-separated ("string|number"). A single value is
-        // just a one-entry list, so MCQ_SINGLE is unaffected — before this
-        // split, a multi-answer cell matched no option at all and the row
-        // silently fell back to "first option is correct" below.
+        // pipe- or semicolon-separated ("1;3"). A single value is just a
+        // one-entry list, so MCQ_SINGLE is unaffected. A value that is a
+        // whole option's text stays whole, even when it contains ";"
+        // ("int Float = 4;").
+        const isWholeOption = (value) =>
+          optionsList.some((o) => o.optionText.trim().replace(/\s+/g, " ") === String(value).trim().replace(/\s+/g, " "));
         const rawAnsList = Array.isArray(rawAns)
           ? rawAns.map((a) => String(a).trim())
+          : typeof rawAns === "number"
+          ? [String(rawAns)]
           : typeof rawAns === "string"
-          ? rawAns.split(/[|;]/).map((a) => a.trim()).filter(Boolean)
+          ? isWholeOption(rawAns)
+            ? [rawAns.trim()]
+            : rawAns.split(/[|;]/).map((a) => a.trim()).filter(Boolean)
           : [];
 
+        // Each answer names one option: by its number or letter first ("2",
+        // "B", "option 2" — how a file gives it), else by its exact text,
+        // else by text with case ignored when only one option fits. Never by
+        // case-insensitive guesswork between options like "int float" and
+        // "int Float", which are different answers.
+        const unmatched = [];
         rawAnsList.forEach((ansStr) => {
-          // Check matching option text or index
-          optionsList.forEach((opt, oIdx) => {
-            if (
-              opt.optionText.toLowerCase() === ansStr.toLowerCase() ||
-              ansStr.toLowerCase() === `option${oIdx + 1}` ||
-              ansStr.toLowerCase() === `option ${oIdx + 1}` ||
-              ansStr === String(oIdx + 1)
-            ) {
-              opt.isCorrect = true;
-            }
-          });
+          const position = ansStr.match(/^(?:option\s*)?\(?([a-z]|\d+)\)?\.?$/i);
+          let index = -1;
+          if (position) {
+            const token = position[1];
+            index = /^\d+$/.test(token) ? Number(token) - 1 : token.toUpperCase().charCodeAt(0) - 65;
+            if (index >= optionsList.length) index = -1;
+          }
+          if (index < 0) {
+            // Not an option number: the option with exactly this text — which
+            // also covers a number too big to be a position ("201" among
+            // 201/200/404) — else the one option it matches ignoring case.
+            index = findChoiceIndex(ansStr, optionsList.map((o) => o.optionText), {
+              ignoreCase: !/^\d+$/.test(ansStr),
+            });
+          }
+          if (index >= 0) optionsList[index].isCorrect = true;
+          else unmatched.push(ansStr);
         });
 
         // Validate MCQ has at least 2 options
@@ -417,11 +444,19 @@ class QuestionUploadParser {
           continue;
         }
 
-        // Validate at least 1 correct answer exists
-        const hasCorrect = optionsList.some((opt) => opt.isCorrect);
-        if (!hasCorrect) {
-          // Default first option as correct if not specified to prevent hard failure, or log error
-          optionsList[0].isCorrect = true;
+        // An answer that names no option is reported, never replaced by a
+        // guess — making the first option "correct" silently stored a wrong key.
+        if (unmatched.length > 0 || !optionsList.some((opt) => opt.isCorrect)) {
+          report.failedCount++;
+          report.errors.push({
+            row: rowNum,
+            question: questionText.slice(0, 40),
+            code: "CORRECT_ANSWER_NOT_AN_OPTION",
+            message: rawAnsList.length === 0
+              ? "No correct answer given. Write the correct option's number (1 for the first option)."
+              : `Correct answer ${unmatched.map((a) => `"${a}"`).join(", ")} is not one of the ${optionsList.length} options. Write the option's number (1 for the first option).`,
+          });
+          continue;
         }
 
         // A single-choice row that named several answers keeps the first —

@@ -32,6 +32,4 @@ const verifyEmailCodeSchema = Joi.object({
   }),
 });
 
-const confirmFeedbackSchema = Joi.object({ email: emailField });
-
-module.exports = { registerEvaluatorSchema, sendEmailCodeSchema, verifyEmailCodeSchema, confirmFeedbackSchema };
+module.exports = { registerEvaluatorSchema, sendEmailCodeSchema, verifyEmailCodeSchema, };

@@ -97,29 +97,10 @@ const deleteModule = async (
   }
 };
 
-const reorderModules = async (
-  req,
-  res,
-  next
-) => {
-  try {
-    const result =
-      await moduleService.reorderModules(
-        req.body.courseId,
-        req.body.modules
-      );
-
-    res.json(result);
-  } catch (error) {
-    next(error);
-  }
-};
-
 module.exports = {
   getModules,
   getModuleById,
   createModule,
   updateModule,
   deleteModule,
-  reorderModules
 };

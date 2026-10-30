@@ -43,14 +43,8 @@ const updateCourseStatusSchema = Joi.object({
     })
 });
 
-const sendAnnouncementSchema = Joi.object({
-  title: Joi.string().required(),
-  message: Joi.string().required()
-});
-
 module.exports = {
   createCourseSchema,
   updateCourseSchema,
   updateCourseStatusSchema,
-  sendAnnouncementSchema
 };

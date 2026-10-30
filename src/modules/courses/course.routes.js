@@ -28,7 +28,6 @@ const {
   createCourseSchema,
   updateCourseSchema,
   updateCourseStatusSchema,
-  sendAnnouncementSchema
 } = require("./course.validation");
 // Public read — optionalToken allows unauthenticated (GUEST) access.
 // The service layer already filters: guests/students see only PUBLISHED courses;
@@ -46,11 +45,12 @@ router.get(
   controller.getCourses
 );
 
+// A staff URL's readable course key -> the course id (utils/courseKey.js).
 router.get(
-  "/stats/mine",
+  "/resolve/:key",
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
-  controller.getCourseStatusCounts
+  controller.resolveCourseKey
 );
 
 // Public read — optionalToken allows unauthenticated access for course preview.
@@ -109,15 +109,6 @@ router.post(
 );
 
 router.post(
-  "/:courseId/archive",
-  verifyToken,
-  checkRole([
-    "ADMIN"
-  ]),
-  controller.archiveCourse
-);
-
-router.post(
   "/:courseId/restore",
   verifyToken,
   checkRole([
@@ -148,32 +139,6 @@ router.delete(
   verifyCourseOwnership,
   controller.deleteCourse
 );
-router.post(
-  "/:courseId/duplicate",
-  verifyToken,
-  checkRole([
-    "ADMIN",
-    "INSTRUCTOR"
-  ]),
-  verifyCourseOwnership,
-  controller.duplicateCourse
-);
-
-router.get(
-  "/:courseId/students",
-  verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  verifyCourseOwnership,
-  controller.getCourseStudents
-);
-
-router.get(
-  "/:courseId/export",
-  verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  verifyCourseOwnership,
-  controller.exportCourse
-);
 
 router.patch(
   "/:courseId/view",
@@ -181,15 +146,6 @@ router.patch(
   checkRole(["INSTRUCTOR"]),
   verifyCourseOwnership,
   controller.trackCourseView
-);
-
-router.post(
-  "/:courseId/announcements",
-  verifyToken,
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  verifyCourseOwnership,
-  validate(sendAnnouncementSchema),
-  controller.sendAnnouncement
 );
 
 module.exports = router;

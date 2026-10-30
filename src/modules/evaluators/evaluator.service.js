@@ -232,25 +232,7 @@ const checkFeedback = async (userId) => {
   return { ...evaluatorSummary(updated), found: true };
 };
 
-/**
- * Fallback for when automatic verification can't work (feedback API
- * credentials not configured, or the evaluator used another email on the
- * form): an admin who has checked the submission on the feedback site's own
- * dashboard confirms it here.
- */
-const adminConfirmFeedback = async (email, adminUserId) => {
-  const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
-  if (!user) throw new ApiError(404, "No account with that email.", "USER_NOT_FOUND");
-  await readAccessOrThrow(user.id);
-  const updated = await markFeedbackComplete(user.id, {
-    completedAt: new Date(),
-    verifiedBy: `ADMIN:${adminUserId}`,
-  });
-  return evaluatorSummary(updated);
-};
-
 module.exports = {
-  evaluatorSummary,
   evaluatorSummaryForUser,
   registrationInfo,
   sendEmailCode,
@@ -258,5 +240,4 @@ module.exports = {
   registerEvaluator,
   getStatus,
   checkFeedback,
-  adminConfirmFeedback,
 };

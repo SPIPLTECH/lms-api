@@ -61,6 +61,8 @@ test("createQuery scoped to an item", async (t) => {
 
     assert.strictEqual(lessonLookedUp, "l1");
     assert.deepStrictEqual(created, {
+      courseId: "c1",
+      moduleId: null,
       lessonId: "l1",
       studentId: "s1",
       question: "Why?",

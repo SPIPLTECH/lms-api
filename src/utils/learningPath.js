@@ -150,37 +150,12 @@ const buildLearningPath = (
   });
 };
 
-/**
- * Whether the student may open one lesson/topic right now, and why not.
- */
-const resolveAccess = (path, { lessonId = null, topicId = null } = {}) => {
-  const targetId = topicId || lessonId;
-  if (!targetId) return { allowed: true, entry: null, reason: null };
-
-  const entry = path.find((p) => p.id === targetId);
-  // A node that isn't a gate node in this course (an id from elsewhere, or
-  // unpublished) is not something this function can vouch for; the caller's
-  // own existence/ownership checks still apply.
-  if (!entry) return { allowed: true, entry: null, reason: null };
-
-  if (!entry.locked) return { allowed: true, entry, reason: null };
-
-  return {
-    allowed: false,
-    entry,
-    reason: `Finish the earlier ${entry.kind === "TOPIC" ? "topics" : "lessons"} in this course before opening “${entry.title}”.`
-  };
-};
-
 /** The next thing the student should be doing, or null when nothing is left. */
 const resolveNextItem = (path) =>
   path.find((entry) => entry.status === PATH_STATUS.CURRENT) || null;
 
 module.exports = {
   PATH_STATUS,
-  flattenGateNodes,
-  isSettled,
   buildLearningPath,
-  resolveAccess,
   resolveNextItem
 };

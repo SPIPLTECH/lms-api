@@ -560,14 +560,6 @@ test("an unreachable or unconfigured feedback site is a 503, never a completion"
   assert.equal(db.access.get(id).feedbackCompletedAt, null);
 });
 
-test("admin confirmation records who confirmed it", async () => {
-  configure();
-  const { id } = makeUser();
-  const result = await evaluatorService.adminConfirmFeedback(db.users.get(id).email, "admin_1");
-  assert.equal(result.state, "ACTIVE");
-  assert.equal(db.access.get(id).feedbackVerifiedBy, "ADMIN:admin_1");
-});
-
 test("non-evaluators get a 404 from the evaluator endpoints and null in their profile", async () => {
   const { id } = makeUser({ evaluator: false });
   await assert.rejects(evaluatorService.getStatus(id), (error) => error.statusCode === 404);

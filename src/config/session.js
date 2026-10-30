@@ -12,7 +12,7 @@ const positiveNumber = (name, fallback) => {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 };
 
-const SESSION_IDLE_TIMEOUT_MS = positiveNumber("SESSION_IDLE_TIMEOUT_MINUTES", 30) * 60 * 1000;
+const SESSION_IDLE_TIMEOUT_MS = positiveNumber("SESSION_IDLE_TIMEOUT_MINUTES", 7 * 24 * 60) * 60 * 1000;
 const SESSION_ABSOLUTE_LIFETIME_MS = positiveNumber("SESSION_ABSOLUTE_LIFETIME_HOURS", 7 * 24) * 60 * 60 * 1000;
 
 // How stale `lastSeenAt` may get before a request writes it again. Without

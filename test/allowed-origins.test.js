@@ -127,6 +127,13 @@ test("keeps the origins the socket layer shipped with", () => {
     withEnv({ ALLOW_LAN_ORIGINS: "false" }, () => {
         assert.equal(isAllowedOrigin("http://localhost:3000"), true);
         assert.equal(isAllowedOrigin("https://lms-web-demo.vercel.app"), true);
+        assert.equal(isAllowedOrigin("https://otree-yzdp.onrender.com"), true);
+    });
+});
+
+test("strips trailing slash in FRONTEND_URL or CORS_ALLOWED_ORIGINS", () => {
+    withEnv({ FRONTEND_URL: "https://otree-yzdp.onrender.com/", ALLOW_LAN_ORIGINS: "false" }, () => {
+        assert.equal(isAllowedOrigin("https://otree-yzdp.onrender.com"), true);
     });
 });
 
