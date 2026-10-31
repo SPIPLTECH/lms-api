@@ -561,6 +561,29 @@ const getQuizzes = async (
   }));
 };
 
+// What a student's quiz start screen names as the quiz's place in the course.
+const QUIZ_PLACE_INCLUDE = {
+  course: { select: { title: true } },
+  module: { select: { title: true } },
+  lesson: { select: { title: true } },
+  topic: { select: { lesson: { select: { title: true } } } },
+  subTopic: { select: { topic: { select: { lesson: { select: { title: true } } } } } },
+  concept: { select: { subTopic: { select: { topic: { select: { lesson: { select: { title: true } } } } } } } },
+};
+
+/** The lesson a quiz sits in, or the module or course for one placed above a lesson. */
+const quizPlace = (quiz) => {
+  const lesson =
+    quiz.lesson ||
+    quiz.topic?.lesson ||
+    quiz.subTopic?.topic?.lesson ||
+    quiz.concept?.subTopic?.topic?.lesson;
+  if (lesson?.title) return { level: "Lesson", title: lesson.title };
+  if (quiz.module?.title) return { level: "Module", title: quiz.module.title };
+  if (quiz.course?.title) return { level: "Course", title: quiz.course.title };
+  return null;
+};
+
 const getQuizById = async (
   quizId,
   role,
@@ -574,7 +597,8 @@ const getQuizById = async (
       quizQuestions: {
         orderBy: { order: "asc" },
         include: { question: true }
-      }
+      },
+      ...(role === "STUDENT" || role === "GUEST" ? QUIZ_PLACE_INCLUDE : {})
     }
   });
 
@@ -659,12 +683,13 @@ const getQuizById = async (
   // No student-facing code reads it: the attempt UI uses `questions`, and the
   // instructor views that do read it (the composer, the course sidebar) are
   // unaffected and already prefer `questions` anyway.
-  const { quizQuestions, ...quizFields } = quiz;
+  const { quizQuestions, course, module, lesson, topic, subTopic, concept, ...quizFields } = quiz;
   const isStudentOrGuest = role === "STUDENT" || role === "GUEST";
 
   return {
     ...(isStudentOrGuest ? quizFields : quiz),
     questions: allQuestions,
+    ...(isStudentOrGuest && { place: quizPlace(quiz) }),
     // Tells the attempt UI the answer key above is there to be checked
     // against, so it offers "Check Answer" — decided here, like hints.
     ...(isStudentOrGuest && { revealAnswers }),
