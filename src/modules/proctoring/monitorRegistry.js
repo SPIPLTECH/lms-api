@@ -43,37 +43,42 @@ const monitors = new Map();
 const loading = new Map();
 const endedListeners = [];
 
-const newMonitor = (row) => ({
-  ...row,
-  policy: { ...DEFAULT_POLICY, ...(row.policy || {}) },
-  flags: Array.isArray(row.flags) ? row.flags : [],
-  // Recent frames, newest first. Clean ones stay on disk only about a minute.
-  frames: [],
-  // Events inside the correlation window.
-  events: [],
-  seenFrames: new Set(),
-  seenSeq: new Set(),
-  emittedRuns: new Map(),
-  notices: [],
-  lastSameActionAt: {},
-  lastWarningAt: null,
-  lastAlert: null,
-  lastKeptPeriodicAt: null,
-  violationUntil: null,
-  minClockOffsetMs: null,
-  lateRun: 0,
-  unanalysedRun: 0,
-  gapOpen: false,
-  // After a restart the gap clock starts over, rather than blaming the student for the restart.
-  gapGraceUntil: row.status === "IN_PROGRESS" ? new Date() : null,
-  baseline: undefined,
-  holdEvidence: row.isFlagged,
-  countersDirty: false,
-  flagsDirty: false,
-  ending: false,
-  pendingTermination: null,
-  ended: !OPEN.has(row.status),
-});
+const newMonitor = (row) => {
+  const policy = { ...DEFAULT_POLICY, ...(row.policy || {}) };
+  return {
+    ...row,
+    policy,
+    warningCount: Math.min(row.warningCount ?? 0, policy.maxWarnings),
+    flags: Array.isArray(row.flags) ? row.flags : [],
+    // Recent frames, newest first. Clean ones stay on disk only about a minute.
+    frames: [],
+    // Events inside the correlation window.
+    events: [],
+    seenFrames: new Set(),
+    seenSeq: new Set(),
+    emittedRuns: new Map(),
+    activeEpisodes: new Map(),
+    notices: [],
+    lastSameActionAt: {},
+    lastWarningAt: null,
+    lastAlert: null,
+    lastKeptPeriodicAt: null,
+    violationUntil: null,
+    minClockOffsetMs: null,
+    lateRun: 0,
+    unanalysedRun: 0,
+    gapOpen: false,
+    // After a restart the gap clock starts over, rather than blaming the student for the restart.
+    gapGraceUntil: row.status === "IN_PROGRESS" ? new Date() : null,
+    baseline: undefined,
+    holdEvidence: row.isFlagged,
+    countersDirty: false,
+    flagsDirty: false,
+    ending: false,
+    pendingTermination: null,
+    ended: !OPEN.has(row.status),
+  };
+};
 
 const peek = (attemptId) => monitors.get(attemptId) ?? null;
 

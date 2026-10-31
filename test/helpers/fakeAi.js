@@ -22,7 +22,10 @@ const SCENES = {
   TWO: { faces: [0.95, 0.9] },
   PHONE: { faces: [0.95], embedding: vector(0), objects: [{ label: "cell phone", score: 0.9, box }] },
   PHONE_MID: { faces: [0.95], embedding: vector(0), objects: [{ label: "cell phone", score: 0.65, box }] },
+  PHONE_BORDERLINE: { faces: [0.95], embedding: vector(0), objects: [{ label: "cell phone", score: 0.45, box }] },
   AWAY: { faces: [0.95], embedding: vector(0), pose: { yawDeg: 50, pitchDeg: 0, rollDeg: 0, reliable: true } },
+  AWAY_LOW_SCORE: { faces: [0.45], embedding: vector(0), pose: { yawDeg: 50, pitchDeg: 0, rollDeg: 0, reliable: true } },
+  AWAY_UNRELIABLE: { faces: [0.95], embedding: vector(0), pose: { yawDeg: 80, pitchDeg: 0, rollDeg: -85, reliable: false } },
 };
 
 function respond(tag, identityRequested) {

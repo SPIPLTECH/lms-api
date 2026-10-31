@@ -1,14 +1,14 @@
 /**
  * The monitoring rules as pure functions over an attempt's recent frames and events.
  * Ported from ProctorGuard (policy, temporal, correlation and auto-termination services),
- * with the database reads replaced by in-memory windows, and these owner changes:
- * only a sustained phone or a sustained second person ends an exam, everything else that
- * used to terminate flags instead, and the warning limit never ends an exam.
+ * with the database reads replaced by in-memory windows:
+ * a sustained phone, a sustained second person, or reaching the warning limit (when
+ * terminateOnWarningLimit is enabled, the default) ends an exam; every other rule flags for review.
  *
  * Results are signals for human review, never proof of misconduct.
  */
 
-const DEFAULT_POLICY = { maxWarnings: 3, cooldownSeconds: 5 };
+const DEFAULT_POLICY = { maxWarnings: 3, cooldownSeconds: 5, terminateOnWarningLimit: true };
 
 /** Server-derived severity; whatever a client claims is ignored. */
 function getTrustedEventSeverity(eventType) {
@@ -64,6 +64,8 @@ const CATEGORY_OF = {
   PROHIBITED_OBJECT_DETECTED: "aiSignals",
   VOICE_ACTIVITY_DETECTED: "aiSignals",
 };
+
+const isViolationEvent = (eventType) => Boolean(CATEGORY_OF[eventType]);
 
 /** Browser and camera violations of at least medium severity warn. Connection gaps and AI signals here do not. */
 function isWarningEligible(eventType) {
@@ -125,6 +127,7 @@ const AI_RULES = [
     eventType: "FACE_NOT_DETECTED",
     source: "ai-face-detection",
     threshold: (settings) => settings.faceAbsentConsecutive,
+    minSustainedSeconds: (settings) => settings.faceAbsentSustainedSeconds ?? 0,
     matches: (result) => result.classification === "NO_FACE",
     describe: () => ({ signalConfidence: null }),
   },
@@ -132,6 +135,7 @@ const AI_RULES = [
     eventType: "MULTIPLE_FACES_DETECTED",
     source: "ai-face-detection",
     threshold: (settings) => settings.faceMultipleConsecutive,
+    minSustainedSeconds: () => 0,
     matches: (result) => result.classification === "MULTIPLE_FACES",
     describe: (run) => ({
       maxFaces: Math.max(...run.map((result) => result.facesDetected ?? 0)),
@@ -143,6 +147,7 @@ const AI_RULES = [
     eventType: "HEAD_POSE_AWAY",
     source: "ai-head-pose",
     threshold: (settings) => settings.headPoseConsecutive,
+    minSustainedSeconds: (settings) => settings.headPoseSustainedSeconds ?? 0,
     matches: (result) => result.classification === "ONE_FACE" && result.headPose?.orientation === "AWAY",
     describe: (run) => {
       const yaws = run.map((result) => Math.abs(result.headPose?.yawDeg ?? 0));
@@ -153,7 +158,12 @@ const AI_RULES = [
   {
     eventType: "PROHIBITED_OBJECT_DETECTED",
     source: "ai-object-detection",
-    threshold: (settings) => settings.objectConsecutive,
+    threshold: (settings, details) => {
+      const confidence = details?.signalConfidence ?? 0;
+      const minWarn = settings.objectWarnMinConfidence ?? 0.6;
+      return confidence >= minWarn ? settings.objectConsecutive : Math.max(2, settings.objectConsecutive);
+    },
+    minSustainedSeconds: () => 0,
     matches: (result) => result.objects?.status === "OK" && result.objects.items.length > 0,
     describe: (run) => {
       const items = run.flatMap((result) => result.objects?.items ?? []);
@@ -164,6 +174,7 @@ const AI_RULES = [
     eventType: "IDENTITY_MISMATCH_DETECTED",
     source: "ai-identity",
     threshold: (settings) => settings.identityMismatchConsecutive,
+    minSustainedSeconds: () => 0,
     matches: (result) => result.classification === "ONE_FACE" && result.identity?.status === "MISMATCH",
     describe: (run) => {
       const best = Math.max(...run.map((result) => result.identity?.similarity ?? 0));
@@ -172,6 +183,13 @@ const AI_RULES = [
     },
   },
 ];
+
+/** Whether an active run satisfies both the consecutive-frame count and minimum sustained duration. */
+function ruleMet(rule, run, settings) {
+  const neededFrames = rule.threshold(settings, run.details);
+  const neededSeconds = rule.minSustainedSeconds ? rule.minSustainedSeconds(settings) : 0;
+  return run.consecutiveSnapshots >= neededFrames && run.sustainedSeconds >= neededSeconds;
+}
 
 /** The latest frame matches a rule, so a quick re-check is worthwhile. */
 const isSuspicious = (result) => result?.status === "OK" && AI_RULES.some((rule) => rule.matches(result));
@@ -327,7 +345,9 @@ module.exports = {
   getTrustedEventSeverity,
   isCorrelationInput,
   isSuspicious,
+  isViolationEvent,
   isWarningEligible,
   priorityOf,
+  ruleMet,
   summarise,
 };

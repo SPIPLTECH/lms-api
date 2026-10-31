@@ -55,6 +55,20 @@ def test_missing_keypoints_give_no_estimate_and_degenerate_eyes_are_unreliable()
     assert estimate_head_pose(face_from_pixels(same), W, H).reliable is False
 
 
+def test_extreme_roll_or_compressed_ears_or_tiny_face_is_marked_unreliable():
+    # A tilted hand-held webcam (> 45 deg roll) must not trigger false head-pose warnings.
+    tilted = estimate_head_pose(face_from_pixels(rotate(frontal(), 65)), W, H)
+    assert tilted is not None and tilted.reliable is False
+
+    # Degenerate ear span narrower than 0.75 * eye distance is geometrically unreliable.
+    compressed_ears = [(280, 240), (360, 240), (320, 276), (320, 300), (305, 250), (335, 250)]
+    assert estimate_head_pose(face_from_pixels(compressed_ears), W, H).reliable is False
+
+    # Distant background face with < 1.8% image-width eye distance is unreliable.
+    tiny = [(316, 240), (324, 240), (320, 244), (320, 248), (310, 241), (330, 241)]
+    assert estimate_head_pose(face_from_pixels(tiny), W, H).reliable is False
+
+
 # ---- real model, real photos (public domain / CC0; see tests/fixtures/README.md) ----
 
 DEFAULT_YAW_THRESHOLD = 35.0  # backend default AI_HEAD_POSE_YAW_DEG

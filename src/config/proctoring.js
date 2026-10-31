@@ -37,18 +37,25 @@ const DEFAULT_TERMINATING_RULES = ["CONFIRMED_PROHIBITED_OBJECT", "PERSISTENT_MU
 /** Monitoring thresholds, with ProctorGuard's defaults unless the owner decided otherwise. */
 const proctoringSettings = (env = process.env) => ({
   autoTerminate: boolOf(env, "AI_AUTO_TERMINATE_ENABLED", true),
+  terminateOnWarningLimit: boolOf(env, "PROCTORING_TERMINATE_ON_WARNING_LIMIT", true),
   terminatingRules: env.AI_TERMINATING_RULES
     ? env.AI_TERMINATING_RULES.split(",").map((rule) => rule.trim()).filter(Boolean)
     : DEFAULT_TERMINATING_RULES,
   minConfidence: intOf(env, "AI_AUTO_TERMINATE_MIN_CONFIDENCE", 0.8),
   objectMinConfidence: intOf(env, "AI_AUTO_TERMINATE_OBJECT_MIN_CONFIDENCE", 0.6),
+  objectWarnMinConfidence: intOf(env, "AI_OBJECT_WARN_MIN_CONFIDENCE", 0.6),
   persistSeconds: intOf(env, "AI_TERMINATE_PERSIST_SECONDS", 10),
   faceAbsentConsecutive: intOf(env, "AI_FACE_ABSENT_CONSECUTIVE", 2),
+  faceAbsentSustainedSeconds: intOf(env, "AI_FACE_ABSENT_SUSTAINED_SECONDS", 4),
   faceMultipleConsecutive: intOf(env, "AI_FACE_MULTIPLE_CONSECUTIVE", 1),
   objectConsecutive: intOf(env, "AI_OBJECT_CONSECUTIVE", 1),
   headPoseConsecutive: intOf(env, "AI_HEAD_POSE_CONSECUTIVE", 2),
+  headPoseSustainedSeconds: intOf(env, "AI_HEAD_POSE_SUSTAINED_SECONDS", 5),
+  headPoseMinFaceScore: intOf(env, "AI_HEAD_POSE_MIN_FACE_SCORE", 0.6),
   headPoseYawDeg: intOf(env, "AI_HEAD_POSE_YAW_DEG", 35),
   headPosePitchDeg: intOf(env, "AI_HEAD_POSE_PITCH_DEG", 0),
+  episodeClearFrames: Math.max(1, intOf(env, "AI_EPISODE_CLEAR_FRAMES", 2)),
+  episodeClearSeconds: intOf(env, "AI_EPISODE_CLEAR_SECONDS", 10),
   identityMatchThreshold: intOf(env, "AI_IDENTITY_MATCH_THRESHOLD", 0.363),
   identityMismatchConsecutive: intOf(env, "AI_IDENTITY_MISMATCH_CONSECUTIVE", 2),
   identityFlagConsecutive: intOf(env, "AI_IDENTITY_TERMINATE_CONSECUTIVE", 3),

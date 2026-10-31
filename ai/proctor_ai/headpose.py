@@ -25,6 +25,9 @@ from .detectors.base import FaceDetection
 NEUTRAL_PITCH_RATIO = 0.6
 PITCH_RATIO_SPAN = 0.4
 MIN_EYE_DISTANCE_PX = 6.0
+MIN_EYE_WIDTH_FRACTION = 0.018
+MIN_EAR_SPAN_EYE_RATIO = 0.75
+MAX_RELIABLE_ROLL_DEG = 45.0
 
 
 @dataclass(frozen=True)
@@ -76,5 +79,11 @@ def estimate_head_pose(face: FaceDetection, image_width: int, image_height: int)
     else:
         pitch = 0.0
 
-    reliable = eye_dist >= MIN_EYE_DISTANCE_PX and mouth_depth > 0 and abs(ear_span) > 1e-6
+    min_eye_dist = max(MIN_EYE_DISTANCE_PX, MIN_EYE_WIDTH_FRACTION * image_width)
+    reliable = (
+        eye_dist >= min_eye_dist
+        and mouth_depth > 0
+        and abs(ear_span) >= MIN_EAR_SPAN_EYE_RATIO * eye_dist
+        and abs(roll) <= MAX_RELIABLE_ROLL_DEG
+    )
     return HeadPose(round(yaw, 1), round(pitch, 1), round(roll, 1), reliable=reliable)

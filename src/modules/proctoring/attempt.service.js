@@ -10,6 +10,7 @@ const { isPlaybackHeldElsewhere } = require("../playback/playback.service");
 const { expireLeasesWhere } = require("../sessions/session.service");
 const quizService = require("../quizzes/quiz.service");
 const { APPEAL_WINDOW_MS, OPEN_STATUSES, canStillAppeal, studentOutcome } = require("./attemptStanding");
+const { DEFAULT_POLICY } = require("./rules");
 const { isAiHealthy } = require("./ai/health");
 const { assertAllowedBrowser, isAllowedBrowser } = require("./browserPolicy");
 const { consentWording } = require("./consent.config");
@@ -110,25 +111,30 @@ async function ownAttempt(user, attemptId, include = undefined) {
 }
 
 /** What the exam page needs about an attempt. Never confidence scores or AI notes. */
-const toView = (attempt, user, now = new Date()) => ({
-  attemptId: attempt.id,
-  quizId: attempt.quizId,
-  courseId: attempt.courseId,
-  status: attempt.status,
-  serverNow: now,
-  startedAt: attempt.startedAt,
-  deadlineAt: attempt.deadlineAt,
-  durationMinutes: attempt.durationMinutes,
-  identityMatching: attempt.identityMatching,
-  identityCheck: attempt.identityCheck,
-  identityRecheckRequired: attempt.identityRecheckPending,
-  microphoneStatus: attempt.microphoneStatus,
-  cameraReady: Boolean(attempt.cameraSeenAt),
-  captureIntervalSeconds: attempt.policy?.captureIntervalSeconds ?? captureIntervalSeconds(),
-  activeElsewhere: !isOnThisDevice(attempt, user),
-  endReason: attempt.endReason,
-  endedAt: attempt.endedAt,
-});
+const toView = (attempt, user, now = new Date()) => {
+  const maxWarnings = attempt.policy?.maxWarnings ?? DEFAULT_POLICY.maxWarnings;
+  return {
+    attemptId: attempt.id,
+    quizId: attempt.quizId,
+    courseId: attempt.courseId,
+    status: attempt.status,
+    serverNow: now,
+    startedAt: attempt.startedAt,
+    deadlineAt: attempt.deadlineAt,
+    durationMinutes: attempt.durationMinutes,
+    identityMatching: attempt.identityMatching,
+    identityCheck: attempt.identityCheck,
+    identityRecheckRequired: attempt.identityRecheckPending,
+    microphoneStatus: attempt.microphoneStatus,
+    cameraReady: Boolean(attempt.cameraSeenAt),
+    captureIntervalSeconds: attempt.policy?.captureIntervalSeconds ?? captureIntervalSeconds(),
+    warningCount: Math.min(attempt.warningCount ?? 0, maxWarnings),
+    maxWarnings,
+    activeElsewhere: !isOnThisDevice(attempt, user),
+    endReason: attempt.endReason,
+    endedAt: attempt.endedAt,
+  };
+};
 
 const withToken = (attempt, user) => ({ ...toView(attempt, user), monitoringToken: signMonitorToken(attempt) });
 
@@ -330,10 +336,10 @@ async function startAttempt(user, attemptId) {
 
 /** GET /attempts/:id: questions only while the exam is running on this device. */
 async function getAttempt(user, attemptId) {
-  let attempt = await ownAttempt(user, attemptId, { answers: { select: { questionId: true, answer: true, revision: true, state: true } } });
+  let attempt = await ownAttempt(user, attemptId, { answers: { select: { questionId: true, answer: true, revision: true, state: true, savedAt: true } } });
   if (isOverdue(attempt)) {
     await finalizeAttempt(attempt.id, { endReason: "TIME_EXPIRED" });
-    attempt = await ownAttempt(user, attemptId, { answers: { select: { questionId: true, answer: true, revision: true, state: true } } });
+    attempt = await ownAttempt(user, attemptId, { answers: { select: { questionId: true, answer: true, revision: true, state: true, savedAt: true } } });
   }
   const view = toView(attempt, user);
   if (attempt.status !== "IN_PROGRESS" || view.activeElsewhere || attempt.identityRecheckPending) return view;
@@ -441,10 +447,11 @@ async function getAttemptResult(user, attemptId) {
   });
   if (OPEN_STATUSES.includes(attempt.status)) throw new ApiError(409, "This exam has not ended.", "ATTEMPT_NOT_ENDED");
 
+  const maxWarnings = attempt.policy?.maxWarnings ?? DEFAULT_POLICY.maxWarnings;
   let warningNumber = 0;
   const violations = [];
   for (const event of attempt.events) {
-    if (event.warningIssued) warningNumber += 1;
+    if (event.warningIssued && warningNumber < maxWarnings) warningNumber += 1;
     const explanation = EVENT_EXPLANATIONS[event.eventType];
     if (!explanation) continue;
     const kept = evidenceFor(event, attempt.evidence);
@@ -454,7 +461,7 @@ async function getAttemptResult(user, attemptId) {
       severity: event.severity,
       explanation,
       timestamp: event.serverTimestamp,
-      warningNumber: event.warningIssued ? warningNumber : null,
+      warningNumber: event.warningIssued && warningNumber <= maxWarnings ? warningNumber : null,
       evidenceId: kept?.id ?? null,
       evidenceCapturedAt: kept?.receivedAt ?? null,
     });
@@ -462,6 +469,7 @@ async function getAttemptResult(user, attemptId) {
 
   const saved = new Map(attempt.answers.map((row) => [row.questionId, row.answer]));
   const scored = attempt.quizAttempt;
+  const violationCount = violations.filter((item) => item.eventType !== "AUTO_TERMINATION_ENFORCED").length;
   return {
     attemptId: attempt.id,
     quizId: attempt.quizId,
@@ -488,7 +496,9 @@ async function getAttemptResult(user, attemptId) {
           appealUntil: attempt.decidedAt ? new Date(attempt.decidedAt.getTime() + APPEAL_WINDOW_MS) : null,
         }
       : null,
-    warningCount: attempt.warningCount,
+    warningCount: Math.min(attempt.warningCount ?? 0, maxWarnings),
+    maxWarnings,
+    violationCount,
     identityCheck: attempt.identityCheck,
     identityMatching: attempt.identityMatching,
     microphoneStatus: attempt.microphoneStatus,

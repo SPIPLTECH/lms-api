@@ -37,6 +37,16 @@ def test_portraits_without_phones_report_nothing(phones, name):
     assert phones.detect(load_fixture(name)).objects == []
 
 
+def test_raising_object_threshold_blindly_causes_false_negatives_on_angled_phones():
+    # Controlled calibration guard: 0.40 catches all real phone fixtures without portrait false positives,
+    # whereas an aggressive jump (e.g. 0.75) drops real phone detections.
+    strict = make(threshold=0.75)
+    detected_at_040 = sum(1 for n in ("phone_hand_closeup.jpg", "phone_woman_holding.jpg", "phone_man_laptop.jpg") if make(0.4).detect(load_fixture(n)).objects)
+    detected_at_075 = sum(1 for n in ("phone_hand_closeup.jpg", "phone_woman_holding.jpg", "phone_man_laptop.jpg") if strict.detect(load_fixture(n)).objects)
+    assert detected_at_040 == 3
+    assert detected_at_075 < detected_at_040
+
+
 def test_only_configured_labels_are_reported():
     # The laptop in this photo scores ~0.41; it is reported only when asked for.
     assert {o.label for o in make(0.4).detect(load_fixture("phone_man_laptop.jpg")).objects} == {"cell phone"}

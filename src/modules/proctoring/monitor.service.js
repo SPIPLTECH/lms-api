@@ -21,6 +21,7 @@ const {
   isCorrelationInput,
   isSuspicious,
   isWarningEligible,
+  ruleMet,
 } = require("./rules");
 
 /**
@@ -197,7 +198,12 @@ async function evaluate(monitor, outcome = {}) {
   // theirs, so "persists for N frames or seconds" can actually be reached.
   const runs = activeRuns(monitor.frames);
   const live = monitor.events.map((event) => {
-    const run = runs.find((candidate) => candidate.eventType === event.eventType && candidate.runStartFrameId === event.metadata?.runStartFrameId);
+    const episode = monitor.activeEpisodes?.get(event.eventType);
+    const run = runs.find(
+      (candidate) =>
+        candidate.eventType === event.eventType &&
+        (candidate.runStartFrameId === event.metadata?.runStartFrameId || episode?.emittedEventId === event.id)
+    );
     return run ? { ...event, metadata: { ...event.metadata, ...run.details, consecutiveSnapshots: run.consecutiveSnapshots, sustainedSeconds: run.sustainedSeconds, evidenceIds: run.evidenceFrameIds } } : event;
   });
 
@@ -213,12 +219,43 @@ async function evaluate(monitor, outcome = {}) {
 }
 
 function issueWarning(monitor, now) {
+  const maxWarnings = monitor.policy.maxWarnings;
+  if (monitor.warningCount >= maxWarnings) return false;
   const cooldownMs = monitor.policy.cooldownSeconds * 1000;
   if (monitor.lastWarningAt && now.getTime() - monitor.lastWarningAt.getTime() < cooldownMs) return false;
   monitor.lastWarningAt = now;
-  monitor.warningCount += 1;
+  monitor.warningCount = Math.min(maxWarnings, monitor.warningCount + 1);
   monitor.countersDirty = true;
   return true;
+}
+
+function shouldTerminateOnWarningLimit(monitor, settings) {
+  if (!settings.autoTerminate) return false;
+  if (process.env.PROCTORING_TERMINATE_ON_WARNING_LIMIT !== undefined && process.env.PROCTORING_TERMINATE_ON_WARNING_LIMIT !== "") {
+    return settings.terminateOnWarningLimit;
+  }
+  if (typeof monitor.policy?.terminateOnWarningLimit === "boolean") {
+    return monitor.policy.terminateOnWarningLimit;
+  }
+  return settings.terminateOnWarningLimit;
+}
+
+function formatStudentWarning(baseMessage, count, max, willTerminate) {
+  const clamped = Math.min(count, max);
+  if (clamped >= max) {
+    return willTerminate
+      ? `Maximum proctoring warning limit reached (${max}/${max}): ${baseMessage} Your exam has been ended.`
+      : `Warning threshold reached (${max}/${max}): ${baseMessage} Your attempt has been flagged for review.`;
+  }
+  if (willTerminate && max >= 2 && clamped === max - 1) {
+    return `Proctoring Warning (${clamped}/${max} — Final Warning): ${baseMessage} One more warning will automatically end your exam.`;
+  }
+  return `Proctoring Warning (${clamped}/${max}): ${baseMessage}`;
+}
+
+function currentActiveConditions(monitor) {
+  if (!monitor.frames.length || monitor.frames[0]?.analysed !== true) return null;
+  return activeRuns(monitor.frames).map((run) => run.eventType);
 }
 
 /* ------------------------------ identity ------------------------------ */
@@ -391,15 +428,44 @@ function noteUnanalysed(monitor, frame, result, now) {
 
 async function applyRules(monitor, frame, outcome, settings) {
   const now = new Date();
-  const emitted = [];
+  for (const [eventType, episode] of [...monitor.activeEpisodes.entries()]) {
+    const rule = AI_RULES.find((candidate) => candidate.eventType === eventType);
+    const matched = Boolean(rule && frame.result?.status === "OK" && rule.matches(frame.result));
+    if (matched) {
+      episode.cleanAnalysedStreak = 0;
+      episode.lastMatchedAt = frame.receivedAt;
+    } else {
+      episode.cleanAnalysedStreak += 1;
+      const sinceMatchSeconds = (frame.receivedAt.getTime() - episode.lastMatchedAt.getTime()) / 1000;
+      if (episode.cleanAnalysedStreak >= settings.episodeClearFrames || sinceMatchSeconds >= settings.episodeClearSeconds) {
+        monitor.activeEpisodes.delete(eventType);
+      }
+    }
+  }
+
+  const maxWarnings = monitor.policy.maxWarnings;
+  const willTerminateOnLimit = shouldTerminateOnWarningLimit(monitor, settings);
+  let latestTriggerEvent = null;
+  let latestEvidenceIds = [];
+
   for (const run of activeRuns(monitor.frames)) {
     const rule = AI_RULES.find((candidate) => candidate.eventType === run.eventType);
-    if (run.consecutiveSnapshots < rule.threshold(settings)) continue;
+    if (!ruleMet(rule, run, settings)) continue;
+
+    for (const kept of framesWithin(monitor, run.evidenceFrameIds)) evidence.keepFrame(monitor, kept, "VIOLATION", now);
+
+    const existingEpisode = monitor.activeEpisodes.get(rule.eventType);
+    if (existingEpisode) {
+      existingEpisode.lastMatchedAt = frame.receivedAt;
+      existingEpisode.cleanAnalysedStreak = 0;
+      continue;
+    }
     if (monitor.emittedRuns.get(rule.eventType) === run.runStartFrameId) continue;
     monitor.emittedRuns.set(rule.eventType, run.runStartFrameId);
 
+    const atWarningLimitBefore = monitor.warningCount >= maxWarnings;
     const warningIssued = settings.studentWarnings && issueWarning(monitor, now);
-    recordEvent(
+    const event = recordEvent(
       monitor,
       {
         eventType: rule.eventType,
@@ -408,26 +474,52 @@ async function applyRules(monitor, frame, outcome, settings) {
           source: rule.source,
           runStartFrameId: run.runStartFrameId,
           consecutiveSnapshots: run.consecutiveSnapshots,
-          threshold: rule.threshold(settings),
+          threshold: rule.threshold(settings, run.details),
           sustainedSeconds: run.sustainedSeconds,
           evidenceIds: run.evidenceFrameIds,
           ...run.details,
+          ...(atWarningLimitBefore ? { postWarningLimit: true } : {}),
           studentMessage: STUDENT_MESSAGES[rule.eventType],
           note: "Automated signal for human review; not proof of misconduct.",
         },
       },
       now
     );
-    for (const kept of framesWithin(monitor, run.evidenceFrameIds)) evidence.keepFrame(monitor, kept, "VIOLATION", now);
-    emitted.push(rule.eventType);
+    monitor.activeEpisodes.set(rule.eventType, {
+      eventType: rule.eventType,
+      openedAt: now,
+      lastMatchedAt: frame.receivedAt,
+      cleanAnalysedStreak: 0,
+      emittedEventId: event.id,
+    });
+    latestTriggerEvent = event;
+    latestEvidenceIds = run.evidenceFrameIds;
     if (warningIssued) {
-      outcome.warnings.push({ message: STUDENT_MESSAGES[rule.eventType], currentWarnings: monitor.warningCount, maxWarnings: monitor.policy.maxWarnings });
+      outcome.warnings.push({
+        eventType: rule.eventType,
+        message: STUDENT_MESSAGES[rule.eventType],
+        currentWarnings: Math.min(monitor.warningCount, maxWarnings),
+        maxWarnings,
+        willTerminate: willTerminateOnLimit,
+      });
     }
   }
 
-  if (monitor.warningCount >= monitor.policy.maxWarnings) await raiseFlag(monitor, "WARNING_LIMIT_REACHED", { warnings: monitor.warningCount });
-
   await evaluate(monitor, outcome);
+
+  if (monitor.warningCount >= maxWarnings) {
+    await raiseFlag(monitor, "WARNING_LIMIT_REACHED", { warnings: monitor.warningCount, maxWarnings });
+    if (!outcome.terminated && willTerminateOnLimit) {
+      outcome.terminated =
+        (await terminate(monitor, {
+          rule: "WARNING_LIMIT_REACHED",
+          reason: `Maximum proctoring warning limit reached (${maxWarnings}/${maxWarnings}). Your exam has been ended.`,
+          sourceEventId: latestTriggerEvent?.id ?? null,
+          evidenceFrameIds: latestEvidenceIds,
+          metadata: { warnings: monitor.warningCount, maxWarnings },
+        })) || outcome.terminated;
+    }
+  }
 
   if (!outcome.terminated && isSuspicious(frame.result) && settings.recheckSeconds > 0) {
     outcome.recheckInMs = settings.recheckSeconds * 1000;
@@ -486,7 +578,8 @@ function studentNotice(outcome) {
   if (!last && !outcome.terminated && !outcome.recheckInMs) return null;
   return {
     warningIssued: Boolean(last),
-    message: last ? `Proctoring Warning (${last.currentWarnings}/${last.maxWarnings}): ${last.message}` : null,
+    eventType: last?.eventType ?? null,
+    message: last ? formatStudentWarning(last.message, last.currentWarnings, last.maxWarnings, last.willTerminate) : null,
     currentWarnings: last?.currentWarnings ?? null,
     maxWarnings: last?.maxWarnings ?? null,
     terminated: outcome.terminated,
@@ -606,7 +699,12 @@ async function ingestFrame(monitor, file, { type = "PERIODIC_SNAPSHOT", frameId,
   const outcome = waitForResult && settings.uploadWaitMs > 0 ? await wait(done, settings.uploadWaitMs) : undefined;
   settled = true;
   const notice = studentNotice(outcome) ?? monitor.notices.shift() ?? null;
-  return { ...base, ...(notice ? { proctoring: notice } : {}) };
+  const activeConditions = currentActiveConditions(monitor);
+  return {
+    ...base,
+    ...(activeConditions !== null ? { activeConditions } : {}),
+    ...(notice ? { proctoring: notice } : {}),
+  };
 }
 
 async function runIdentityJob(monitor, frame, job, settings, unavailable) {
@@ -627,9 +725,9 @@ async function runIdentityJob(monitor, frame, job, settings, unavailable) {
 
 const isSameActionKey = (eventType) => (eventType === "TAB_HIDDEN" || eventType === "WINDOW_BLUR" ? "FOCUS" : eventType);
 
-function warningMessage(eventType, count, max) {
-  if (count >= max) return `Warning threshold reached (${count}/${max}). Your attempt has been flagged for review.`;
-  return `Proctoring Warning (${count}/${max}): Unallowed activity detected (${eventType.replace(/_/g, " ")}). Please return to the exam.`;
+function warningMessage(eventType, count, max, willTerminate) {
+  const base = `Unallowed activity detected (${eventType.replace(/_/g, " ")}). Please return to the exam.`;
+  return formatStudentWarning(base, count, max, willTerminate);
 }
 
 /** POST /monitor/events: what the browser saw. Severity and AI signals belong to the server. */
@@ -638,7 +736,15 @@ async function ingestEvent(monitor, input) {
 
   const now = new Date();
   const settings = proctoringSettings();
-  const snapshot = (extra = {}) => ({ warningIssued: false, currentWarnings: monitor.warningCount, maxWarnings: monitor.policy.maxWarnings, terminated: false, ...extra });
+  const maxWarnings = monitor.policy.maxWarnings;
+  const willTerminateOnLimit = shouldTerminateOnWarningLimit(monitor, settings);
+  const snapshot = (extra = {}) => ({
+    warningIssued: false,
+    currentWarnings: Math.min(monitor.warningCount, maxWarnings),
+    maxWarnings,
+    terminated: false,
+    ...extra,
+  });
   const duplicate = () => ({ deduplicated: true, policyResult: snapshot(), nextIntervalSeconds: nextInterval() });
 
   if (input.seq !== undefined) {
@@ -659,21 +765,52 @@ async function ingestEvent(monitor, input) {
   const metadata = { ...(input.metadata || {}) };
   for (const name of SENSITIVE_METADATA) delete metadata[name];
 
-  const warningIssued = isWarningEligible(input.eventType) && issueWarning(monitor, now);
-  recordEvent(monitor, { eventType: input.eventType, warningIssued, seq: input.seq ?? null, clientTimestamp: input.clientTimestamp ? new Date(input.clientTimestamp) : null, metadata }, now);
+  const eligible = isWarningEligible(input.eventType);
+  const atWarningLimitBefore = monitor.warningCount >= maxWarnings;
+  const warningIssued = eligible && issueWarning(monitor, now);
+  const recorded = recordEvent(
+    monitor,
+    {
+      eventType: input.eventType,
+      warningIssued,
+      seq: input.seq ?? null,
+      clientTimestamp: input.clientTimestamp ? new Date(input.clientTimestamp) : null,
+      metadata: atWarningLimitBefore && eligible ? { ...metadata, postWarningLimit: true } : metadata,
+    },
+    now
+  );
 
   if (input.eventType === "CAMERA_INTERRUPTED" || input.eventType === "CAMERA_DENIED") await raiseFlag(monitor, "CAMERA_LOST", { eventType: input.eventType });
-  if (monitor.warningCount >= monitor.policy.maxWarnings) await raiseFlag(monitor, "WARNING_LIMIT_REACHED", { warnings: monitor.warningCount });
 
   const outcome = { terminated: false };
   if (isCorrelationInput(input.eventType)) await evaluate(monitor, outcome);
 
+  if (monitor.warningCount >= maxWarnings) {
+    await raiseFlag(monitor, "WARNING_LIMIT_REACHED", { warnings: monitor.warningCount, maxWarnings });
+    if (!outcome.terminated && willTerminateOnLimit) {
+      outcome.terminated =
+        (await terminate(monitor, {
+          rule: "WARNING_LIMIT_REACHED",
+          reason: `Maximum proctoring warning limit reached (${maxWarnings}/${maxWarnings}). Your exam has been ended.`,
+          sourceEventId: recorded.id,
+          evidenceFrameIds: [],
+          metadata: { warnings: monitor.warningCount, maxWarnings, triggerEventType: input.eventType },
+        })) || outcome.terminated;
+    }
+  }
+
+  const clampedWarnings = Math.min(monitor.warningCount, maxWarnings);
   return {
     deduplicated: false,
     policyResult: snapshot({
       warningIssued,
       terminated: outcome.terminated,
-      ...(warningIssued ? { message: warningMessage(input.eventType, monitor.warningCount, monitor.policy.maxWarnings) } : {}),
+      ...(warningIssued
+        ? {
+            eventType: input.eventType,
+            message: warningMessage(input.eventType, clampedWarnings, maxWarnings, willTerminateOnLimit),
+          }
+        : {}),
     }),
     nextIntervalSeconds: nextInterval(),
   };
@@ -691,12 +828,14 @@ async function heartbeat(monitor, { microphoneStatus } = {}) {
     await prisma.proctoredAttempt.update({ where: { id: monitor.id }, data: { microphoneStatus } });
   }
   const notice = monitor.notices.shift() ?? null;
+  const activeConditions = currentActiveConditions(monitor);
   return {
     status: monitor.status,
     serverNow: now,
     deadlineAt: monitor.deadlineAt,
     identityRecheckRequired: monitor.identityRecheckPending,
     nextIntervalSeconds: nextInterval(),
+    ...(activeConditions !== null ? { activeConditions } : {}),
     ...(notice ? { proctoring: notice } : {}),
   };
 }
@@ -713,7 +852,7 @@ const context = (monitor) => ({
   cameraReady: Boolean(monitor.cameraSeenAt),
   microphoneStatus: monitor.microphoneStatus,
   captureIntervalSeconds: nextInterval(),
-  warningCount: monitor.warningCount,
+  warningCount: Math.min(monitor.warningCount, monitor.policy.maxWarnings),
   maxWarnings: monitor.policy.maxWarnings,
 });
 

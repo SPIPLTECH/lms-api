@@ -4,7 +4,7 @@ const { AUDIT_EVENTS, recordAuditEvent } = require("../audit/audit.service");
 const notificationService = require("../notifications/notification.service");
 const { APPEAL_WINDOW_MS, OPEN_STATUSES, canStillAppeal } = require("./attemptStanding");
 const evidence = require("./evidence.service");
-const { calculateRisk } = require("./rules");
+const { DEFAULT_POLICY, calculateRisk, isViolationEvent } = require("./rules");
 
 /**
  * What happens after an exam needs a person: the review list, the decision, appeals and reminders.
@@ -59,6 +59,7 @@ async function listReviews(user, { state = "PENDING", courseId, page = 1, limit 
         decidedAt: true,
         endedAt: true,
         warningCount: true,
+        policy: true,
         isFlagged: true,
         flags: true,
         microphoneStatus: true,
@@ -85,7 +86,8 @@ async function listReviews(user, { state = "PENDING", courseId, page = 1, limit 
       decision: row.decision,
       decidedAt: row.decidedAt,
       endedAt: row.endedAt,
-      warningCount: row.warningCount,
+      warningCount: Math.min(row.warningCount ?? 0, row.policy?.maxWarnings ?? DEFAULT_POLICY.maxWarnings),
+      maxWarnings: row.policy?.maxWarnings ?? DEFAULT_POLICY.maxWarnings,
       flagReasons: (Array.isArray(row.flags) ? row.flags : []).map((flag) => flag.reason),
       microphoneStatus: row.microphoneStatus,
       quizTitle: row.quiz.title,
@@ -127,6 +129,9 @@ async function getReview(user, attemptId) {
   const consent = attempt.consentId
     ? await prisma.proctoringConsent.findUnique({ where: { id: attempt.consentId }, select: { wordingVersion: true, wordingHash: true, identityMatching: true, acceptedAt: true } })
     : null;
+  const policy = { ...DEFAULT_POLICY, ...(attempt.policy || {}) };
+  const clampedWarnings = Math.min(attempt.warningCount ?? 0, policy.maxWarnings);
+  const violationCount = attempt.events.filter((event) => isViolationEvent(event.eventType)).length;
   return {
     attempt: {
       id: attempt.id,
@@ -143,7 +148,9 @@ async function getReview(user, attemptId) {
       identityFailures: attempt.identityFailures,
       identityMatching: attempt.identityMatching,
       microphoneStatus: attempt.microphoneStatus,
-      warningCount: attempt.warningCount,
+      warningCount: clampedWarnings,
+      maxWarnings: policy.maxWarnings,
+      violationCount,
       isFlagged: attempt.isFlagged,
       flags: Array.isArray(attempt.flags) ? attempt.flags : [],
       framesReceived: attempt.framesReceived,
@@ -164,7 +171,7 @@ async function getReview(user, attemptId) {
     quiz: { id: attempt.quiz.id, title: attempt.quiz.title, quizTag: attempt.quiz.quizTag, passingScore: attempt.quiz.passingScore, courseTitle: attempt.quiz.course?.title ?? null },
     score: attempt.quizAttempt,
     consent,
-    risk: calculateRisk(attempt.events, attempt.warningCount),
+    risk: calculateRisk(attempt.events, clampedWarnings, policy),
     events: attempt.events.map((event) => ({ id: event.id, eventType: event.eventType, severity: event.severity, warningIssued: event.warningIssued, timestamp: event.serverTimestamp, metadata: event.metadata })),
     evidence: attempt.evidence.map(({ analysis, ...row }) => ({ ...row, analysis: analysisSummary(analysis) })),
     appeals: attempt.reviewRequests.map((request) => ({ id: request.id, round: request.round, reason: request.reason, createdAt: request.createdAt, dueAt: request.dueAt, decidedAt: request.decidedAt })),

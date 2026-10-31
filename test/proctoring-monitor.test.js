@@ -81,6 +81,8 @@ describe("exam monitoring", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_URL not
   before(async () => {
     process.env.PROCTORING_ENABLED = "true";
     process.env.AI_TERMINATE_PERSIST_SECONDS = "0";
+    process.env.AI_HEAD_POSE_SUSTAINED_SECONDS = "0";
+    process.env.AI_FACE_ABSENT_SUSTAINED_SECONDS = "0";
     process.env.AI_RECHECK_SECONDS = "2";
     ai = await startFakeAi();
     await h.start();
@@ -100,6 +102,7 @@ describe("exam monitoring", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_URL not
     ai.state.down = false;
     aiHealth.resetAiHealthCache();
     delete process.env.AI_IDENTITY_MATCHING;
+    delete process.env.PROCTORING_TERMINATE_ON_WARNING_LIMIT;
   });
 
   after(async () => {
@@ -392,21 +395,125 @@ describe("exam monitoring", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_URL not
       assert.ok((await events(attemptId, "AI_CORRELATED_ALERT")).length >= 1);
     });
 
-    test("the warning limit flags and never ends", async () => {
-      const { attemptId, token } = await inExam();
+    test("reaching the warning limit (3/3) auto-ends the exam by default, never exceeding maxWarnings", async () => {
+      const { quiz, student, attemptId, token } = await inExam({ attempts: 2 });
+      await call("PUT", `/proctoring/attempts/${attemptId}/answers/${quiz.quizQuestions[0].questionId}`, student, { answer: "right", clientRevision: 1 });
+
+      const nextViolation = async () => {
+        registry.peek(attemptId).lastWarningAt = null;
+        registry.peek(attemptId).lastSameActionAt = {};
+        return monitorCall("POST", "events", token, { eventType: "FULLSCREEN_EXIT" });
+      };
+
+      const w1 = await nextViolation();
+      assert.strictEqual(w1.data.policyResult.currentWarnings, 1);
+      assert.strictEqual(w1.data.policyResult.terminated, false);
+      assert.match(w1.data.policyResult.message, /\(1\/3\)/);
+
+      const w2 = await nextViolation();
+      assert.strictEqual(w2.data.policyResult.currentWarnings, 2);
+      assert.strictEqual(w2.data.policyResult.terminated, false);
+      assert.match(w2.data.policyResult.message, /2\/3 — Final Warning/);
+
+      const w3 = await nextViolation();
+      assert.strictEqual(w3.data.policyResult.currentWarnings, 3);
+      assert.strictEqual(w3.data.policyResult.maxWarnings, 3);
+      assert.strictEqual(w3.data.policyResult.terminated, true);
+      assert.match(w3.data.policyResult.message, /\(3\/3\)/);
+
+      await settle();
+      const attempt = await prisma.proctoredAttempt.findUnique({ where: { id: attemptId }, include: { quizAttempt: true } });
+      assert.strictEqual(attempt.status, "TERMINATED");
+      assert.strictEqual(attempt.terminationRule, "WARNING_LIMIT_REACHED");
+      assert.strictEqual(attempt.reviewState, "PENDING");
+      assert.strictEqual(attempt.warningCount, 3);
+      assert.strictEqual(attempt.quizAttempt.passed, false);
+      assert.strictEqual((await events(attemptId, "AUTO_TERMINATION_ENFORCED")).length, 1);
+
+      const afterEnd = await monitorCall("POST", "events", token, { eventType: "FULLSCREEN_EXIT" });
+      assert.strictEqual(afterEnd.status, 409);
+      assert.strictEqual(afterEnd.json.code, "ATTEMPT_ENDED");
+    });
+
+    test("when warning-limit termination is disabled, warningCount caps at 3/3 while further violations stay recorded", async () => {
+      process.env.PROCTORING_TERMINATE_ON_WARNING_LIMIT = "false";
+      const { student, attemptId, token } = await inExam();
       let last;
       for (let i = 0; i < 5; i += 1) {
         registry.peek(attemptId).lastWarningAt = null;
         registry.peek(attemptId).lastSameActionAt = {};
         last = await monitorCall("POST", "events", token, { eventType: "FULLSCREEN_EXIT" });
         assert.strictEqual(last.status, 200);
+        assert.ok(last.data.policyResult.currentWarnings <= 3, "never exceeds maxWarnings");
       }
-      assert.strictEqual(last.data.policyResult.currentWarnings, 5);
+      assert.strictEqual(last.data.policyResult.currentWarnings, 3);
+      assert.strictEqual(last.data.policyResult.warningIssued, false);
       assert.strictEqual(last.data.policyResult.terminated, false);
       await settle();
+      await monitor.flushCounters();
       const attempt = await row(attemptId);
       assert.strictEqual(attempt.status, "IN_PROGRESS");
+      assert.strictEqual(attempt.warningCount, 3);
       assert.ok((await flagReasons(attemptId)).includes("WARNING_LIMIT_REACHED"));
+      const recorded = await events(attemptId, "FULLSCREEN_EXIT");
+      assert.strictEqual(recorded.length, 5, "all 5 violations recorded for instructor review");
+      assert.deepStrictEqual(recorded.map((e) => e.warningIssued), [true, true, true, false, false]);
+      assert.strictEqual(recorded[3].metadata.postWarningLimit, true);
+      assert.strictEqual(recorded[4].metadata.postWarningLimit, true);
+
+      await call("POST", `/proctoring/attempts/${attemptId}/submit`, student);
+      await settle();
+      const result = await call("GET", `/proctoring/attempts/${attemptId}/result`, student);
+      assert.strictEqual(result.data.warningCount, 3);
+      assert.strictEqual(result.data.maxWarnings, 3);
+      assert.strictEqual(result.data.violationCount, 5);
+    });
+
+    test("episode coalescing prevents duplicate warnings on 1-frame flickers and resolves after 2 clean frames", async () => {
+      const { attemptId, token } = await inExam();
+      await upload(token, "AWAY");
+      const firstWarn = await upload(token, "AWAY");
+      assert.strictEqual(firstWarn.data.proctoring.warningIssued, true);
+      assert.strictEqual(firstWarn.data.proctoring.currentWarnings, 1);
+
+      // Single clean frame flicker does not close the episode.
+      await upload(token, "ONE");
+      registry.peek(attemptId).lastWarningAt = null;
+      await upload(token, "AWAY");
+      const sameEpisode = await upload(token, "AWAY");
+      assert.strictEqual(sameEpisode.data.proctoring?.warningIssued ?? false, false, "same continuous episode does not warn twice");
+
+      // Two consecutive clean frames resolve the episode; looking away again starts a new episode and warns (2/3).
+      await upload(token, "ONE");
+      const resolved = await upload(token, "ONE");
+      assert.deepStrictEqual(resolved.data.activeConditions, []);
+      assert.strictEqual(resolved.data.proctoring, undefined);
+
+      registry.peek(attemptId).lastWarningAt = null;
+      await upload(token, "AWAY");
+      const secondEpisode = await upload(token, "AWAY");
+      assert.strictEqual(secondEpisode.data.proctoring.warningIssued, true);
+      assert.strictEqual(secondEpisode.data.proctoring.currentWarnings, 2);
+      await settle();
+      assert.strictEqual((await events(attemptId, "HEAD_POSE_AWAY")).length, 2);
+    });
+
+    test("borderline phone confidence requires 2 consecutive frames, and unreliable/low-score head pose never warns", async () => {
+      const { attemptId, token } = await inExam();
+      for (const tag of ["AWAY_LOW_SCORE", "AWAY_LOW_SCORE", "AWAY_UNRELIABLE", "AWAY_UNRELIABLE"]) {
+        await upload(token, tag);
+      }
+      await settle();
+      assert.strictEqual((await events(attemptId, "HEAD_POSE_AWAY")).length, 0);
+
+      const firstBorderline = await upload(token, "PHONE_BORDERLINE");
+      assert.strictEqual(firstBorderline.data.proctoring.warningIssued, false);
+      assert.strictEqual(firstBorderline.data.proctoring.recheckInMs, 2000);
+      const secondBorderline = await upload(token, "PHONE_BORDERLINE");
+      assert.strictEqual(secondBorderline.data.proctoring.warningIssued, true);
+      assert.strictEqual(secondBorderline.data.proctoring.currentWarnings, 1);
+      await settle();
+      assert.strictEqual((await events(attemptId, "PROHIBITED_OBJECT_DETECTED")).length, 1);
     });
 
     test("the AI failing mid-exam: the exam goes on, frames are kept, and it is flagged", async () => {

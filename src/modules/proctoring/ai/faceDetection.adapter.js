@@ -17,8 +17,8 @@ const isAiConfigured = (env = process.env) => Boolean(env.AI_SERVICE_URL && env.
 
 const withoutTemplate = ({ embedding, ...rest }) => rest;
 
-function headPoseDirection(pose, settings) {
-  if (!pose.reliable) return "UNKNOWN";
+function headPoseDirection(pose, settings, scoreOk = true) {
+  if (!pose.reliable || !scoreOk) return "UNKNOWN";
   const yawAway = Math.abs(pose.yawDeg) > settings.headPoseYawDeg;
   const pitchAway = settings.headPosePitchDeg > 0 && Math.abs(pose.pitchDeg) > settings.headPosePitchDeg;
   if (!yawAway && !pitchAway) return "FORWARD";
@@ -28,8 +28,8 @@ function headPoseDirection(pose, settings) {
   return pose.pitchDeg > 0 ? "DOWN" : "UP";
 }
 
-function headPoseOrientation(pose, settings) {
-  if (!pose.reliable) return "UNKNOWN";
+function headPoseOrientation(pose, settings, scoreOk = true) {
+  if (!pose.reliable || !scoreOk) return "UNKNOWN";
   if (Math.abs(pose.yawDeg) > settings.headPoseYawDeg) return "AWAY";
   if (settings.headPosePitchDeg > 0 && Math.abs(pose.pitchDeg) > settings.headPosePitchDeg) return "AWAY";
   return "FORWARD";
@@ -120,7 +120,9 @@ async function analyzeImage(filePath, mimeType, { identity = false, env = proces
     return failure("ERROR", "INVALID_RESPONSE", "Analysis returned an invalid response; frame kept for manual review.");
   }
 
-  const pose = result.faces.count === 1 ? result.faces.items[0].headPose ?? null : null;
+  const primaryFace = result.faces.count === 1 ? result.faces.items[0] : null;
+  const pose = primaryFace?.headPose ?? null;
+  const poseScoreOk = primaryFace ? primaryFace.score >= settings.headPoseMinFaceScore : false;
   return {
     status: "OK",
     facesDetected: result.faces.count,
@@ -131,8 +133,8 @@ async function analyzeImage(filePath, mimeType, { identity = false, env = proces
     headPose: pose
       ? {
           ...pose,
-          orientation: headPoseOrientation(pose, settings),
-          direction: headPoseDirection(pose, settings),
+          orientation: headPoseOrientation(pose, settings, poseScoreOk),
+          direction: headPoseDirection(pose, settings, poseScoreOk),
           yawThresholdDeg: settings.headPoseYawDeg,
           pitchThresholdDeg: settings.headPosePitchDeg,
         }

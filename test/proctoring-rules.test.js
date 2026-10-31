@@ -8,12 +8,15 @@ const assert = require("node:assert");
 
 const { proctoringSettings } = require("../src/config/proctoring");
 const {
+  AI_RULES,
   activeRuns,
   calculateRisk,
   detectViolations,
   getTrustedEventSeverity,
+  isViolationEvent,
   isWarningEligible,
   priorityOf,
+  ruleMet,
   summarise,
 } = require("../src/modules/proctoring/rules");
 
@@ -131,6 +134,30 @@ describe("runs of frames", () => {
     assert.strictEqual(runs[0].eventType, "MULTIPLE_FACES_DETECTED");
     assert.strictEqual(runs[0].details.signalConfidence, 0.7, "the weakest second face");
   });
+
+  test("sustained-duration and confidence gates prevent 2-second recheck and borderline false positives", () => {
+    const findRule = (type) => AI_RULES.find((r) => r.eventType === type);
+    const away = ok({ headPose: { orientation: "AWAY", direction: "LEFT", yawDeg: 45, yawThresholdDeg: 35 } });
+    const none = ok({ classification: "NO_FACE", facesDetected: 0, faces: [] });
+    const borderlinePhone = ok({ objects: { status: "OK", items: [{ label: "cell phone", score: 0.45 }] } });
+
+    const briefAway = activeRuns([frame("f2", 2, away), frame("f1", 0, away)])[0];
+    assert.strictEqual(ruleMet(findRule("HEAD_POSE_AWAY"), briefAway, settings), false, "2s recheck alone does not warn");
+    const sustainedAway = activeRuns([frame("f2", 5, away), frame("f1", 0, away)])[0];
+    assert.strictEqual(ruleMet(findRule("HEAD_POSE_AWAY"), sustainedAway, settings), true, "5s sustained head turn warns");
+
+    const briefNone = activeRuns([frame("f2", 2, none), frame("f1", 0, none)])[0];
+    assert.strictEqual(ruleMet(findRule("FACE_NOT_DETECTED"), briefNone, settings), false);
+    const sustainedNone = activeRuns([frame("f2", 4, none), frame("f1", 0, none)])[0];
+    assert.strictEqual(ruleMet(findRule("FACE_NOT_DETECTED"), sustainedNone, settings), true);
+
+    const oneBorderline = activeRuns([frame("f1", 0, borderlinePhone)])[0];
+    assert.strictEqual(ruleMet(findRule("PROHIBITED_OBJECT_DETECTED"), oneBorderline, settings), false, "single 0.45 object waits for recheck");
+    const twoBorderline = activeRuns([frame("f2", 2, borderlinePhone), frame("f1", 0, borderlinePhone)])[0];
+    assert.strictEqual(ruleMet(findRule("PROHIBITED_OBJECT_DETECTED"), twoBorderline, settings), true);
+    const oneConfident = activeRuns([frame("f1", 0, phone)])[0];
+    assert.strictEqual(ruleMet(findRule("PROHIBITED_OBJECT_DETECTED"), oneConfident, settings), true);
+  });
 });
 
 describe("correlation", () => {
@@ -169,5 +196,9 @@ describe("warnings", () => {
     assert.strictEqual(risk.score, 40);
     assert.strictEqual(risk.level, "MEDIUM");
     assert.ok(risk.summary.includes("not proof"));
+    assert.strictEqual(isViolationEvent("FULLSCREEN_EXIT"), true);
+    assert.strictEqual(isViolationEvent("PROHIBITED_OBJECT_DETECTED"), true);
+    assert.strictEqual(isViolationEvent("TAB_VISIBLE"), false);
+    assert.strictEqual(isViolationEvent("AUTO_TERMINATION_ENFORCED"), false);
   });
 });
