@@ -1,6 +1,15 @@
 const prisma = require("../../config/database");
 const sessionService = require("../sessions/session.service");
 
+const toNullableString = (value) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed === "" ? null : trimmed;
+  }
+  return value;
+};
+
 const getUserById = async (userId) => {
   const user = await prisma.user.findUnique({
     where: {
@@ -17,7 +26,7 @@ const getUserById = async (userId) => {
   // under the studentProfile.collegeName column (see updateMyProfile) —
   // aliased here so it round-trips back to the frontend under the name it sent.
   if (user?.studentProfile) {
-    user.studentProfile.institution = user.studentProfile.collegeName;
+    user.studentProfile.institution = toNullableString(user.studentProfile.collegeName);
   }
 
   return user;
@@ -128,11 +137,15 @@ const updateMyProfile = async (userId, data) => {
   }
 
   // Fields allowed to be updated on the User model
+  // Normalize blank strings to null so unfilled optional fields stay null (and
+  // User.phoneNumber @unique never collides on "").
   const userUpdate = {};
-  if (data.name !== undefined) userUpdate.name = data.name;
-  if (data.phoneNumber !== undefined) userUpdate.phoneNumber = data.phoneNumber;
-  if (data.address !== undefined) userUpdate.address = data.address;
-  if (data.avatar !== undefined) userUpdate.avatar = data.avatar;
+  if (data.name !== undefined) {
+    userUpdate.name = typeof data.name === "string" ? data.name.trim() : data.name;
+  }
+  if (data.phoneNumber !== undefined) userUpdate.phoneNumber = toNullableString(data.phoneNumber);
+  if (data.address !== undefined) userUpdate.address = toNullableString(data.address);
+  if (data.avatar !== undefined) userUpdate.avatar = toNullableString(data.avatar);
 
   // Update User base fields
   if (Object.keys(userUpdate).length > 0) {
@@ -142,14 +155,18 @@ const updateMyProfile = async (userId, data) => {
   // Update role-specific profile fields
   if (user.role === "STUDENT" && user.studentProfile) {
     const profileUpdate = {};
-    if (data.education !== undefined) profileUpdate.education = data.education;
-    if (data.institution !== undefined) profileUpdate.collegeName = data.institution;
-    if (data.gender !== undefined) profileUpdate.gender = data.gender;
+    if (data.education !== undefined) profileUpdate.education = toNullableString(data.education);
+    if (data.institution !== undefined) {
+      profileUpdate.collegeName = toNullableString(data.institution);
+    } else if (data.collegeName !== undefined) {
+      profileUpdate.collegeName = toNullableString(data.collegeName);
+    }
+    if (data.gender !== undefined) profileUpdate.gender = toNullableString(data.gender);
     if (data.dateOfBirth !== undefined) {
       profileUpdate.dateOfBirth = data.dateOfBirth ? new Date(data.dateOfBirth) : null;
     }
-    if (data.guardianName !== undefined) profileUpdate.guardianName = data.guardianName;
-    if (data.phone !== undefined) profileUpdate.phone = data.phone;
+    if (data.guardianName !== undefined) profileUpdate.guardianName = toNullableString(data.guardianName);
+    if (data.phone !== undefined) profileUpdate.phone = toNullableString(data.phone);
     
     if (data.profileVisibility !== undefined) profileUpdate.profileVisibility = data.profileVisibility;
     if (data.focusTopics !== undefined) profileUpdate.focusTopics = data.focusTopics;
@@ -167,16 +184,15 @@ const updateMyProfile = async (userId, data) => {
     // AI Student Entry Phase fields (see schema.prisma's StudentProfile
     // extension) — same explicit whitelist as the fields above, never a
     // raw spread of req.body.
-    if (data.gender !== undefined) profileUpdate.gender = data.gender;
-    if (data.country !== undefined) profileUpdate.country = data.country;
-    if (data.state !== undefined) profileUpdate.state = data.state;
-    if (data.city !== undefined) profileUpdate.city = data.city;
-    if (data.highestQualification !== undefined) profileUpdate.highestQualification = data.highestQualification;
-    if (data.currentQualification !== undefined) profileUpdate.currentQualification = data.currentQualification;
-    if (data.collegeName !== undefined) profileUpdate.collegeName = data.collegeName;
-    if (data.branchOrStream !== undefined) profileUpdate.branchOrStream = data.branchOrStream;
+    if (data.country !== undefined) profileUpdate.country = toNullableString(data.country);
+    if (data.state !== undefined) profileUpdate.state = toNullableString(data.state);
+    if (data.city !== undefined) profileUpdate.city = toNullableString(data.city);
+    if (data.highestQualification !== undefined) profileUpdate.highestQualification = toNullableString(data.highestQualification);
+    if (data.currentQualification !== undefined) profileUpdate.currentQualification = toNullableString(data.currentQualification);
+    if (data.branchOrStream !== undefined) profileUpdate.branchOrStream = toNullableString(data.branchOrStream);
     if (data.graduationYear !== undefined) {
-      profileUpdate.graduationYear = data.graduationYear === null || data.graduationYear === "" ? null : parseInt(data.graduationYear, 10);
+      const rawYear = typeof data.graduationYear === "string" ? data.graduationYear.trim() : data.graduationYear;
+      profileUpdate.graduationYear = rawYear === null || rawYear === "" ? null : parseInt(rawYear, 10);
     }
     if (data.semester !== undefined) profileUpdate.semester = data.semester;
     if (data.cgpaOrPercentage !== undefined) {

@@ -641,13 +641,21 @@ const getProfile = async (userId) => {
       id: true,
       name: true,
       email: true,
+      phoneNumber: true,
+      address: true,
+      avatar: true,
       role: true,
+      status: true,
+      createdAt: true,
       studentProfile: {
         select: {
           id: true,
           phone: true,
           education: true,
+          collegeName: true,
+          graduationYear: true,
           guardianName: true,
+          gender: true,
           dateOfBirth: true,
         },
       },
@@ -661,6 +669,10 @@ const getProfile = async (userId) => {
   }
 
   if (user.studentProfile) {
+    const college = typeof user.studentProfile.collegeName === "string"
+      ? user.studentProfile.collegeName.trim() || null
+      : null;
+    user.studentProfile.institution = college;
     const onboardingCompletedAt = await studentOnboardingState(user.id);
     if (onboardingCompletedAt !== undefined) user.studentProfile.onboardingCompletedAt = onboardingCompletedAt;
   }
