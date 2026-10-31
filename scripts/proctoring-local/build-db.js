@@ -1,6 +1,6 @@
 /**
  * Builds the disposable local databases from an EMPTY state:
- *   1. the schema as it is on the base branch (`prisma db push` from a temp copy),
+ *   1. the schema as it was before proctoring (`prisma db push` from a temp copy),
  *   2. the partial indexes the existing SQL scripts add,
  *   3. every hand-written proctoring SQL file (scripts/proctoring/*.up.sql), in order,
  *   4. `prisma migrate diff` against the working schema, to prove the SQL matches it.
@@ -18,7 +18,8 @@ const local = readLocalEnv();
 const targets = [local.DATABASE_URL, local.TEST_DATABASE_URL];
 targets.forEach((url, i) => assertLocalDatabase(url, i ? "TEST_DATABASE_URL" : "DATABASE_URL"));
 
-const BASE_BRANCH = "pawan";
+// The last commit before any proctoring change: the schema the real database has today.
+const BASE_COMMIT = "3e45203";
 const EXISTING_SQL = [
   "add-auth-sessions-playback.sql",
   "auth-sessions-per-device.sql",
@@ -99,7 +100,7 @@ async function main() {
   const workDir = path.join(LOCAL_ROOT, "schema-work");
   fs.mkdirSync(workDir, { recursive: true });
   try {
-    const baseSchema = execFileSync("git", ["show", `${BASE_BRANCH}:prisma/schema.prisma`], { cwd: API_ROOT, encoding: "utf8", maxBuffer: 1 << 26 });
+    const baseSchema = execFileSync("git", ["show", `${BASE_COMMIT}:prisma/schema.prisma`], { cwd: API_ROOT, encoding: "utf8", maxBuffer: 1 << 26 });
     const baseSchemaPath = path.join(workDir, "schema.prisma");
     fs.writeFileSync(baseSchemaPath, baseSchema);
     let differences = 0;
