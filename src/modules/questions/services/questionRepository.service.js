@@ -5,6 +5,7 @@
 
 const prisma = require("../../../config/database");
 const QuestionUploadParser = require("./QuestionUploadParser");
+const quizLock = require("../../proctoring/quizLock.service");
 
 class QuestionRepositoryService {
   /**
@@ -356,6 +357,7 @@ class QuestionRepositoryService {
       error.statusCode = 403;
       throw error;
     }
+    await quizLock.assertQuestionUnlocked(id);
 
     const updateData = {};
     if (data.question !== undefined) updateData.question = data.question.trim();
@@ -419,6 +421,7 @@ class QuestionRepositoryService {
       error.statusCode = 403;
       throw error;
     }
+    await quizLock.assertQuestionUnlocked(id);
 
     // If question is used in quizzes, archive it instead of hard deleting to preserve quiz integrity
     if (existing._count.quizQuestions > 0) {
@@ -449,6 +452,7 @@ class QuestionRepositoryService {
       error.statusCode = 403;
       throw error;
     }
+    await quizLock.assertQuestionUnlocked(id);
 
     return await prisma.question.update({
       where: { id },

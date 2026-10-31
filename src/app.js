@@ -48,6 +48,7 @@ const stripResponseSecrets = require("./middleware/responseSecrets.middleware");
 const uploadsHandler = require("./middleware/uploads.middleware");
 const { redactLoggedUrl } = require("./utils/logRedaction");
 const evaluatorRoutes = require("./modules/evaluators/evaluator.routes");
+const proctoringRoutes = require("./modules/proctoring/proctoring.routes");
 const app = express();
 app.disable('etag');
 // Render terminates TLS at its proxy and forwards with X-Forwarded-For. Trust
@@ -214,6 +215,7 @@ app.use("/sessions", sessionRoutes);
 app.use("/playback", playbackRoutes);
 // Temporary evaluator accounts — registration, access status, feedback check.
 app.use("/evaluators", evaluatorRoutes);
+app.use("/proctoring", proctoringRoutes);
 app.use(
   "/learner-model",
   require("./modules/learner-model/learnerModel.routes")

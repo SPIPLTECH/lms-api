@@ -147,6 +147,7 @@ model StudentProfile {
   moduleProgresses      ModuleProgress[]
   quizProgresses        QuizProgress[]
   assignmentProgresses  AssignmentProgress[]
+  proctoredAttempts     ProctoredAttempt[]
   user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -648,6 +649,13 @@ model Quiz {
   quizQuestions    QuizQuestion[]
   content          Content?
 
+  // Proctoring checkbox (scripts/proctoring/001_proctoring.up.sql). Off for every
+  // existing and imported quiz. Who set it and when are recorded here and in AuditEvent.
+  proctoringEnabled Boolean            @default(false)
+  proctoringSetById String?
+  proctoringSetAt   DateTime?
+  proctoredAttempts ProctoredAttempt[]
+
   @@index([moduleId])
   @@index([topicId])
   @@index([subTopicId])
@@ -786,6 +794,7 @@ model QuizAttempt {
   quiz             Quiz              @relation(fields: [quizId], references: [id], onDelete: Cascade)
   student          StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
   questionAttempts QuestionAttempt[]
+  proctoredAttempt ProctoredAttempt?
 
   @@unique([studentId, quizId, attemptNumber])
   @@index([quizId])
@@ -1678,6 +1687,200 @@ model AuditEvent {
 
   @@index([userId, createdAt])
   @@index([eventType, createdAt])
+}
+
+// ─── Proctoring ───────────────────────────────────────────────────────────
+// Added by scripts/proctoring/001_proctoring.up.sql, which also holds the partial
+// unique index Prisma cannot express (one open attempt per student and quiz).
+// Used only for quizzes with Quiz.proctoringEnabled: other quizzes never touch these.
+
+/// Server-side state of one proctored exam, from readiness check to review.
+/// status: PREPARING, IN_PROGRESS, SUBMITTED, EXPIRED, TERMINATED, ABANDONED.
+/// reviewState: NONE, PENDING, DECIDED. decision: ACCEPT, VOID, RETAKE, UPHOLD.
+model ProctoredAttempt {
+  id                     String    @id @default(cuid())
+  quizId                 String
+  courseId               String
+  studentId              String?
+  userId                 String
+  status                 String    @default("PREPARING")
+  quizAttemptId          String?   @unique
+  policy                 Json
+  durationMinutes        Int
+  identityMatching       Boolean   @default(true)
+  consentId              String?
+  deviceId               String?
+  tokenVersion           Int       @default(1)
+  identityCheck          String    @default("PENDING")
+  identityNotes          String?
+  identityFailures       Int       @default(0)
+  identityRecheckPending Boolean   @default(false)
+  microphoneStatus       String    @default("UNKNOWN")
+  cameraSeenAt           DateTime?
+  startedAt              DateTime?
+  deadlineAt             DateTime?
+  endedAt                DateTime?
+  endReason              String?
+  terminatedAt           DateTime?
+  terminationRule        String?
+  terminationReason      String?
+  warningCount           Int       @default(0)
+  isFlagged              Boolean   @default(false)
+  flags                  Json      @default("[]")
+  framesReceived         Int       @default(0)
+  framesAnalysed         Int       @default(0)
+  framesSkipped          Int       @default(0)
+  lastHeartbeatAt        DateTime?
+  lastSnapshotAt         DateTime?
+  longestGapSeconds      Int?
+  reviewState            String    @default("NONE")
+  reviewReason           String?
+  reviewRound            Int       @default(0)
+  reviewDueAt            DateTime?
+  reminderSentAt         DateTime?
+  escalatedAt            DateTime?
+  decision               String?
+  decidedById            String?
+  decidedAt              DateTime?
+  decisionNote           String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  quiz           Quiz                        @relation(fields: [quizId], references: [id], onDelete: Restrict)
+  student        StudentProfile?             @relation(fields: [studentId], references: [id], onDelete: SetNull)
+  quizAttempt    QuizAttempt?                @relation(fields: [quizAttemptId], references: [id], onDelete: SetNull)
+  answers        ProctoredAnswer[]
+  events         ProctoringEvent[]
+  evidence       ProctoringEvidence[]
+  baseline       ProctoringIdentityBaseline?
+  retakeGrant    ProctoringRetakeGrant?
+  reviewRequests ProctoringReviewRequest[]
+
+  @@index([quizId])
+  @@index([courseId, reviewState])
+  @@index([studentId, status])
+  @@index([userId, status])
+  @@index([status, deadlineAt])
+  @@index([reviewState, reviewDueAt])
+}
+
+model ProctoredAnswer {
+  id         String   @id @default(cuid())
+  attemptId  String
+  questionId String
+  answer     Json?
+  revision   Int      @default(0)
+  state      Json?
+  savedAt    DateTime @default(now())
+
+  attempt ProctoredAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@unique([attemptId, questionId])
+}
+
+model ProctoringConsent {
+  id               String   @id @default(cuid())
+  userId           String
+  quizId           String
+  attemptId        String?
+  wordingVersion   String
+  wordingHash      String
+  identityMatching Boolean
+  acceptedAt       DateTime @default(now())
+
+  @@index([userId, quizId])
+}
+
+model ProctoringEvent {
+  id              String    @id @default(cuid())
+  attemptId       String
+  eventType       String
+  severity        String    @default("LOW")
+  warningIssued   Boolean   @default(false)
+  seq             Int?
+  clientTimestamp DateTime?
+  metadata        Json?
+  serverTimestamp DateTime  @default(now())
+
+  attempt ProctoredAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@unique([attemptId, seq])
+  @@index([attemptId, serverTimestamp])
+}
+
+/// Only frames that are kept. Clean detection frames never get a row.
+/// category: VIOLATION, PERIODIC, IDENTITY, UNANALYSED.
+/// storageState: LOCAL, COPYING, STORED, FAILED.
+model ProctoringEvidence {
+  id               String    @id @default(cuid())
+  attemptId        String
+  frameId          String
+  type             String
+  category         String
+  storageState     String    @default("LOCAL")
+  objectKey        String?
+  tempPath         String?
+  mimeType         String    @default("image/jpeg")
+  fileSize         Int       @default(0)
+  analysis         Json?
+  receivedAt       DateTime  @default(now())
+  clientCapturedAt DateTime?
+  late             Boolean   @default(false)
+  retainUntil      DateTime?
+  reviewHold       Boolean   @default(false)
+  copyAttempts     Int       @default(0)
+
+  attempt ProctoredAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@unique([attemptId, frameId])
+  @@index([attemptId, receivedAt])
+  @@index([retainUntil, reviewHold])
+  @@index([storageState])
+}
+
+/// Face template of the identity photo. Own table so no other query returns it by
+/// accident. Deleted when the attempt ends. Never sent to any client.
+model ProctoringIdentityBaseline {
+  id          String   @id @default(cuid())
+  attemptId   String   @unique
+  embedding   Bytes
+  modelName   String
+  modelSha256 String
+  capturedAt  DateTime
+  createdAt   DateTime @default(now())
+
+  attempt ProctoredAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+}
+
+model ProctoringRetakeGrant {
+  id              String    @id @default(cuid())
+  quizId          String
+  studentId       String
+  sourceAttemptId String    @unique
+  grantedById     String
+  usedAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  sourceAttempt ProctoredAttempt @relation(fields: [sourceAttemptId], references: [id], onDelete: Cascade)
+
+  @@index([quizId, studentId])
+}
+
+/// A student's appeal: at most one per decision (round).
+model ProctoringReviewRequest {
+  id             String    @id @default(cuid())
+  attemptId      String
+  round          Int
+  reason         String
+  dueAt          DateTime
+  reminderSentAt DateTime?
+  escalatedAt    DateTime?
+  decidedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  attempt ProctoredAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@unique([attemptId, round])
 }
 
 // ─── Assignment auto-evaluation ───────────────────────────────────────────

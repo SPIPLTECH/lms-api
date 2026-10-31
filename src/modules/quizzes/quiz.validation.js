@@ -30,6 +30,8 @@ const createQuizSchema = Joi.object({
   // learning sequence), e.g. the lesson composer's one-question blocks.
   // QUALIFYING quizzes are always standalone.
   inSequence: Joi.boolean().optional(),
+  // The proctoring checkbox. Its rules live in proctoring/quizLock.service.js.
+  proctoringEnabled: Joi.boolean().optional(),
   questions: Joi.array().optional(),
 });
 
@@ -48,6 +50,7 @@ const updateQuizSchema = Joi.object({
   isPublished: Joi.boolean().optional(),
   // Moves the quiz within its parent's learning sequence.
   order: Joi.number().integer().min(0).optional(),
+  proctoringEnabled: Joi.boolean().optional(),
   questions: Joi.array().optional(),
 });
 

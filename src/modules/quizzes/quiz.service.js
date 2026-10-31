@@ -17,6 +17,7 @@ const { QUALIFYING_TAG } = require("../../utils/qualification");
 // student is never told a limit that submit would not enforce.
 const { effectiveMaxAttempts, buildAttemptAllowance } = require("../../utils/attemptAllowance");
 const { choiceMatches } = require("../../utils/choiceAnswer");
+const quizLock = require("../proctoring/quizLock.service");
 
 
 // Tracks classifyAndApply() calls dispatched below fire-and-forget (never
@@ -663,6 +664,8 @@ const getQuizById = async (
 
   return {
     ...(isStudentOrGuest ? quizFields : quiz),
+    // Only for a proctored quiz, so other quizzes run no extra query.
+    ...(!isStudentOrGuest && quiz.proctoringEnabled && { proctoringLocked: await quizLock.isQuizLocked(quizId) }),
     questions: allQuestions,
     // Tells the attempt UI the answer key above is there to be checked
     // against, so it offers "Check Answer" — decided here, like hints.
@@ -884,10 +887,11 @@ const createQuiz = async (
 ) => {
   await validateQuizScope(data);
   assertQualifyingTargetPresent(data.quizTag, data);
+  const proctoringFields = quizLock.fieldsForCreate(data, userId);
 
   // `order` is the quiz's position in the learning sequence — its Content
   // row's order. Quiz.order is no longer written.
-  const { questions, order: requestedOrder = null, inSequence, ...quizData } = data;
+  const { questions, order: requestedOrder = null, inSequence, proctoringEnabled, ...quizData } = data;
 
   // The Quiz and its Content row are written in one transaction: a sequence
   // quiz can never exist without its place in the course, nor the place
@@ -902,11 +906,16 @@ const createQuiz = async (
         topicId: quizData.topicId || null,
         subTopicId: quizData.subTopicId || null,
         conceptId: quizData.conceptId || null,
+        ...proctoringFields,
       }
     });
 
     if (isSequenceQuiz(createdQuiz, { inSequence })) {
       await placeQuizInSequence(createdQuiz, requestedOrder, tx);
+    }
+
+    if (proctoringFields.proctoringEnabled) {
+      await quizLock.recordSettingChange(tx, { userId, quizId: createdQuiz.id, enabled: true });
     }
 
     return createdQuiz;
@@ -1000,7 +1009,7 @@ const updateQuiz = async (
 
   // `order` moves the quiz within the learning sequence (its Content row);
   // Quiz.order is no longer written.
-  const { questions, order: requestedOrder, ...quizData } = data;
+  const { questions, order: requestedOrder, proctoringEnabled, ...quizData } = data;
 
   // The tag may be changing in this very request, or may not be in the
   // payload at all -- either way the row's resulting tag is what governs
@@ -1020,11 +1029,23 @@ const updateQuiz = async (
   // retagging a QUALIFYING quiz to FINAL/SELF_TEST puts it back in, at the end
   // of its parent; a new title is the title its Content row shows.
   const updatedQuiz = await prisma.$transaction(async (tx) => {
+    // Runs before the tag's rules can quietly clear a time limit. No query at all
+    // for a quiz that is not proctored and is not being ticked.
+    const proctoringFields = await quizLock.resolveUpdate(tx, existing, {
+      proctoringEnabled,
+      quizData,
+      questionsSent: Array.isArray(questions),
+      userId,
+    });
+
     const row = await tx.quiz.update({
       where: {
         id: quizId
       },
-      data: applyTagAttemptRule(effectiveTag, applyTagTimerRule(effectiveTag, quizData), existing.attempts)
+      data: {
+        ...applyTagAttemptRule(effectiveTag, applyTagTimerRule(effectiveTag, quizData), existing.attempts),
+        ...proctoringFields,
+      }
     });
 
     const wrapper = await tx.content.findUnique({ where: { quizId } });

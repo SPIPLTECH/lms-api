@@ -2,6 +2,7 @@ const prisma = require("../../config/database");
 const importService = require("./question.import.service");
 const { normalizeQuestion } = require("../../utils/helpers/question.helper");
 const { validateQuestion, validateQuestions } = require("../../utils/helpers/questionValidator");
+const quizLock = require("../proctoring/quizLock.service");
 
 // =========================
 // Helper: Verify Quiz Exists
@@ -205,6 +206,7 @@ const attachQuestionsToQuiz = async (quizId, questionIds) => {
     if (!quizId || questionIds.length === 0) return;
 
     await verifyQuizExists(quizId);
+    await quizLock.assertQuizQuestionsUnlocked(quizId);
 
     const existingMax = await prisma.quizQuestion.aggregate({
         where: { quizId },
@@ -239,6 +241,8 @@ const attachQuestionsToQuiz = async (quizId, questionIds) => {
 // invisible to the person who just created it. Every insert here takes the
 // caller's id.
 const bulkCreateQuestions = async (questionsPayload, quizId = null, userId = null) => {
+    await quizLock.assertQuizQuestionsUnlocked(quizId);
+
     let rawQuestions = questionsPayload;
     if (questionsPayload && !Array.isArray(questionsPayload) && Array.isArray(questionsPayload.questions)) {
         rawQuestions = questionsPayload.questions;
@@ -328,6 +332,7 @@ const bulkCreateQuestions = async (questionsPayload, quizId = null, userId = nul
 // =========================
 const importQuestions = async (file, quizId = null, userId = null) => {
     const quiz = await verifyQuizExists(quizId);
+    await quizLock.assertQuizQuestionsUnlocked(quizId);
 
     const { questions, report } = await importService.parseFile(file, quizId);
 

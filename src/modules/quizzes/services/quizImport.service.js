@@ -4,6 +4,7 @@
  */
 
 const prisma = require("../../../config/database");
+const quizLock = require("../../proctoring/quizLock.service");
 
 class QuizImportService {
   /**
@@ -15,6 +16,7 @@ class QuizImportService {
   async importQuestionsToQuiz(quizId, questionIds = [], user = {}) {
     const quiz = await prisma.quiz.findUnique({ where: { id: quizId } });
     if (!quiz) throw new Error("Quiz not found.");
+    await quizLock.assertQuizQuestionsUnlocked(quizId);
 
     if (!Array.isArray(questionIds) || questionIds.length === 0) {
       throw new Error("No questions selected for import.");
@@ -82,6 +84,7 @@ class QuizImportService {
    * @param {string} questionId 
    */
   async removeQuestionFromQuiz(quizId, questionId) {
+    await quizLock.assertQuizQuestionsUnlocked(quizId);
     const link = await prisma.quizQuestion.findUnique({
       where: {
         quizId_questionId: { quizId, questionId },
@@ -108,6 +111,7 @@ class QuizImportService {
    */
   async reorderQuizQuestions(quizId, orderedQuestionIds = []) {
     if (!Array.isArray(orderedQuestionIds)) return;
+    await quizLock.assertQuizQuestionsUnlocked(quizId);
 
     await prisma.$transaction(
       orderedQuestionIds.map((qId, idx) =>
@@ -138,6 +142,7 @@ class QuizImportService {
     if (isNaN(marksNum) || marksNum <= 0) {
       throw new Error("Marks must be a positive integer.");
     }
+    await quizLock.assertQuizQuestionsUnlocked(quizId);
 
     return await prisma.quizQuestion.update({
       where: {

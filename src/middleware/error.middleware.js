@@ -16,8 +16,19 @@ const isInternalError = (err) =>
     err.isAxiosError === true ||
     RUNTIME_ERRORS.some((type) => err instanceof type));
 
+// ProctoredAttempt.quizId is ON DELETE RESTRICT, so every path that deletes a quiz
+// (the quiz, its content row, or a parent) lands here once a student has started it.
+const isProctoredQuizDelete = (err) =>
+  err.code === "P2003" && /ProctoredAttempt/.test(String(err.meta?.constraint ?? err.meta?.field_name ?? err.message));
+
 const errorHandler = (err, req, res, next) => {
   console.error(err);
+
+  if (isProctoredQuizDelete(err)) {
+    const code = "PROCTORED_QUIZ_HAS_ATTEMPTS";
+    const message = "This quiz is proctored and a student has started it, so it cannot be deleted.";
+    return res.status(409).json({ success: false, message, code, error: { code, message, requestId: req.requestId } });
+  }
 
   const statusCode = err.statusCode || err.status || 500;
 
