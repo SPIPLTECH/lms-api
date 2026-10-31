@@ -18,7 +18,7 @@ const { QUALIFYING_TAG } = require("../../utils/qualification");
 const { effectiveMaxAttempts, buildAttemptAllowance } = require("../../utils/attemptAllowance");
 const { choiceMatches } = require("../../utils/choiceAnswer");
 const quizLock = require("../proctoring/quizLock.service");
-const { resultStanding } = require("../proctoring/attemptStanding");
+const { proctoredResultLabel, resultStanding } = require("../proctoring/attemptStanding");
 const ApiError = require("../../utils/ApiError");
 
 
@@ -1876,6 +1876,8 @@ const getQuizResult = async (studentId, quizId, attemptId = null) => {
     // test the student can still retake. The review UI reads this instead of
     // inferring it, so it never renders an answer column that isn't there.
     answerKeyRevealed: revealAnswerKey,
+    // Only on a proctored quiz: how this attempt ended, for the result screen to say so.
+    ...(proctoring && { proctoring: await proctoredResultLabel(selected.id) }),
     attempts: history.map(toAttemptSummary),
     ...allowance,
     // The raw junction relation carries the UNSANITIZED question, so it would

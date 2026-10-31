@@ -68,4 +68,18 @@ const snapshotFieldsSchema = Joi.object({
   clientCapturedAt: Joi.string().isoDate().optional(),
 });
 
-module.exports = { createAttemptSchema, heartbeatSchema, monitorEventSchema, saveAnswerSchema, snapshotFieldsSchema };
+const decisionSchema = Joi.object({
+  decision: Joi.string().valid("UPHOLD", "RETAKE", "ACCEPT", "VOID").required(),
+  // Anything but an Accept changes a student's outcome, so it needs a reason on record.
+  note: Joi.when("decision", {
+    is: "ACCEPT",
+    then: Joi.string().trim().max(2000).allow("", null),
+    otherwise: Joi.string().trim().min(5).max(2000).required(),
+  }),
+});
+
+const appealSchema = Joi.object({ reason: Joi.string().trim().min(5).max(2000).required() });
+
+const deleteEvidenceSchema = Joi.object({ reason: Joi.string().trim().min(5).max(500).required() });
+
+module.exports = { appealSchema, createAttemptSchema, decisionSchema, deleteEvidenceSchema, heartbeatSchema, monitorEventSchema, saveAnswerSchema, snapshotFieldsSchema };

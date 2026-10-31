@@ -9,13 +9,14 @@ const { AUDIT_EVENTS, recordAuditEvent } = require("../audit/audit.service");
 const { isPlaybackHeldElsewhere } = require("../playback/playback.service");
 const { expireLeasesWhere } = require("../sessions/session.service");
 const quizService = require("../quizzes/quiz.service");
-const { OPEN_STATUSES } = require("./attemptStanding");
+const { APPEAL_WINDOW_MS, OPEN_STATUSES, canStillAppeal, studentOutcome } = require("./attemptStanding");
 const { isAiHealthy } = require("./ai/health");
 const { assertAllowedBrowser, isAllowedBrowser } = require("./browserPolicy");
 const { consentWording } = require("./consent.config");
 const { holdAttemptEvidence, isEvidenceStoreReady } = require("./evidence.service");
 const registry = require("./monitorRegistry");
 const { isTokenSecretConfigured, signMonitorToken } = require("./monitorToken");
+const { notifyReviewWaiting } = require("./review.service");
 
 /**
  * Server-side state of a proctored exam: reserve, ready, start, save, close.
@@ -414,12 +415,6 @@ const EVENT_EXPLANATIONS = {
 };
 const EVIDENCE_NEARBY_MS = 10 * 1000;
 
-function studentOutcome(attempt) {
-  if (attempt.status === "TERMINATED") return "ENDED_BY_PROCTORING";
-  if (attempt.reviewState === "PENDING") return "UNDER_REVIEW";
-  return "SCORED";
-}
-
 /** Attaches a kept frame to an event: the one it names, else the nearest in time. */
 function evidenceFor(event, kept) {
   const byFrame = new Map(kept.map((row) => [row.frameId, row]));
@@ -442,6 +437,7 @@ async function getAttemptResult(user, attemptId) {
     quiz: { select: { title: true, passingScore: true, quizTag: true, quizQuestions: { orderBy: { order: "asc" }, select: { questionId: true, marks: true, question: { select: { question: true, marks: true } } } } } },
     events: { orderBy: { serverTimestamp: "asc" }, select: { id: true, eventType: true, severity: true, warningIssued: true, serverTimestamp: true, metadata: true } },
     evidence: { where: { category: { not: "IDENTITY" } }, select: { id: true, frameId: true, receivedAt: true } },
+    reviewRequests: { select: { round: true, decidedAt: true } },
   });
   if (OPEN_STATUSES.includes(attempt.status)) throw new ApiError(409, "This exam has not ended.", "ATTEMPT_NOT_ENDED");
 
@@ -482,6 +478,16 @@ async function getAttemptResult(user, attemptId) {
     percentage: scored?.percentage ?? null,
     passed: scored?.passed ?? false,
     quizAttemptId: scored?.id ?? null,
+    decision: attempt.decision
+      ? {
+          decision: attempt.decision,
+          decidedAt: attempt.decidedAt,
+          note: attempt.decisionNote,
+          appealPending: attempt.reviewState === "PENDING",
+          canAppeal: canStillAppeal(attempt) && !attempt.reviewRequests.some((request) => request.round === attempt.reviewRound),
+          appealUntil: attempt.decidedAt ? new Date(attempt.decidedAt.getTime() + APPEAL_WINDOW_MS) : null,
+        }
+      : null,
     warningCount: attempt.warningCount,
     identityCheck: attempt.identityCheck,
     identityMatching: attempt.identityMatching,
@@ -552,6 +558,10 @@ async function finalizeAttempt(attemptId, { endReason, rule = null, terminationR
   }
 
   await registry.notifyEnded(attemptId, status);
+  if (needsReview) {
+    const quiz = await prisma.quiz.findUnique({ where: { id: attempt.quizId }, select: { title: true, course: { select: { creatorId: true } } } }).catch(() => null);
+    await notifyReviewWaiting(attempt, quiz);
+  }
   await recordAuditEvent({
     userId: attempt.userId,
     eventType: terminated ? AUDIT_EVENTS.PROCTORING_ATTEMPT_TERMINATED : AUDIT_EVENTS.PROCTORING_ATTEMPT_ENDED,

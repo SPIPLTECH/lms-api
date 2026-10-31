@@ -11,7 +11,7 @@ const {
 const { isProctoringAvailable } = require("../../config/proctoring");
 const controller = require("./proctoring.controller");
 const { monitorAuth, receiveFrame } = require("./monitor.middleware");
-const { createAttemptSchema, heartbeatSchema, monitorEventSchema, saveAnswerSchema } = require("./proctoring.validation");
+const { appealSchema, createAttemptSchema, decisionSchema, deleteEvidenceSchema, heartbeatSchema, monitorEventSchema, saveAnswerSchema } = require("./proctoring.validation");
 
 const router = express.Router();
 
@@ -33,6 +33,14 @@ router.post("/attempts/:attemptId/start", student, proctoringAttemptRateLimiter,
 router.put("/attempts/:attemptId/answers/:questionId", student, proctoringAnswerRateLimiter, validate(saveAnswerSchema), controller.saveAnswer);
 router.post("/attempts/:attemptId/submit", student, proctoringAttemptRateLimiter, controller.submitAttempt);
 router.get("/attempts/:attemptId/result", student, proctoringAttemptRateLimiter, controller.getAttemptResult);
+router.post("/attempts/:attemptId/review-requests", student, proctoringAttemptRateLimiter, validate(appealSchema), controller.createAppeal);
+
+// Reviews: the service checks an instructor owns the course. An admin can see them all.
+const staff = [verifyToken, checkRole(["INSTRUCTOR", "ADMIN"])];
+router.get("/reviews", staff, controller.listReviews);
+router.get("/reviews/:attemptId", staff, controller.getReview);
+router.post("/reviews/:attemptId/decision", staff, validate(decisionSchema), controller.decide);
+router.delete("/attempts/:attemptId/evidence", verifyToken, checkRole(["ADMIN"]), validate(deleteEvidenceSchema), controller.deleteAttemptEvidence);
 
 // Monitoring: the attempt's own token, checked in memory, so a clean frame costs the
 // database nothing. Limits are per attempt, so one classroom behind one address is not

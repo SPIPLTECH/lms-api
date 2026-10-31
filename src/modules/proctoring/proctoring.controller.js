@@ -5,6 +5,7 @@ const { analysisQueue } = require("./aiQueue");
 const attempts = require("./attempt.service");
 const evidence = require("./evidence.service");
 const monitor = require("./monitor.service");
+const review = require("./review.service");
 const registry = require("./monitorRegistry");
 const { snapshotFieldsSchema } = require("./proctoring.validation");
 
@@ -44,6 +45,18 @@ module.exports = {
   saveAnswer: respond((req) => attempts.saveAnswer(req.user, req.params.attemptId, req.params.questionId, req.body)),
   submitAttempt: respond((req) => attempts.submitAttempt(req.user, req.params.attemptId)),
   getAttemptResult: respond((req) => attempts.getAttemptResult(req.user, req.params.attemptId)),
+  createAppeal: respond((req) => review.createAppeal(req.user, req.params.attemptId, req.body), 201),
+  listReviews: respond((req) =>
+    review.listReviews(req.user, {
+      state: req.query.state,
+      courseId: req.query.courseId,
+      page: Math.max(1, Number(req.query.page) || 1),
+      limit: Math.min(100, Math.max(1, Number(req.query.limit) || 25)),
+    })
+  ),
+  getReview: respond((req) => review.getReview(req.user, req.params.attemptId)),
+  decide: respond((req) => review.decide(req.user, req.params.attemptId, req.body)),
+  deleteAttemptEvidence: respond((req) => review.deleteAttemptEvidence(req.user, req.params.attemptId, req.body)),
   snapshot: respond(snapshot),
   monitorEvent: respond((req) => monitor.ingestEvent(req.monitor, req.body)),
   heartbeat: respond((req) => monitor.heartbeat(req.monitor, req.body)),

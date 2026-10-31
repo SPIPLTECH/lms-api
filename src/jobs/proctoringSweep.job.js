@@ -9,7 +9,7 @@ const { isProctoringAvailable, isTrue } = require("../config/proctoring");
  *
  *   every minute     close overdue exams, abandon stale readiness checks, write counters
  *   every 20 s       notice stopped uploads; retry writes that must not be lost
- *   every 15 min     retention sweep
+ *   every 15 min     retention sweep, and reminders for reviews past 7 days
  *   at start         recover running attempts, and start and supervise the Python AI
  *
  * PROCTORING_SWEEP_CRON and PROCTORING_RETENTION_CRON override the schedules; "off" disables one.
@@ -46,6 +46,7 @@ function startProctoringJobs() {
   const { sweepAttempts } = require("../modules/proctoring/attempt.service");
   const monitor = require("../modules/proctoring/monitor.service");
   const { retentionSweep } = require("../modules/proctoring/retention.service");
+  const { reviewReminderSweep } = require("../modules/proctoring/review.service");
   const { getAiServiceHealth } = require("../modules/proctoring/ai/health");
   const { resolveAiLaunch, startManagedAi } = require("../modules/proctoring/ai/processManager");
 
@@ -74,7 +75,10 @@ function startProctoringJobs() {
     if (expired || abandoned) console.log(`[proctoring] closed ${expired} overdue exam(s), abandoned ${abandoned} readiness check(s)`);
     await monitor.flushCounters();
   });
-  schedule("PROCTORING_RETENTION_CRON", process.env.PROCTORING_RETENTION_CRON, DEFAULT_RETENTION, retentionSweep);
+  schedule("PROCTORING_RETENTION_CRON", process.env.PROCTORING_RETENTION_CRON, DEFAULT_RETENTION, async () => {
+    await retentionSweep();
+    await reviewReminderSweep();
+  });
   return true;
 }
 

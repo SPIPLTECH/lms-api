@@ -106,6 +106,7 @@ const CONTENT_SELECT = {
       timeLimit: true,
       attempts: true,
       isPublished: true,
+      proctoringEnabled: true,
       _count: { select: { questions: true, quizQuestions: true } }
     }
   },
@@ -307,6 +308,27 @@ function collectCourseItems(course) {
 }
 
 /**
+ * A proctored quiz's standing for the completion rule, per quiz: an ended exam holds it until
+ * a decision, an upheld ending completes it, and each approved retake adds an attempt.
+ */
+function buildProctoredStandings(attempts = [], grants = []) {
+  const standings = new Map();
+  const entry = (quizId) => {
+    if (!standings.has(quizId)) standings.set(quizId, { proctored: true, hold: false, forceComplete: false, extraAttempts: 0 });
+    return standings.get(quizId);
+  };
+  const granted = new Set(grants.map((grant) => grant.sourceAttemptId));
+  for (const grant of grants) entry(grant.quizId).extraAttempts += 1;
+  for (const attempt of attempts) {
+    const standing = entry(attempt.quizId);
+    if (attempt.status !== "TERMINATED" || granted.has(attempt.id)) continue;
+    if (attempt.decision === "UPHOLD") standing.forceComplete = true;
+    else standing.hold = true;
+  }
+  return standings;
+}
+
+/**
  * The student's ground truth for a course's items, plus their existing
  * container rows (to preserve completedAt/visitedAt). Independent reads, one
  * parallel batch — on a remote database the round trips, not the queries, are
@@ -317,6 +339,8 @@ async function readStudentRows(client, studentId, items) {
   const contentIds = items.allContents.map((c) => c.id);
   const quizIdList = Array.from(items.quizIds);
   const assignmentIdList = Array.from(items.assignmentIds);
+  // Only a course with a proctored quiz reads these, so any other course runs no new query.
+  const proctoredQuizIds = items.allContents.filter((content) => content.quiz?.proctoringEnabled).map((content) => content.quizId);
 
   const [
     cpRecords,
@@ -327,7 +351,9 @@ async function readStudentRows(client, studentId, items) {
     subTopicProgresses,
     topicProgresses,
     lessonProgresses,
-    moduleProgresses
+    moduleProgresses,
+    proctoredAttemptRecords,
+    retakeGrantRecords
   ] = await Promise.all([
     contentIds.length > 0
       ? client.contentProgress.findMany({
@@ -382,6 +408,18 @@ async function readStudentRows(client, studentId, items) {
           where: { studentId, moduleId: { in: Array.from(items.allModuleIds) } },
           select: { studentId: true, moduleId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
         })
+      : [],
+    proctoredQuizIds.length > 0
+      ? client.proctoredAttempt.findMany({
+          where: { studentId, quizId: { in: proctoredQuizIds }, status: "TERMINATED" },
+          select: { id: true, studentId: true, quizId: true, status: true, decision: true }
+        })
+      : [],
+    proctoredQuizIds.length > 0
+      ? client.proctoringRetakeGrant.findMany({
+          where: { studentId, quizId: { in: proctoredQuizIds } },
+          select: { studentId: true, quizId: true, sourceAttemptId: true }
+        })
       : []
   ]);
 
@@ -394,7 +432,9 @@ async function readStudentRows(client, studentId, items) {
     subTopicProgresses,
     topicProgresses,
     lessonProgresses,
-    moduleProgresses
+    moduleProgresses,
+    proctoredAttemptRecords,
+    retakeGrantRecords
   };
 }
 
@@ -453,7 +493,9 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     subTopicProgresses: existingSubTopicProgresses,
     topicProgresses: existingTopicProgresses,
     lessonProgresses: existingLessonProgresses,
-    moduleProgresses: existingModuleProgresses
+    moduleProgresses: existingModuleProgresses,
+    proctoredAttemptRecords,
+    retakeGrantRecords
   } = rows;
   const { qualifiedTopicIds, qualifiedLessonIds } = qualifications;
 
@@ -464,6 +506,7 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     attemptsByQuiz.get(attempt.quizId).push(attempt);
   }
   const submissionByQuiz = new Map(submissionRecords.map((s) => [s.quizId, s]));
+  const proctoredStandings = buildProctoredStandings(proctoredAttemptRecords, retakeGrantRecords);
   const assignmentSubmissionMap = new Map(assignmentSubmissionRecords.map((s) => [s.assignmentId, s]));
 
   // A. Every item's state, from the ONE completion rule. `domain*` is what the
@@ -479,7 +522,12 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     if (content.type === 'QUIZ') {
       const attempts = attemptsByQuiz.get(content.quizId) || [];
       const latest = submissionByQuiz.get(content.quizId) || null;
-      const summary = summarizeQuizAttempts(attempts, latest, content.quiz.passingScore);
+      const summary = summarizeQuizAttempts(
+        attempts,
+        latest,
+        content.quiz.passingScore,
+        content.quiz.proctoringEnabled ? proctoredStandings.get(content.quizId) ?? { proctored: true } : undefined
+      );
       completed = isQuizComplete(content.quiz.quizTag, summary, content.quiz.attempts);
       activity = summary.attempted;
       if (completed) {
