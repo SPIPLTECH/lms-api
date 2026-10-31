@@ -3,7 +3,7 @@ const multer = require("multer");
 const { randomUUID } = require("crypto");
 
 const ApiError = require("../../utils/ApiError");
-const { attemptTempDir, removeFile } = require("./evidence.service");
+const { attemptTempDir, removeFile, tempRoot } = require("./evidence.service");
 const { verifyMonitorToken } = require("./monitorToken");
 const registry = require("./monitorRegistry");
 
@@ -13,6 +13,35 @@ const registry = require("./monitorRegistry");
  */
 
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
+const DISK_FULL_PERCENT = 95;
+const DISK_CHECK_MS = 30 * 1000;
+
+let diskCheck = { at: 0, full: false };
+
+const resetDiskCheck = () => {
+  diskCheck = { at: 0, full: false };
+};
+
+/** Read at most every 30 s. A check that fails says nothing about the disk, so it refuses nothing. */
+async function isTempDiskFull() {
+  const now = Date.now();
+  if (now - diskCheck.at < DISK_CHECK_MS) return diskCheck.full;
+  const raw = process.env.PROCTORING_DISK_FULL_PERCENT;
+  const limit = raw === undefined || raw === "" ? DISK_FULL_PERCENT : Number(raw);
+  try {
+    await fs.promises.mkdir(tempRoot(), { recursive: true });
+    const { blocks, bavail } = await fs.promises.statfs(tempRoot());
+    diskCheck = { at: now, full: blocks > 0 && (1 - bavail / blocks) * 100 >= limit };
+  } catch {
+    diskCheck = { at: now, full: false };
+  }
+  return diskCheck.full;
+}
+
+/** Near full, frames wait in the browser's retry and the gap is flagged. The exam itself goes on. */
+async function refuseWhenDiskFull(req, res, next) {
+  next((await isTempDiskFull()) ? new ApiError(503, "Monitoring is briefly unable to store photos.", "STORAGE_FULL") : undefined);
+}
 
 async function monitorAuth(req, res, next) {
   try {
@@ -74,4 +103,4 @@ function receiveFrame(req, res, next) {
   });
 }
 
-module.exports = { monitorAuth, receiveFrame };
+module.exports = { monitorAuth, receiveFrame, refuseWhenDiskFull, resetDiskCheck };

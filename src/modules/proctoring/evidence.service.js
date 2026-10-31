@@ -5,7 +5,7 @@ const path = require("path");
 
 const prisma = require("../../config/database");
 const ApiError = require("../../utils/ApiError");
-const { AUDIT_EVENTS, recordAuditEvent } = require("../audit/audit.service");
+const audit = require("../audit/audit.service");
 const { createConfiguredStore } = require("./evidenceStore");
 
 /**
@@ -234,12 +234,21 @@ async function readEvidenceFile(user, evidenceId) {
   const isAdmin = user.role === "ADMIN";
   if (!isOwnStudent && !isCourseInstructor && !isAdmin) throw new ApiError(403, "You cannot view this image.", "EVIDENCE_FORBIDDEN");
 
+  if (row.retainUntil && row.retainUntil.getTime() < Date.now() && !row.reviewHold) {
+    throw new ApiError(410, "This image has passed its retention date.", "EVIDENCE_EXPIRED");
+  }
+
   if (!isOwnStudent) {
-    // Inside no transaction, but with a client: a failed audit write fails the view.
-    await recordAuditEvent(
-      { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, eventType: AUDIT_EVENTS.PROCTORING_EVIDENCE_VIEWED, metadata: { evidenceId, attemptId: row.attemptId, role: user.role } },
-      { client: prisma }
-    );
+    // Inside no transaction, but with a client, so a failed audit write fails the view.
+    try {
+      await audit.recordAuditEvent(
+        { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, eventType: audit.AUDIT_EVENTS.PROCTORING_EVIDENCE_VIEWED, metadata: { evidenceId, attemptId: row.attemptId, role: user.role } },
+        { client: prisma }
+      );
+    } catch (error) {
+      console.error("[proctoring-evidence] could not audit a staff view, so no image was sent:", error?.message);
+      throw new ApiError(503, "This image cannot be shown right now. Please try again.", "EVIDENCE_AUDIT_FAILED");
+    }
   }
 
   const bytes = row.storageState === "STORED" ? await getStore().get(row.objectKey) : await fs.promises.readFile(row.tempPath);

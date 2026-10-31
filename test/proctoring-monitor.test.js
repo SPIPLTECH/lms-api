@@ -556,6 +556,27 @@ describe("exam monitoring", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_URL not
     });
   });
 
+  describe("the temp disk filling up", () => {
+    const { resetDiskCheck } = require("../src/modules/proctoring/monitor.middleware");
+
+    test("frames are refused with a retry, and the exam goes on", async () => {
+      const { attemptId, token } = await inExam();
+      process.env.PROCTORING_DISK_FULL_PERCENT = "0";
+      resetDiskCheck();
+      try {
+        const res = await upload(token, "ONE");
+        assert.strictEqual(res.status, 503);
+        assert.strictEqual(res.json.code, "STORAGE_FULL");
+        assert.strictEqual((await monitorCall("POST", "heartbeat", token, {})).status, 200, "the heartbeat still answers");
+      } finally {
+        delete process.env.PROCTORING_DISK_FULL_PERCENT;
+        resetDiskCheck();
+      }
+      assert.strictEqual((await upload(token, "ONE")).status, 200);
+      assert.strictEqual((await row(attemptId)).status, "IN_PROGRESS");
+    });
+  });
+
   describe("protecting the live LMS", () => {
     test("a clean frame costs the database nothing on the normal path", async () => {
       const { measure } = require("../src/utils/requestTiming");
@@ -706,6 +727,31 @@ describe("exam monitoring", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_URL not
       const { kept, student } = await keptImage();
       const res = await fetch(`${h.baseUrl()}/uploads/${kept.objectKey}`, { headers: { Authorization: `Bearer ${student.token}`, "X-Device-Key": student.deviceKey } });
       assert.notStrictEqual(res.status, 200);
+    });
+
+    test("an image past its retention date is gone, even before the sweep reaches it", async () => {
+      const { student, kept } = await keptImage();
+      await prisma.proctoringEvidence.update({ where: { id: kept.id }, data: { retainUntil: new Date(Date.now() - 1000), reviewHold: false } });
+      const res = await file(kept.id, student);
+      assert.strictEqual(res.status, 410);
+      assert.strictEqual((await res.json()).code, "EVIDENCE_EXPIRED");
+    });
+
+    test("a held image past its date can still be seen", async () => {
+      const { student, kept } = await keptImage();
+      await prisma.proctoringEvidence.update({ where: { id: kept.id }, data: { retainUntil: new Date(Date.now() - 1000), reviewHold: true } });
+      assert.strictEqual((await file(kept.id, student)).status, 200);
+    });
+
+    test("if the staff view cannot be audited, no image is sent", async (t) => {
+      const { kept } = await keptImage();
+      const audit = require("../src/modules/audit/audit.service");
+      t.mock.method(audit, "recordAuditEvent", async () => {
+        throw new Error("audit table unavailable");
+      });
+      const res = await file(kept.id, owner);
+      assert.strictEqual(res.status, 503);
+      assert.strictEqual((await res.json()).code, "EVIDENCE_AUDIT_FAILED");
     });
 
     test("a store outage keeps the frame on disk and marks it for another try", async () => {

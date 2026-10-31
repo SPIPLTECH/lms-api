@@ -10,7 +10,7 @@ const {
 } = require("../../middleware/rateLimit.middleware");
 const { isProctoringAvailable } = require("../../config/proctoring");
 const controller = require("./proctoring.controller");
-const { monitorAuth, receiveFrame } = require("./monitor.middleware");
+const { monitorAuth, receiveFrame, refuseWhenDiskFull } = require("./monitor.middleware");
 const { appealSchema, createAttemptSchema, decisionSchema, deleteEvidenceSchema, heartbeatSchema, monitorEventSchema, saveAnswerSchema } = require("./proctoring.validation");
 
 const router = express.Router();
@@ -45,7 +45,7 @@ router.delete("/attempts/:attemptId/evidence", verifyToken, checkRole(["ADMIN"])
 // Monitoring: the attempt's own token, checked in memory, so a clean frame costs the
 // database nothing. Limits are per attempt, so one classroom behind one address is not
 // throttled as a single client. A frame every 5 s plus 2 s re-checks stays well inside them.
-router.post("/monitor/snapshots", monitorAuth, monitorRateLimiter("snapshots", 60), receiveFrame, controller.snapshot);
+router.post("/monitor/snapshots", monitorAuth, monitorRateLimiter("snapshots", 60), refuseWhenDiskFull, receiveFrame, controller.snapshot);
 router.post("/monitor/events", monitorAuth, monitorRateLimiter("events", 120), validate(monitorEventSchema), controller.monitorEvent);
 router.post("/monitor/heartbeat", monitorAuth, monitorRateLimiter("heartbeat", 30), validate(heartbeatSchema), controller.heartbeat);
 router.get("/monitor/context", monitorAuth, monitorRateLimiter("context", 30), controller.context);
