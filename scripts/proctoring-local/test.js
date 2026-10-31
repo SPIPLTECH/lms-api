@@ -4,6 +4,7 @@
  *   node scripts/proctoring-local/test.js                    the whole suite
  *   node scripts/proctoring-local/test.js test/x.test.js     chosen files
  *   --report=<file>                                          keep the full output
+ *   --proctoring=on                                          run with the feature on (default: off, as shipped)
  *
  * Confirms the live target first (database name and loopback address, no secrets).
  */
@@ -36,7 +37,10 @@ async function main() {
   await confirmTarget();
 
   const guard = path.join(__dirname, "net-guard.cjs").replace(/\\/g, "/");
-  const env = { ...process.env, NODE_OPTIONS: `--require "${guard}"`, NODE_ENV: "test", ENABLE_SERVER_TIMING: "true" };
+  // The shipped default is off, so that is what the suite runs by default. Proctoring
+  // tests switch it on for themselves; --proctoring=on runs everything with it on.
+  const PROCTORING_ENABLED = args.includes("--proctoring=on") ? "true" : "false";
+  const env = { ...process.env, PROCTORING_ENABLED, NODE_OPTIONS: `--require "${guard}"`, NODE_ENV: "test", ENABLE_SERVER_TIMING: "true" };
   const testArgs = ["--test", ...(files.length ? files : ["test/*.test.js", "src/**/*.test.js"])];
   const report = reportArg ? fs.createWriteStream(reportArg.split("=")[1]) : null;
   const child = spawn(process.execPath, testArgs, { cwd: API_ROOT, env, stdio: ["ignore", "pipe", "pipe"] });

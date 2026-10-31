@@ -3,12 +3,13 @@
  * the disposable local database (TEST_DATABASE_URL). Everything created carries a
  * per-run prefix and is removed afterwards.
  */
-const assert = require("node:assert");
 const crypto = require("crypto");
 const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
 
 const prisma = require("../../src/config/database");
 const app = require("../../src/app");
+const sessionService = require("../../src/modules/sessions/session.service");
 
 const PASSWORD = "Str0ng!Pass-proctoring";
 
@@ -24,6 +25,7 @@ function createHarness(label) {
 
   const stop = async () => {
     state.server?.close();
+    await require("../../src/modules/quizzes/quiz.service").flushPendingSubmissionSideEffects();
     await prisma.proctoredAttempt.deleteMany({ where: { courseId: { in: state.courseIds } } }).catch(() => {});
     await prisma.notification.deleteMany({ where: { userId: { in: state.userIds } } }).catch(() => {});
     await prisma.auditEvent.deleteMany({ where: { userId: { in: state.userIds } } }).catch(() => {});
@@ -34,6 +36,14 @@ function createHarness(label) {
     await prisma.authSession.deleteMany({ where: { userId: { in: state.userIds } } }).catch(() => {});
     await prisma.user.deleteMany({ where: { id: { in: state.userIds } } }).catch(() => {});
     await prisma.$disconnect().catch(() => {});
+  };
+
+  // A real session on a new device, made the way sign-in makes one. Not through
+  // POST /auth/login, whose per-IP limit of 20 would stop a suite with many students.
+  const signIn = async ({ id, email, role }) => {
+    const created = await sessionService.createSession({ userId: id, authMethod: sessionService.AUTH_METHODS.PASSWORD, deviceKey: null });
+    const token = jwt.sign({ id, email, role, sid: created.session.id }, process.env.JWT_ACCESS_SECRET, { expiresIn: "1d" });
+    return { token, deviceKey: created.deviceKey };
   };
 
   const makeUser = async (role, name) => {
@@ -51,16 +61,11 @@ function createHarness(label) {
       include: { studentProfile: true },
     });
     state.userIds.push(user.id);
-    const res = await fetch(`${state.baseUrl}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: PASSWORD }),
-    });
-    const body = await res.json();
-    assert.strictEqual(res.status, 200, `login failed for ${name}: ${JSON.stringify(body)}`);
-    const data = body.data || body;
-    return { id: user.id, role, email, studentId: user.studentProfile?.id ?? null, token: data.accessToken || data.token, deviceKey: data.deviceKey };
+    return { id: user.id, role, email, studentId: user.studentProfile?.id ?? null, ...(await signIn({ id: user.id, email, role })) };
   };
+
+  /** Signs the same user in again as a new device. */
+  const login = async (user) => ({ ...user, ...(await signIn(user)) });
 
   const makeCourse = async (creatorId, extra = {}) => {
     const course = await prisma.course.create({
@@ -109,7 +114,7 @@ function createHarness(label) {
     return { status: res.status, json, data: json?.data ?? json, text, headers: res.headers };
   };
 
-  return { run, state, start, stop, makeUser, makeCourse, makeQuiz, enroll, call, prisma, baseUrl: () => state.baseUrl };
+  return { run, state, start, stop, makeUser, login, makeCourse, makeQuiz, enroll, call, prisma, baseUrl: () => state.baseUrl };
 }
 
 module.exports = { createHarness };
