@@ -1,0 +1,3261 @@
+{
+  "FINAL instructor read": {
+    "status": 200,
+    "queries": 3,
+    "body": {
+      "data": {
+        "attempts": 2,
+        "availableFrom": null,
+        "availableUntil": null,
+        "conceptId": null,
+        "courseId": "regq-course",
+        "createdAt": "<date>",
+        "description": null,
+        "dueDate": null,
+        "id": "regq-final",
+        "instructions": null,
+        "isPublished": true,
+        "lessonId": null,
+        "moduleId": null,
+        "negativeMarking": 0,
+        "order": null,
+        "passingScore": 50,
+        "questions": [
+          {
+            "correctAnswer": "right",
+            "courseId": "regq-course",
+            "createdAt": "<date>",
+            "createdBy": null,
+            "difficulty": "MEDIUM",
+            "explanation": "because",
+            "hint": "think",
+            "id": "regq-q-regq-final",
+            "isMandatory": true,
+            "isPublished": true,
+            "isRequired": true,
+            "marks": 1,
+            "moduleId": null,
+            "negativeMarks": 0,
+            "options": [
+              "right",
+              "wrong"
+            ],
+            "order": 1,
+            "question": "Question for regq-final?",
+            "questionType": "MCQ_SINGLE",
+            "quizId": null,
+            "quizQuestionId": "regq-final-qq",
+            "status": "ACTIVE",
+            "subject": "General",
+            "tags": "",
+            "title": null,
+            "topic": "General",
+            "updatedAt": "<date>"
+          }
+        ],
+        "quizQuestions": [
+          {
+            "createdAt": "<date>",
+            "id": "regq-final-qq",
+            "isMandatory": true,
+            "marks": 1,
+            "order": 1,
+            "question": {
+              "correctAnswer": "right",
+              "courseId": "regq-course",
+              "createdAt": "<date>",
+              "createdBy": null,
+              "difficulty": "MEDIUM",
+              "explanation": "because",
+              "hint": "think",
+              "id": "regq-q-regq-final",
+              "isPublished": true,
+              "isRequired": true,
+              "marks": 1,
+              "moduleId": null,
+              "negativeMarks": 0,
+              "options": [
+                "right",
+                "wrong"
+              ],
+              "order": null,
+              "question": "Question for regq-final?",
+              "questionType": "MCQ_SINGLE",
+              "quizId": null,
+              "status": "ACTIVE",
+              "subject": "General",
+              "tags": "",
+              "title": null,
+              "topic": "General",
+              "updatedAt": "<date>"
+            },
+            "questionId": "regq-q-regq-final",
+            "quizId": "regq-final"
+          }
+        ],
+        "quizTag": "FINAL",
+        "shuffleOptions": false,
+        "shuffleQuestions": false,
+        "startDate": null,
+        "status": "ACTIVE",
+        "subTopicId": null,
+        "timeLimit": 20,
+        "title": "Quiz regq-final",
+        "topicId": null,
+        "updatedAt": "<date>"
+      },
+      "success": true
+    }
+  },
+  "FINAL student read": {
+    "status": 200,
+    "queries": 26,
+    "body": {
+      "data": {
+        "attemptStatus": {
+          "attemptsRemaining": 2,
+          "attemptsUsed": 0,
+          "canAttempt": true,
+          "maxAttempts": 2,
+          "unlimitedAttempts": false
+        },
+        "attempts": 2,
+        "availableFrom": null,
+        "availableUntil": null,
+        "conceptId": null,
+        "courseId": "regq-course",
+        "createdAt": "<date>",
+        "currentAttemptNumber": 1,
+        "description": null,
+        "dueDate": null,
+        "hintsUnlocked": false,
+        "id": "regq-final",
+        "instructions": null,
+        "isPublished": true,
+        "lessonId": null,
+        "moduleId": null,
+        "negativeMarking": 0,
+        "order": null,
+        "passingScore": 50,
+        "questions": [
+          {
+            "courseId": "regq-course",
+            "createdAt": "<date>",
+            "createdBy": null,
+            "difficulty": "MEDIUM",
+            "hasHint": true,
+            "id": "regq-q-regq-final",
+            "isMandatory": true,
+            "isPublished": true,
+            "isRequired": true,
+            "marks": 1,
+            "moduleId": null,
+            "negativeMarks": 0,
+            "options": [
+              "right",
+              "wrong"
+            ],
+            "order": 1,
+            "question": "Question for regq-final?",
+            "questionType": "MCQ_SINGLE",
+            "quizId": null,
+            "quizQuestionId": "regq-final-qq",
+            "status": "ACTIVE",
+            "subject": "General",
+            "tags": "",
+            "title": null,
+            "topic": "General",
+            "updatedAt": "<date>"
+          }
+        ],
+        "quizTag": "FINAL",
+        "revealAnswers": false,
+        "shuffleOptions": false,
+        "shuffleQuestions": false,
+        "startDate": null,
+        "status": "ACTIVE",
+        "subTopicId": null,
+        "timeLimit": 20,
+        "title": "Quiz regq-final",
+        "topicId": null,
+        "updatedAt": "<date>"
+      },
+      "success": true
+    }
+  },
+  "FINAL result before attempt": {
+    "status": 404,
+    "queries": 8,
+    "body": {
+      "message": "Quiz submission not found",
+      "success": false
+    }
+  },
+  "FINAL wrong answer submit": {
+    "status": 201,
+    "queries": 15,
+    "body": {
+      "data": {
+        "answers": [
+          {
+            "answer": "wrong",
+            "questionId": "regq-q-regq-final"
+          }
+        ],
+        "attemptId": "<id>",
+        "attemptNumber": 1,
+        "conceptScores": null,
+        "id": "<id>",
+        "passed": false,
+        "percentage": 0,
+        "quizId": "regq-final",
+        "score": 0,
+        "studentId": "regq-student-profile",
+        "submittedAt": "<date>",
+        "totalMarks": 1
+      },
+      "success": true
+    }
+  },
+  "FINAL result after wrong answer": {
+    "status": 200,
+    "queries": 8,
+    "body": {
+      "data": {
+        "answerKeyRevealed": false,
+        "answers": [
+          {
+            "answer": "wrong",
+            "questionId": "regq-q-regq-final"
+          }
+        ],
+        "attemptId": "<id>",
+        "attemptNumber": 1,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "id": "<id>",
+            "passed": false,
+            "percentage": 0,
+            "score": 0,
+            "submittedAt": "<date>",
+            "timeTakenSeconds": 30,
+            "totalMarks": 1
+          }
+        ],
+        "attemptsRemaining": 1,
+        "attemptsUsed": 1,
+        "canAttempt": true,
+        "conceptScores": null,
+        "correctCount": 0,
+        "id": "<id>",
+        "incorrectCount": 1,
+        "isLatestAttempt": true,
+        "maxAttempts": 2,
+        "passed": false,
+        "percentage": 0,
+        "qualification": null,
+        "questionAttempts": [
+          {
+            "answer": "wrong",
+            "answered": true,
+            "answeredAt": null,
+            "createdAt": "<date>",
+            "firstVisitedAt": null,
+            "hintViewed": false,
+            "id": "<id>",
+            "isCorrect": false,
+            "lastVisitedAt": null,
+            "marksObtained": 0,
+            "maxMarks": 1,
+            "order": 1,
+            "question": {
+              "id": "regq-q-regq-final",
+              "moduleId": null,
+              "topic": "General"
+            },
+            "questionId": "regq-q-regq-final",
+            "quizAttemptId": "<id>",
+            "skipped": false,
+            "skippedAt": null,
+            "status": "ANSWERED",
+            "updatedAt": "<date>",
+            "visited": true
+          }
+        ],
+        "quiz": {
+          "attempts": 2,
+          "availableFrom": null,
+          "availableUntil": null,
+          "conceptId": null,
+          "course": {
+            "id": "regq-course",
+            "title": "Regression course"
+          },
+          "courseId": "regq-course",
+          "createdAt": "<date>",
+          "description": null,
+          "dueDate": null,
+          "id": "regq-final",
+          "instructions": null,
+          "isPublished": true,
+          "lessonId": null,
+          "module": null,
+          "moduleId": null,
+          "negativeMarking": 0,
+          "order": null,
+          "passingScore": 50,
+          "questions": [
+            {
+              "courseId": "regq-course",
+              "createdAt": "<date>",
+              "createdBy": null,
+              "difficulty": "MEDIUM",
+              "id": "regq-q-regq-final",
+              "isPublished": true,
+              "isRequired": true,
+              "marks": 1,
+              "moduleId": null,
+              "negativeMarks": 0,
+              "options": [
+                "right",
+                "wrong"
+              ],
+              "order": 1,
+              "question": "Question for regq-final?",
+              "questionType": "MCQ_SINGLE",
+              "quizId": null,
+              "status": "ACTIVE",
+              "subject": "General",
+              "tags": "",
+              "title": null,
+              "topic": "General",
+              "updatedAt": "<date>"
+            }
+          ],
+          "quizTag": "FINAL",
+          "shuffleOptions": false,
+          "shuffleQuestions": false,
+          "startDate": null,
+          "status": "ACTIVE",
+          "subTopicId": null,
+          "timeLimit": 20,
+          "title": "Quiz regq-final",
+          "topicId": null,
+          "updatedAt": "<date>"
+        },
+        "quizId": "regq-final",
+        "score": 0,
+        "studentId": "regq-student-profile",
+        "submittedAt": "<date>",
+        "summary": {
+          "answeredCount": 1,
+          "correctCount": 0,
+          "hintViewedCount": 0,
+          "incorrectCount": 1,
+          "marksObtained": 0,
+          "maxMarks": 1,
+          "notVisitedCount": 0,
+          "percentage": 0,
+          "score": 0,
+          "skippedCount": 0,
+          "totalQuestions": 1,
+          "unansweredCount": 0,
+          "visitedCount": 1
+        },
+        "timeTakenSeconds": 30,
+        "totalMarks": 1,
+        "totalQuestions": 1,
+        "unansweredCount": 0,
+        "unlimitedAttempts": false
+      },
+      "success": true
+    }
+  },
+  "FINAL right answer submit": {
+    "status": 201,
+    "queries": 15,
+    "body": {
+      "data": {
+        "answers": [
+          {
+            "answer": "right",
+            "questionId": "regq-q-regq-final"
+          }
+        ],
+        "attemptId": "<id>",
+        "attemptNumber": 2,
+        "conceptScores": null,
+        "id": "<id>",
+        "passed": true,
+        "percentage": 100,
+        "quizId": "regq-final",
+        "score": 1,
+        "studentId": "regq-student-profile",
+        "submittedAt": "<date>",
+        "totalMarks": 1
+      },
+      "success": true
+    }
+  },
+  "FINAL result after right answer": {
+    "status": 200,
+    "queries": 8,
+    "body": {
+      "data": {
+        "answerKeyRevealed": true,
+        "answers": [
+          {
+            "answer": "right",
+            "questionId": "regq-q-regq-final"
+          }
+        ],
+        "attemptId": "<id>",
+        "attemptNumber": 2,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "id": "<id>",
+            "passed": false,
+            "percentage": 0,
+            "score": 0,
+            "submittedAt": "<date>",
+            "timeTakenSeconds": 30,
+            "totalMarks": 1
+          },
+          {
+            "attemptNumber": 2,
+            "id": "<id>",
+            "passed": true,
+            "percentage": 100,
+            "score": 1,
+            "submittedAt": "<date>",
+            "timeTakenSeconds": null,
+            "totalMarks": 1
+          }
+        ],
+        "attemptsRemaining": 0,
+        "attemptsUsed": 2,
+        "canAttempt": false,
+        "conceptScores": null,
+        "correctCount": 1,
+        "id": "<id>",
+        "incorrectCount": 0,
+        "isLatestAttempt": true,
+        "maxAttempts": 2,
+        "passed": true,
+        "percentage": 100,
+        "qualification": null,
+        "questionAttempts": [
+          {
+            "answer": "right",
+            "answered": true,
+            "answeredAt": null,
+            "createdAt": "<date>",
+            "firstVisitedAt": null,
+            "hintViewed": false,
+            "id": "<id>",
+            "isCorrect": true,
+            "lastVisitedAt": null,
+            "marksObtained": 1,
+            "maxMarks": 1,
+            "order": 1,
+            "question": {
+              "id": "regq-q-regq-final",
+              "moduleId": null,
+              "topic": "General"
+            },
+            "questionId": "regq-q-regq-final",
+            "quizAttemptId": "<id>",
+            "skipped": false,
+            "skippedAt": null,
+            "status": "ANSWERED",
+            "updatedAt": "<date>",
+            "visited": true
+          }
+        ],
+        "quiz": {
+          "attempts": 2,
+          "availableFrom": null,
+          "availableUntil": null,
+          "conceptId": null,
+          "course": {
+            "id": "regq-course",
+            "title": "Regression course"
+          },
+          "courseId": "regq-course",
+          "createdAt": "<date>",
+          "description": null,
+          "dueDate": null,
+          "id": "regq-final",
+          "instructions": null,
+          "isPublished": true,
+          "lessonId": null,
+          "module": null,
+          "moduleId": null,
+          "negativeMarking": 0,
+          "order": null,
+          "passingScore": 50,
+          "questions": [
+            {
+              "correctAnswer": "right",
+              "courseId": "regq-course",
+              "createdAt": "<date>",
+              "createdBy": null,
+              "difficulty": "MEDIUM",
+              "explanation": "because",
+              "hint": "think",
+              "id": "regq-q-regq-final",
+              "isPublished": true,
+              "isRequired": true,
+              "marks": 1,
+              "moduleId": null,
+              "negativeMarks": 0,
+              "options": [
+                "right",
+                "wrong"
+              ],
+              "order": 1,
+              "question": "Question for regq-final?",
+              "questionType": "MCQ_SINGLE",
+              "quizId": null,
+              "status": "ACTIVE",
+              "subject": "General",
+              "tags": "",
+              "title": null,
+              "topic": "General",
+              "updatedAt": "<date>"
+            }
+          ],
+          "quizQuestions": [
+            {
+              "createdAt": "<date>",
+              "id": "regq-final-qq",
+              "isMandatory": true,
+              "marks": 1,
+              "order": 1,
+              "question": {
+                "correctAnswer": "right",
+                "courseId": "regq-course",
+                "createdAt": "<date>",
+                "createdBy": null,
+                "difficulty": "MEDIUM",
+                "explanation": "because",
+                "hint": "think",
+                "id": "regq-q-regq-final",
+                "isPublished": true,
+                "isRequired": true,
+                "marks": 1,
+                "moduleId": null,
+                "negativeMarks": 0,
+                "options": [
+                  "right",
+                  "wrong"
+                ],
+                "order": null,
+                "question": "Question for regq-final?",
+                "questionType": "MCQ_SINGLE",
+                "quizId": null,
+                "status": "ACTIVE",
+                "subject": "General",
+                "tags": "",
+                "title": null,
+                "topic": "General",
+                "updatedAt": "<date>"
+              },
+              "questionId": "regq-q-regq-final",
+              "quizId": "regq-final"
+            }
+          ],
+          "quizTag": "FINAL",
+          "shuffleOptions": false,
+          "shuffleQuestions": false,
+          "startDate": null,
+          "status": "ACTIVE",
+          "subTopicId": null,
+          "timeLimit": 20,
+          "title": "Quiz regq-final",
+          "topicId": null,
+          "updatedAt": "<date>"
+        },
+        "quizId": "regq-final",
+        "score": 1,
+        "studentId": "regq-student-profile",
+        "submittedAt": "<date>",
+        "summary": {
+          "answeredCount": 1,
+          "correctCount": 1,
+          "hintViewedCount": 0,
+          "incorrectCount": 0,
+          "marksObtained": 1,
+          "maxMarks": 1,
+          "notVisitedCount": 0,
+          "percentage": 100,
+          "score": 1,
+          "skippedCount": 0,
+          "totalQuestions": 1,
+          "unansweredCount": 0,
+          "visitedCount": 1
+        },
+        "timeTakenSeconds": null,
+        "totalMarks": 1,
+        "totalQuestions": 1,
+        "unansweredCount": 0,
+        "unlimitedAttempts": false
+      },
+      "success": true
+    }
+  },
+  "FINAL instructor edit": {
+    "status": 200,
+    "queries": 6,
+    "body": {
+      "data": {
+        "attempts": 2,
+        "availableFrom": null,
+        "availableUntil": null,
+        "conceptId": null,
+        "courseId": "regq-course",
+        "createdAt": "<date>",
+        "description": "Edited",
+        "dueDate": null,
+        "id": "regq-final",
+        "instructions": null,
+        "isPublished": true,
+        "lessonId": null,
+        "moduleId": null,
+        "negativeMarking": 0,
+        "order": null,
+        "passingScore": 50,
+        "questions": [
+          {
+            "correctAnswer": "right",
+            "courseId": "regq-course",
+            "createdAt": "<date>",
+            "createdBy": null,
+            "difficulty": "MEDIUM",
+            "explanation": "because",
+            "hint": "think",
+            "id": "regq-q-regq-final",
+            "isMandatory": true,
+            "isPublished": true,
+            "isRequired": true,
+            "marks": 1,
+            "moduleId": null,
+            "negativeMarks": 0,
+            "options": [
+              "right",
+              "wrong"
+            ],
+            "order": 1,
+            "question": "Question for regq-final?",
+            "questionType": "MCQ_SINGLE",
+            "quizId": null,
+            "quizQuestionId": "regq-final-qq",
+            "status": "ACTIVE",
+            "subject": "General",
+            "tags": "",
+            "title": null,
+            "topic": "General",
+            "updatedAt": "<date>"
+          }
+        ],
+        "quizQuestions": [
+          {
+            "createdAt": "<date>",
+            "id": "regq-final-qq",
+            "isMandatory": true,
+            "marks": 1,
+            "order": 1,
+            "question": {
+              "correctAnswer": "right",
+              "courseId": "regq-course",
+              "createdAt": "<date>",
+              "createdBy": null,
+              "difficulty": "MEDIUM",
+              "explanation": "because",
+              "hint": "think",
+              "id": "regq-q-regq-final",
+              "isPublished": true,
+              "isRequired": true,
+              "marks": 1,
+              "moduleId": null,
+              "negativeMarks": 0,
+              "options": [
+                "right",
+                "wrong"
+              ],
+              "order": null,
+              "question": "Question for regq-final?",
+              "questionType": "MCQ_SINGLE",
+              "quizId": null,
+              "status": "ACTIVE",
+              "subject": "General",
+              "tags": "",
+              "title": null,
+              "topic": "General",
+              "updatedAt": "<date>"
+            },
+            "questionId": "regq-q-regq-final",
+            "quizId": "regq-final"
+          }
+        ],
+        "quizTag": "FINAL",
+        "shuffleOptions": false,
+        "shuffleQuestions": false,
+        "startDate": null,
+        "status": "ACTIVE",
+        "subTopicId": null,
+        "timeLimit": 25,
+        "title": "Quiz regq-final",
+        "topicId": null,
+        "updatedAt": "<date>"
+      },
+      "success": true
+    }
+  },
+  "SELF_TEST instructor read": {
+    "status": 200,
+    "queries": 3,
+    "body": {
+      "data": {
+        "attempts": 0,
+        "availableFrom": null,
+        "availableUntil": null,
+        "conceptId": null,
+        "courseId": "regq-course",
+        "createdAt": "<date>",
+        "description": null,
+        "dueDate": null,
+        "id": "regq-self",
+        "instructions": null,
+        "isPublished": true,
+        "lessonId": null,
+        "moduleId": null,
+        "negativeMarking": 0,
+        "order": null,
+        "passingScore": 50,
+        "questions": [
+          {
+            "correctAnswer": "right",
+            "courseId": "regq-course",
+            "createdAt": "<date>",
+            "createdBy": null,
+            "difficulty": "MEDIUM",
+            "explanation": "because",
+            "hint": "think",
+            "id": "regq-q-regq-self",
+            "isMandatory": true,
+            "isPublished": true,
+            "isRequired": true,
+            "marks": 1,
+            "moduleId": null,
+            "negativeMarks": 0,
+            "options": [
+              "right",
+              "wrong"
+            ],
+            "order": 1,
+            "question": "Question for regq-self?",
+            "questionType": "MCQ_SINGLE",
+            "quizId": null,
+            "quizQuestionId": "regq-self-qq",
+            "status": "ACTIVE",
+            "subject": "General",
+            "tags": "",
+            "title": null,
+            "topic": "General",
+            "updatedAt": "<date>"
+          }
+        ],
+        "quizQuestions": [
+          {
+            "createdAt": "<date>",
+            "id": "regq-self-qq",
+            "isMandatory": true,
+            "marks": 1,
+            "order": 1,
+            "question": {
+              "correctAnswer": "right",
+              "courseId": "regq-course",
+              "createdAt": "<date>",
+              "createdBy": null,
+              "difficulty": "MEDIUM",
+              "explanation": "because",
+              "hint": "think",
+              "id": "regq-q-regq-self",
+              "isPublished": true,
+              "isRequired": true,
+              "marks": 1,
+              "moduleId": null,
+              "negativeMarks": 0,
+              "options": [
+                "right",
+                "wrong"
+              ],
+              "order": null,
+              "question": "Question for regq-self?",
+              "questionType": "MCQ_SINGLE",
+              "quizId": null,
+              "status": "ACTIVE",
+              "subject": "General",
+              "tags": "",
+              "title": null,
+              "topic": "General",
+              "updatedAt": "<date>"
+            },
+            "questionId": "regq-q-regq-self",
+            "quizId": "regq-self"
+          }
+        ],
+        "quizTag": "SELF_TEST",
+        "shuffleOptions": false,
+        "shuffleQuestions": false,
+        "startDate": null,
+        "status": "ACTIVE",
+        "subTopicId": null,
+        "timeLimit": null,
+        "title": "Quiz regq-self",
+        "topicId": null,
+        "updatedAt": "<date>"
+      },
+      "success": true
+    }
+  },
+  "SELF_TEST student read": {
+    "status": 200,
+    "queries": 10,
+    "body": {
+      "data": {
+        "attemptStatus": {
+          "attemptsRemaining": null,
+          "attemptsUsed": 0,
+          "canAttempt": true,
+          "maxAttempts": null,
+          "unlimitedAttempts": true
+        },
+        "attempts": 0,
+        "availableFrom": null,
+        "availableUntil": null,
+        "conceptId": null,
+        "courseId": "regq-course",
+        "createdAt": "<date>",
+        "currentAttemptNumber": 1,
+        "description": null,
+        "dueDate": null,
+        "hintsUnlocked": false,
+        "id": "regq-self",
+        "instructions": null,
+        "isPublished": true,
+        "lessonId": null,
+        "moduleId": null,
+        "negativeMarking": 0,
+        "order": null,
+        "passingScore": 50,
+        "questions": [
+          {
+            "correctAnswer": "right",
+            "courseId": "regq-course",
+            "createdAt": "<date>",
+            "createdBy": null,
+            "difficulty": "MEDIUM",
+            "explanation": "because",
+            "hasHint": true,
+            "id": "regq-q-regq-self",
+            "isMandatory": true,
+            "isPublished": true,
+            "isRequired": true,
+            "marks": 1,
+            "moduleId": null,
+            "negativeMarks": 0,
+            "options": [
+              "right",
+              "wrong"
+            ],
+            "order": 1,
+            "question": "Question for regq-self?",
+            "questionType": "MCQ_SINGLE",
+            "quizId": null,
+            "quizQuestionId": "regq-self-qq",
+            "status": "ACTIVE",
+            "subject": "General",
+            "tags": "",
+            "title": null,
+            "topic": "General",
+            "updatedAt": "<date>"
+          }
+        ],
+        "quizTag": "SELF_TEST",
+        "revealAnswers": true,
+        "shuffleOptions": false,
+        "shuffleQuestions": false,
+        "startDate": null,
+        "status": "ACTIVE",
+        "subTopicId": null,
+        "timeLimit": null,
+        "title": "Quiz regq-self",
+        "topicId": null,
+        "updatedAt": "<date>"
+      },
+      "success": true
+    }
+  },
+  "SELF_TEST result before attempt": {
+    "status": 404,
+    "queries": 8,
+    "body": {
+      "message": "Quiz submission not found",
+      "success": false
+    }
+  },
+  "SELF_TEST wrong answer submit": {
+    "status": 201,
+    "queries": 15,
+    "body": {
+      "data": {
+        "answers": [
+          {
+            "answer": "wrong",
+            "questionId": "regq-q-regq-self"
+          }
+        ],
+        "attemptId": "<id>",
+        "attemptNumber": 1,
+        "conceptScores": null,
+        "id": "<id>",
+        "passed": false,
+        "percentage": 0,
+        "quizId": "regq-self",
+        "score": 0,
+        "studentId": "regq-student-profile",
+        "submittedAt": "<date>",
+        "totalMarks": 1
+      },
+      "success": true
+    }
+  },
+  "SELF_TEST result after wrong answer": {
+    "status": 200,
+    "queries": 8,
+    "body": {
+      "data": {
+        "answerKeyRevealed": true,
+        "answers": [
+          {
+            "answer": "wrong",
+            "questionId": "regq-q-regq-self"
+          }
+        ],
+        "attemptId": "<id>",
+        "attemptNumber": 1,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "id": "<id>",
+            "passed": false,
+            "percentage": 0,
+            "score": 0,
+            "submittedAt": "<date>",
+            "timeTakenSeconds": 30,
+            "totalMarks": 1
+          }
+        ],
+        "attemptsRemaining": null,
+        "attemptsUsed": 1,
+        "canAttempt": true,
+        "conceptScores": null,
+        "correctCount": 0,
+        "id": "<id>",
+        "incorrectCount": 1,
+        "isLatestAttempt": true,
+        "maxAttempts": null,
+        "passed": false,
+        "percentage": 0,
+        "qualification": null,
+        "questionAttempts": [
+          {
+            "answer": "wrong",
+            "answered": true,
+            "answeredAt": null,
+            "createdAt": "<date>",
+            "firstVisitedAt": null,
+            "hintViewed": false,
+            "id": "<id>",
+            "isCorrect": false,
+            "lastVisitedAt": null,
+            "marksObtained": 0,
+            "maxMarks": 1,
+            "order": 1,
+            "question": {
+              "id": "regq-q-regq-self",
+              "moduleId": null,
+              "topic": "General"
+            },
+            "questionId": "regq-q-regq-self",
+            "quizAttemptId": "<id>",
+            "skipped": false,
+            "skippedAt": null,
+            "status": "ANSWERED",
+            "updatedAt": "<date>",
+            "visited": true
+          }
+        ],
+        "quiz": {
+          "attempts": 0,
+          "availableFrom": null,
+          "availableUntil": null,
+          "conceptId": null,
+          "course": {
+            "id": "regq-course",
+            "title": "Regression course"
+          },
+          "courseId": "regq-course",
+          "createdAt": "<date>",
+          "description": null,
+          "dueDate": null,
+          "id": "regq-self",
+          "instructions": null,
+          "isPublished": true,
+          "lessonId": null,
+          "module": null,
+          "moduleId": null,
+          "negativeMarking": 0,
+          "order": null,
+          "passingScore": 50,
+          "questions": [
+            {
+              "correctAnswer": "right",
+              "courseId": "regq-course",
+              "createdAt": "<date>",
+              "createdBy": null,
+              "difficulty": "MEDIUM",
+              "explanation": "because",
+              "hint": "think",
+              "id": "regq-q-regq-self",
+              "isPublished": true,
+              "isRequired": true,
+              "marks": 1,
+              "moduleId": null,
+              "negativeMarks": 0,
+              "options": [
+                "right",
+                "wrong"
+              ],
+              "order": 1,
+              "question": "Question for regq-self?",
+              "questionType": "MCQ_SINGLE",
+              "quizId": null,
+              "status": "ACTIVE",
+              "subject": "General",
+              "tags": "",
+              "title": null,
+              "topic": "General",
+              "updatedAt": "<date>"
+            }
+          ],
+          "quizQuestions": [
+            {
+              "createdAt": "<date>",
+              "id": "regq-self-qq",
+              "isMandatory": true,
+              "marks": 1,
+              "order": 1,
+              "question": {
+                "correctAnswer": "right",
+                "courseId": "regq-course",
+                "createdAt": "<date>",
+                "createdBy": null,
+                "difficulty": "MEDIUM",
+                "explanation": "because",
+                "hint": "think",
+                "id": "regq-q-regq-self",
+                "isPublished": true,
+                "isRequired": true,
+                "marks": 1,
+                "moduleId": null,
+                "negativeMarks": 0,
+                "options": [
+                  "right",
+                  "wrong"
+                ],
+                "order": null,
+                "question": "Question for regq-self?",
+                "questionType": "MCQ_SINGLE",
+                "quizId": null,
+                "status": "ACTIVE",
+                "subject": "General",
+                "tags": "",
+                "title": null,
+                "topic": "General",
+                "updatedAt": "<date>"
+              },
+              "questionId": "regq-q-regq-self",
+              "quizId": "regq-self"
+            }
+          ],
+          "quizTag": "SELF_TEST",
+          "shuffleOptions": false,
+          "shuffleQuestions": false,
+          "startDate": null,
+          "status": "ACTIVE",
+          "subTopicId": null,
+          "timeLimit": null,
+          "title": "Quiz regq-self",
+          "topicId": null,
+          "updatedAt": "<date>"
+        },
+        "quizId": "regq-self",
+        "score": 0,
+        "studentId": "regq-student-profile",
+        "submittedAt": "<date>",
+        "summary": {
+          "answeredCount": 1,
+          "correctCount": 0,
+          "hintViewedCount": 0,
+          "incorrectCount": 1,
+          "marksObtained": 0,
+          "maxMarks": 1,
+          "notVisitedCount": 0,
+          "percentage": 0,
+          "score": 0,
+          "skippedCount": 0,
+          "totalQuestions": 1,
+          "unansweredCount": 0,
+          "visitedCount": 1
+        },
+        "timeTakenSeconds": 30,
+        "totalMarks": 1,
+        "totalQuestions": 1,
+        "unansweredCount": 0,
+        "unlimitedAttempts": true
+      },
+      "success": true
+    }
+  },
+  "SELF_TEST right answer submit": {
+    "status": 201,
+    "queries": 15,
+    "body": {
+      "data": {
+        "answers": [
+          {
+            "answer": "right",
+            "questionId": "regq-q-regq-self"
+          }
+        ],
+        "attemptId": "<id>",
+        "attemptNumber": 2,
+        "conceptScores": null,
+        "id": "<id>",
+        "passed": true,
+        "percentage": 100,
+        "quizId": "regq-self",
+        "score": 1,
+        "studentId": "regq-student-profile",
+        "submittedAt": "<date>",
+        "totalMarks": 1
+      },
+      "success": true
+    }
+  },
+  "SELF_TEST result after right answer": {
+    "status": 200,
+    "queries": 8,
+    "body": {
+      "data": {
+        "answerKeyRevealed": true,
+        "answers": [
+          {
+            "answer": "right",
+            "questionId": "regq-q-regq-self"
+          }
+        ],
+        "attemptId": "<id>",
+        "attemptNumber": 2,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "id": "<id>",
+            "passed": false,
+            "percentage": 0,
+            "score": 0,
+            "submittedAt": "<date>",
+            "timeTakenSeconds": 30,
+            "totalMarks": 1
+          },
+          {
+            "attemptNumber": 2,
+            "id": "<id>",
+            "passed": true,
+            "percentage": 100,
+            "score": 1,
+            "submittedAt": "<date>",
+            "timeTakenSeconds": null,
+            "totalMarks": 1
+          }
+        ],
+        "attemptsRemaining": null,
+        "attemptsUsed": 2,
+        "canAttempt": true,
+        "conceptScores": null,
+        "correctCount": 1,
+        "id": "<id>",
+        "incorrectCount": 0,
+        "isLatestAttempt": true,
+        "maxAttempts": null,
+        "passed": true,
+        "percentage": 100,
+        "qualification": null,
+        "questionAttempts": [
+          {
+            "answer": "right",
+            "answered": true,
+            "answeredAt": null,
+            "createdAt": "<date>",
+            "firstVisitedAt": null,
+            "hintViewed": false,
+            "id": "<id>",
+            "isCorrect": true,
+            "lastVisitedAt": null,
+            "marksObtained": 1,
+            "maxMarks": 1,
+            "order": 1,
+            "question": {
+              "id": "regq-q-regq-self",
+              "moduleId": null,
+              "topic": "General"
+            },
+            "questionId": "regq-q-regq-self",
+            "quizAttemptId": "<id>",
+            "skipped": false,
+            "skippedAt": null,
+            "status": "ANSWERED",
+            "updatedAt": "<date>",
+            "visited": true
+          }
+        ],
+        "quiz": {
+          "attempts": 0,
+          "availableFrom": null,
+          "availableUntil": null,
+          "conceptId": null,
+          "course": {
+            "id": "regq-course",
+            "title": "Regression course"
+          },
+          "courseId": "regq-course",
+          "createdAt": "<date>",
+          "description": null,
+          "dueDate": null,
+          "id": "regq-self",
+          "instructions": null,
+          "isPublished": true,
+          "lessonId": null,
+          "module": null,
+          "moduleId": null,
+          "negativeMarking": 0,
+          "order": null,
+          "passingScore": 50,
+          "questions": [
+            {
+              "correctAnswer": "right",
+              "courseId": "regq-course",
+              "createdAt": "<date>",
+              "createdBy": null,
+              "difficulty": "MEDIUM",
+              "explanation": "because",
+              "hint": "think",
+              "id": "regq-q-regq-self",
+              "isPublished": true,
+              "isRequired": true,
+              "marks": 1,
+              "moduleId": null,
+              "negativeMarks": 0,
+              "options": [
+                "right",
+                "wrong"
+              ],
+              "order": 1,
+              "question": "Question for regq-self?",
+              "questionType": "MCQ_SINGLE",
+              "quizId": null,
+              "status": "ACTIVE",
+              "subject": "General",
+              "tags": "",
+              "title": null,
+              "topic": "General",
+              "updatedAt": "<date>"
+            }
+          ],
+          "quizQuestions": [
+            {
+              "createdAt": "<date>",
+              "id": "regq-self-qq",
+              "isMandatory": true,
+              "marks": 1,
+              "order": 1,
+              "question": {
+                "correctAnswer": "right",
+                "courseId": "regq-course",
+                "createdAt": "<date>",
+                "createdBy": null,
+                "difficulty": "MEDIUM",
+                "explanation": "because",
+                "hint": "think",
+                "id": "regq-q-regq-self",
+                "isPublished": true,
+                "isRequired": true,
+                "marks": 1,
+                "moduleId": null,
+                "negativeMarks": 0,
+                "options": [
+                  "right",
+                  "wrong"
+                ],
+                "order": null,
+                "question": "Question for regq-self?",
+                "questionType": "MCQ_SINGLE",
+                "quizId": null,
+                "status": "ACTIVE",
+                "subject": "General",
+                "tags": "",
+                "title": null,
+                "topic": "General",
+                "updatedAt": "<date>"
+              },
+              "questionId": "regq-q-regq-self",
+              "quizId": "regq-self"
+            }
+          ],
+          "quizTag": "SELF_TEST",
+          "shuffleOptions": false,
+          "shuffleQuestions": false,
+          "startDate": null,
+          "status": "ACTIVE",
+          "subTopicId": null,
+          "timeLimit": null,
+          "title": "Quiz regq-self",
+          "topicId": null,
+          "updatedAt": "<date>"
+        },
+        "quizId": "regq-self",
+        "score": 1,
+        "studentId": "regq-student-profile",
+        "submittedAt": "<date>",
+        "summary": {
+          "answeredCount": 1,
+          "correctCount": 1,
+          "hintViewedCount": 0,
+          "incorrectCount": 0,
+          "marksObtained": 1,
+          "maxMarks": 1,
+          "notVisitedCount": 0,
+          "percentage": 100,
+          "score": 1,
+          "skippedCount": 0,
+          "totalQuestions": 1,
+          "unansweredCount": 0,
+          "visitedCount": 1
+        },
+        "timeTakenSeconds": null,
+        "totalMarks": 1,
+        "totalQuestions": 1,
+        "unansweredCount": 0,
+        "unlimitedAttempts": true
+      },
+      "success": true
+    }
+  },
+  "SELF_TEST instructor edit": {
+    "status": 200,
+    "queries": 6,
+    "body": {
+      "data": {
+        "attempts": 0,
+        "availableFrom": null,
+        "availableUntil": null,
+        "conceptId": null,
+        "courseId": "regq-course",
+        "createdAt": "<date>",
+        "description": "Edited",
+        "dueDate": null,
+        "id": "regq-self",
+        "instructions": null,
+        "isPublished": true,
+        "lessonId": null,
+        "moduleId": null,
+        "negativeMarking": 0,
+        "order": null,
+        "passingScore": 50,
+        "questions": [
+          {
+            "correctAnswer": "right",
+            "courseId": "regq-course",
+            "createdAt": "<date>",
+            "createdBy": null,
+            "difficulty": "MEDIUM",
+            "explanation": "because",
+            "hint": "think",
+            "id": "regq-q-regq-self",
+            "isMandatory": true,
+            "isPublished": true,
+            "isRequired": true,
+            "marks": 1,
+            "moduleId": null,
+            "negativeMarks": 0,
+            "options": [
+              "right",
+              "wrong"
+            ],
+            "order": 1,
+            "question": "Question for regq-self?",
+            "questionType": "MCQ_SINGLE",
+            "quizId": null,
+            "quizQuestionId": "regq-self-qq",
+            "status": "ACTIVE",
+            "subject": "General",
+            "tags": "",
+            "title": null,
+            "topic": "General",
+            "updatedAt": "<date>"
+          }
+        ],
+        "quizQuestions": [
+          {
+            "createdAt": "<date>",
+            "id": "regq-self-qq",
+            "isMandatory": true,
+            "marks": 1,
+            "order": 1,
+            "question": {
+              "correctAnswer": "right",
+              "courseId": "regq-course",
+              "createdAt": "<date>",
+              "createdBy": null,
+              "difficulty": "MEDIUM",
+              "explanation": "because",
+              "hint": "think",
+              "id": "regq-q-regq-self",
+              "isPublished": true,
+              "isRequired": true,
+              "marks": 1,
+              "moduleId": null,
+              "negativeMarks": 0,
+              "options": [
+                "right",
+                "wrong"
+              ],
+              "order": null,
+              "question": "Question for regq-self?",
+              "questionType": "MCQ_SINGLE",
+              "quizId": null,
+              "status": "ACTIVE",
+              "subject": "General",
+              "tags": "",
+              "title": null,
+              "topic": "General",
+              "updatedAt": "<date>"
+            },
+            "questionId": "regq-q-regq-self",
+            "quizId": "regq-self"
+          }
+        ],
+        "quizTag": "SELF_TEST",
+        "shuffleOptions": false,
+        "shuffleQuestions": false,
+        "startDate": null,
+        "status": "ACTIVE",
+        "subTopicId": null,
+        "timeLimit": null,
+        "title": "Quiz regq-self",
+        "topicId": null,
+        "updatedAt": "<date>"
+      },
+      "success": true
+    }
+  },
+  "QUALIFYING instructor read": {
+    "status": 200,
+    "queries": 3,
+    "body": {
+      "data": {
+        "attempts": 2,
+        "availableFrom": null,
+        "availableUntil": null,
+        "conceptId": null,
+        "courseId": "regq-course",
+        "createdAt": "<date>",
+        "description": null,
+        "dueDate": null,
+        "id": "regq-qual",
+        "instructions": null,
+        "isPublished": true,
+        "lessonId": "regq-lesson",
+        "moduleId": "regq-module",
+        "negativeMarking": 0,
+        "order": null,
+        "passingScore": 50,
+        "questions": [
+          {
+            "correctAnswer": "right",
+            "courseId": "regq-course",
+            "createdAt": "<date>",
+            "createdBy": null,
+            "difficulty": "MEDIUM",
+            "explanation": "because",
+            "hint": "think",
+            "id": "regq-q-regq-qual",
+            "isMandatory": true,
+            "isPublished": true,
+            "isRequired": true,
+            "marks": 1,
+            "moduleId": null,
+            "negativeMarks": 0,
+            "options": [
+              "right",
+              "wrong"
+            ],
+            "order": 1,
+            "question": "Question for regq-qual?",
+            "questionType": "MCQ_SINGLE",
+            "quizId": null,
+            "quizQuestionId": "regq-qual-qq",
+            "status": "ACTIVE",
+            "subject": "General",
+            "tags": "",
+            "title": null,
+            "topic": "General",
+            "updatedAt": "<date>"
+          }
+        ],
+        "quizQuestions": [
+          {
+            "createdAt": "<date>",
+            "id": "regq-qual-qq",
+            "isMandatory": true,
+            "marks": 1,
+            "order": 1,
+            "question": {
+              "correctAnswer": "right",
+              "courseId": "regq-course",
+              "createdAt": "<date>",
+              "createdBy": null,
+              "difficulty": "MEDIUM",
+              "explanation": "because",
+              "hint": "think",
+              "id": "regq-q-regq-qual",
+              "isPublished": true,
+              "isRequired": true,
+              "marks": 1,
+              "moduleId": null,
+              "negativeMarks": 0,
+              "options": [
+                "right",
+                "wrong"
+              ],
+              "order": null,
+              "question": "Question for regq-qual?",
+              "questionType": "MCQ_SINGLE",
+              "quizId": null,
+              "status": "ACTIVE",
+              "subject": "General",
+              "tags": "",
+              "title": null,
+              "topic": "General",
+              "updatedAt": "<date>"
+            },
+            "questionId": "regq-q-regq-qual",
+            "quizId": "regq-qual"
+          }
+        ],
+        "quizTag": "QUALIFYING",
+        "shuffleOptions": false,
+        "shuffleQuestions": false,
+        "startDate": null,
+        "status": "ACTIVE",
+        "subTopicId": null,
+        "timeLimit": 15,
+        "title": "Quiz regq-qual",
+        "topicId": null,
+        "updatedAt": "<date>"
+      },
+      "success": true
+    }
+  },
+  "QUALIFYING student read": {
+    "status": 200,
+    "queries": 9,
+    "body": {
+      "data": {
+        "attemptStatus": {
+          "attemptsRemaining": 2,
+          "attemptsUsed": 0,
+          "canAttempt": true,
+          "maxAttempts": 2,
+          "unlimitedAttempts": false
+        },
+        "attempts": 2,
+        "availableFrom": null,
+        "availableUntil": null,
+        "conceptId": null,
+        "courseId": "regq-course",
+        "createdAt": "<date>",
+        "currentAttemptNumber": 1,
+        "description": null,
+        "dueDate": null,
+        "hintsUnlocked": false,
+        "id": "regq-qual",
+        "instructions": null,
+        "isPublished": true,
+        "lessonId": "regq-lesson",
+        "moduleId": "regq-module",
+        "negativeMarking": 0,
+        "order": null,
+        "passingScore": 50,
+        "questions": [
+          {
+            "courseId": "regq-course",
+            "createdAt": "<date>",
+            "createdBy": null,
+            "difficulty": "MEDIUM",
+            "hasHint": true,
+            "id": "regq-q-regq-qual",
+            "isMandatory": true,
+            "isPublished": true,
+            "isRequired": true,
+            "marks": 1,
+            "moduleId": null,
+            "negativeMarks": 0,
+            "options": [
+              "right",
+              "wrong"
+            ],
+            "order": 1,
+            "question": "Question for regq-qual?",
+            "questionType": "MCQ_SINGLE",
+            "quizId": null,
+            "quizQuestionId": "regq-qual-qq",
+            "status": "ACTIVE",
+            "subject": "General",
+            "tags": "",
+            "title": null,
+            "topic": "General",
+            "updatedAt": "<date>"
+          }
+        ],
+        "quizTag": "QUALIFYING",
+        "revealAnswers": false,
+        "shuffleOptions": false,
+        "shuffleQuestions": false,
+        "startDate": null,
+        "status": "ACTIVE",
+        "subTopicId": null,
+        "timeLimit": 15,
+        "title": "Quiz regq-qual",
+        "topicId": null,
+        "updatedAt": "<date>"
+      },
+      "success": true
+    }
+  },
+  "QUALIFYING result before attempt": {
+    "status": 404,
+    "queries": 8,
+    "body": {
+      "message": "Quiz submission not found",
+      "success": false
+    }
+  },
+  "QUALIFYING wrong answer submit": {
+    "status": 201,
+    "queries": 13,
+    "body": {
+      "data": {
+        "answers": [
+          {
+            "answer": "wrong",
+            "questionId": "regq-q-regq-qual"
+          }
+        ],
+        "attemptId": "<id>",
+        "attemptNumber": 1,
+        "conceptScores": null,
+        "id": "<id>",
+        "passed": false,
+        "percentage": 0,
+        "quizId": "regq-qual",
+        "score": 0,
+        "studentId": "regq-student-profile",
+        "submittedAt": "<date>",
+        "totalMarks": 1
+      },
+      "success": true
+    }
+  },
+  "QUALIFYING result after wrong answer": {
+    "status": 200,
+    "queries": 10,
+    "body": {
+      "data": {
+        "answerKeyRevealed": false,
+        "answers": [
+          {
+            "answer": "wrong",
+            "questionId": "regq-q-regq-qual"
+          }
+        ],
+        "attemptId": "<id>",
+        "attemptNumber": 1,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "id": "<id>",
+            "passed": false,
+            "percentage": 0,
+            "score": 0,
+            "submittedAt": "<date>",
+            "timeTakenSeconds": 30,
+            "totalMarks": 1
+          }
+        ],
+        "attemptsRemaining": 1,
+        "attemptsUsed": 1,
+        "canAttempt": true,
+        "conceptScores": null,
+        "correctCount": 0,
+        "id": "<id>",
+        "incorrectCount": 1,
+        "isLatestAttempt": true,
+        "maxAttempts": 2,
+        "passed": false,
+        "percentage": 0,
+        "qualification": {
+          "attemptId": "<id>",
+          "attemptNumber": 1,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "id": "<id>",
+              "passed": false,
+              "percentage": 0,
+              "score": 0,
+              "submittedAt": "<date>",
+              "timeTakenSeconds": 30,
+              "totalMarks": 1
+            }
+          ],
+          "attemptsRemaining": 1,
+          "attemptsUsed": 1,
+          "canRetake": true,
+          "hintsUsed": 0,
+          "isQualifyingTest": true,
+          "maxAttempts": 2,
+          "passingScore": 50,
+          "percentage": 0,
+          "qualified": false,
+          "questionBreakdown": {
+            "correct": 0,
+            "incorrect": 1,
+            "skipped": 0,
+            "total": 1,
+            "unanswered": 0
+          },
+          "recommendedContent": [
+            {
+              "id": "regq-lesson",
+              "kind": "LESSON",
+              "matchedConcepts": [],
+              "moduleId": "regq-module",
+              "title": "Lesson"
+            }
+          ],
+          "score": 0,
+          "target": {
+            "id": "regq-lesson",
+            "kind": "LESSON",
+            "title": "Lesson"
+          },
+          "timeTakenSeconds": 30,
+          "totalMarks": 1,
+          "unlimitedAttempts": false,
+          "weakConcepts": []
+        },
+        "questionAttempts": [
+          {
+            "answer": "wrong",
+            "answered": true,
+            "answeredAt": null,
+            "createdAt": "<date>",
+            "firstVisitedAt": null,
+            "hintViewed": false,
+            "id": "<id>",
+            "isCorrect": false,
+            "lastVisitedAt": null,
+            "marksObtained": 0,
+            "maxMarks": 1,
+            "order": 1,
+            "question": {
+              "id": "regq-q-regq-qual",
+              "moduleId": null,
+              "topic": "General"
+            },
+            "questionId": "regq-q-regq-qual",
+            "quizAttemptId": "<id>",
+            "skipped": false,
+            "skippedAt": null,
+            "status": "ANSWERED",
+            "updatedAt": "<date>",
+            "visited": true
+          }
+        ],
+        "quiz": {
+          "attempts": 2,
+          "availableFrom": null,
+          "availableUntil": null,
+          "conceptId": null,
+          "course": {
+            "id": "regq-course",
+            "title": "Regression course"
+          },
+          "courseId": "regq-course",
+          "createdAt": "<date>",
+          "description": null,
+          "dueDate": null,
+          "id": "regq-qual",
+          "instructions": null,
+          "isPublished": true,
+          "lessonId": "regq-lesson",
+          "module": {
+            "id": "regq-module",
+            "title": "Module"
+          },
+          "moduleId": "regq-module",
+          "negativeMarking": 0,
+          "order": null,
+          "passingScore": 50,
+          "questions": [
+            {
+              "courseId": "regq-course",
+              "createdAt": "<date>",
+              "createdBy": null,
+              "difficulty": "MEDIUM",
+              "id": "regq-q-regq-qual",
+              "isPublished": true,
+              "isRequired": true,
+              "marks": 1,
+              "moduleId": null,
+              "negativeMarks": 0,
+              "options": [
+                "right",
+                "wrong"
+              ],
+              "order": 1,
+              "question": "Question for regq-qual?",
+              "questionType": "MCQ_SINGLE",
+              "quizId": null,
+              "status": "ACTIVE",
+              "subject": "General",
+              "tags": "",
+              "title": null,
+              "topic": "General",
+              "updatedAt": "<date>"
+            }
+          ],
+          "quizTag": "QUALIFYING",
+          "shuffleOptions": false,
+          "shuffleQuestions": false,
+          "startDate": null,
+          "status": "ACTIVE",
+          "subTopicId": null,
+          "timeLimit": 15,
+          "title": "Quiz regq-qual",
+          "topicId": null,
+          "updatedAt": "<date>"
+        },
+        "quizId": "regq-qual",
+        "score": 0,
+        "studentId": "regq-student-profile",
+        "submittedAt": "<date>",
+        "summary": {
+          "answeredCount": 1,
+          "correctCount": 0,
+          "hintViewedCount": 0,
+          "incorrectCount": 1,
+          "marksObtained": 0,
+          "maxMarks": 1,
+          "notVisitedCount": 0,
+          "percentage": 0,
+          "score": 0,
+          "skippedCount": 0,
+          "totalQuestions": 1,
+          "unansweredCount": 0,
+          "visitedCount": 1
+        },
+        "timeTakenSeconds": 30,
+        "totalMarks": 1,
+        "totalQuestions": 1,
+        "unansweredCount": 0,
+        "unlimitedAttempts": false
+      },
+      "success": true
+    }
+  },
+  "QUALIFYING right answer submit": {
+    "status": 201,
+    "queries": 13,
+    "body": {
+      "data": {
+        "answers": [
+          {
+            "answer": "right",
+            "questionId": "regq-q-regq-qual"
+          }
+        ],
+        "attemptId": "<id>",
+        "attemptNumber": 2,
+        "conceptScores": null,
+        "id": "<id>",
+        "passed": true,
+        "percentage": 100,
+        "quizId": "regq-qual",
+        "score": 1,
+        "studentId": "regq-student-profile",
+        "submittedAt": "<date>",
+        "totalMarks": 1
+      },
+      "success": true
+    }
+  },
+  "QUALIFYING result after right answer": {
+    "status": 200,
+    "queries": 9,
+    "body": {
+      "data": {
+        "answerKeyRevealed": true,
+        "answers": [
+          {
+            "answer": "right",
+            "questionId": "regq-q-regq-qual"
+          }
+        ],
+        "attemptId": "<id>",
+        "attemptNumber": 2,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "id": "<id>",
+            "passed": false,
+            "percentage": 0,
+            "score": 0,
+            "submittedAt": "<date>",
+            "timeTakenSeconds": 30,
+            "totalMarks": 1
+          },
+          {
+            "attemptNumber": 2,
+            "id": "<id>",
+            "passed": true,
+            "percentage": 100,
+            "score": 1,
+            "submittedAt": "<date>",
+            "timeTakenSeconds": null,
+            "totalMarks": 1
+          }
+        ],
+        "attemptsRemaining": 0,
+        "attemptsUsed": 2,
+        "canAttempt": false,
+        "conceptScores": null,
+        "correctCount": 1,
+        "id": "<id>",
+        "incorrectCount": 0,
+        "isLatestAttempt": true,
+        "maxAttempts": 2,
+        "passed": true,
+        "percentage": 100,
+        "qualification": {
+          "attemptId": "<id>",
+          "attemptNumber": 2,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "id": "<id>",
+              "passed": false,
+              "percentage": 0,
+              "score": 0,
+              "submittedAt": "<date>",
+              "timeTakenSeconds": 30,
+              "totalMarks": 1
+            },
+            {
+              "attemptNumber": 2,
+              "id": "<id>",
+              "passed": true,
+              "percentage": 100,
+              "score": 1,
+              "submittedAt": "<date>",
+              "timeTakenSeconds": null,
+              "totalMarks": 1
+            }
+          ],
+          "attemptsRemaining": 0,
+          "attemptsUsed": 2,
+          "canRetake": false,
+          "hintsUsed": 0,
+          "isQualifyingTest": true,
+          "maxAttempts": 2,
+          "passingScore": 50,
+          "percentage": 100,
+          "qualified": true,
+          "questionBreakdown": {
+            "correct": 1,
+            "incorrect": 0,
+            "skipped": 0,
+            "total": 1,
+            "unanswered": 0
+          },
+          "recommendedContent": [],
+          "score": 1,
+          "target": {
+            "id": "regq-lesson",
+            "kind": "LESSON",
+            "title": "Lesson"
+          },
+          "timeTakenSeconds": null,
+          "totalMarks": 1,
+          "unlimitedAttempts": false,
+          "weakConcepts": []
+        },
+        "questionAttempts": [
+          {
+            "answer": "right",
+            "answered": true,
+            "answeredAt": null,
+            "createdAt": "<date>",
+            "firstVisitedAt": null,
+            "hintViewed": false,
+            "id": "<id>",
+            "isCorrect": true,
+            "lastVisitedAt": null,
+            "marksObtained": 1,
+            "maxMarks": 1,
+            "order": 1,
+            "question": {
+              "id": "regq-q-regq-qual",
+              "moduleId": null,
+              "topic": "General"
+            },
+            "questionId": "regq-q-regq-qual",
+            "quizAttemptId": "<id>",
+            "skipped": false,
+            "skippedAt": null,
+            "status": "ANSWERED",
+            "updatedAt": "<date>",
+            "visited": true
+          }
+        ],
+        "quiz": {
+          "attempts": 2,
+          "availableFrom": null,
+          "availableUntil": null,
+          "conceptId": null,
+          "course": {
+            "id": "regq-course",
+            "title": "Regression course"
+          },
+          "courseId": "regq-course",
+          "createdAt": "<date>",
+          "description": null,
+          "dueDate": null,
+          "id": "regq-qual",
+          "instructions": null,
+          "isPublished": true,
+          "lessonId": "regq-lesson",
+          "module": {
+            "id": "regq-module",
+            "title": "Module"
+          },
+          "moduleId": "regq-module",
+          "negativeMarking": 0,
+          "order": null,
+          "passingScore": 50,
+          "questions": [
+            {
+              "correctAnswer": "right",
+              "courseId": "regq-course",
+              "createdAt": "<date>",
+              "createdBy": null,
+              "difficulty": "MEDIUM",
+              "explanation": "because",
+              "hint": "think",
+              "id": "regq-q-regq-qual",
+              "isPublished": true,
+              "isRequired": true,
+              "marks": 1,
+              "moduleId": null,
+              "negativeMarks": 0,
+              "options": [
+                "right",
+                "wrong"
+              ],
+              "order": 1,
+              "question": "Question for regq-qual?",
+              "questionType": "MCQ_SINGLE",
+              "quizId": null,
+              "status": "ACTIVE",
+              "subject": "General",
+              "tags": "",
+              "title": null,
+              "topic": "General",
+              "updatedAt": "<date>"
+            }
+          ],
+          "quizQuestions": [
+            {
+              "createdAt": "<date>",
+              "id": "regq-qual-qq",
+              "isMandatory": true,
+              "marks": 1,
+              "order": 1,
+              "question": {
+                "correctAnswer": "right",
+                "courseId": "regq-course",
+                "createdAt": "<date>",
+                "createdBy": null,
+                "difficulty": "MEDIUM",
+                "explanation": "because",
+                "hint": "think",
+                "id": "regq-q-regq-qual",
+                "isPublished": true,
+                "isRequired": true,
+                "marks": 1,
+                "moduleId": null,
+                "negativeMarks": 0,
+                "options": [
+                  "right",
+                  "wrong"
+                ],
+                "order": null,
+                "question": "Question for regq-qual?",
+                "questionType": "MCQ_SINGLE",
+                "quizId": null,
+                "status": "ACTIVE",
+                "subject": "General",
+                "tags": "",
+                "title": null,
+                "topic": "General",
+                "updatedAt": "<date>"
+              },
+              "questionId": "regq-q-regq-qual",
+              "quizId": "regq-qual"
+            }
+          ],
+          "quizTag": "QUALIFYING",
+          "shuffleOptions": false,
+          "shuffleQuestions": false,
+          "startDate": null,
+          "status": "ACTIVE",
+          "subTopicId": null,
+          "timeLimit": 15,
+          "title": "Quiz regq-qual",
+          "topicId": null,
+          "updatedAt": "<date>"
+        },
+        "quizId": "regq-qual",
+        "score": 1,
+        "studentId": "regq-student-profile",
+        "submittedAt": "<date>",
+        "summary": {
+          "answeredCount": 1,
+          "correctCount": 1,
+          "hintViewedCount": 0,
+          "incorrectCount": 0,
+          "marksObtained": 1,
+          "maxMarks": 1,
+          "notVisitedCount": 0,
+          "percentage": 100,
+          "score": 1,
+          "skippedCount": 0,
+          "totalQuestions": 1,
+          "unansweredCount": 0,
+          "visitedCount": 1
+        },
+        "timeTakenSeconds": null,
+        "totalMarks": 1,
+        "totalQuestions": 1,
+        "unansweredCount": 0,
+        "unlimitedAttempts": false
+      },
+      "success": true
+    }
+  },
+  "QUALIFYING instructor edit": {
+    "status": 200,
+    "queries": 6,
+    "body": {
+      "data": {
+        "attempts": 2,
+        "availableFrom": null,
+        "availableUntil": null,
+        "conceptId": null,
+        "courseId": "regq-course",
+        "createdAt": "<date>",
+        "description": "Edited",
+        "dueDate": null,
+        "id": "regq-qual",
+        "instructions": null,
+        "isPublished": true,
+        "lessonId": "regq-lesson",
+        "moduleId": "regq-module",
+        "negativeMarking": 0,
+        "order": null,
+        "passingScore": 50,
+        "questions": [
+          {
+            "correctAnswer": "right",
+            "courseId": "regq-course",
+            "createdAt": "<date>",
+            "createdBy": null,
+            "difficulty": "MEDIUM",
+            "explanation": "because",
+            "hint": "think",
+            "id": "regq-q-regq-qual",
+            "isMandatory": true,
+            "isPublished": true,
+            "isRequired": true,
+            "marks": 1,
+            "moduleId": null,
+            "negativeMarks": 0,
+            "options": [
+              "right",
+              "wrong"
+            ],
+            "order": 1,
+            "question": "Question for regq-qual?",
+            "questionType": "MCQ_SINGLE",
+            "quizId": null,
+            "quizQuestionId": "regq-qual-qq",
+            "status": "ACTIVE",
+            "subject": "General",
+            "tags": "",
+            "title": null,
+            "topic": "General",
+            "updatedAt": "<date>"
+          }
+        ],
+        "quizQuestions": [
+          {
+            "createdAt": "<date>",
+            "id": "regq-qual-qq",
+            "isMandatory": true,
+            "marks": 1,
+            "order": 1,
+            "question": {
+              "correctAnswer": "right",
+              "courseId": "regq-course",
+              "createdAt": "<date>",
+              "createdBy": null,
+              "difficulty": "MEDIUM",
+              "explanation": "because",
+              "hint": "think",
+              "id": "regq-q-regq-qual",
+              "isPublished": true,
+              "isRequired": true,
+              "marks": 1,
+              "moduleId": null,
+              "negativeMarks": 0,
+              "options": [
+                "right",
+                "wrong"
+              ],
+              "order": null,
+              "question": "Question for regq-qual?",
+              "questionType": "MCQ_SINGLE",
+              "quizId": null,
+              "status": "ACTIVE",
+              "subject": "General",
+              "tags": "",
+              "title": null,
+              "topic": "General",
+              "updatedAt": "<date>"
+            },
+            "questionId": "regq-q-regq-qual",
+            "quizId": "regq-qual"
+          }
+        ],
+        "quizTag": "QUALIFYING",
+        "shuffleOptions": false,
+        "shuffleQuestions": false,
+        "startDate": null,
+        "status": "ACTIVE",
+        "subTopicId": null,
+        "timeLimit": 25,
+        "title": "Quiz regq-qual",
+        "topicId": null,
+        "updatedAt": "<date>"
+      },
+      "success": true
+    }
+  },
+  "student quiz list": {
+    "status": 200,
+    "queries": 4,
+    "body": {
+      "data": [
+        {
+          "_count": {
+            "quizQuestions": 1
+          },
+          "attempts": 2,
+          "availableFrom": null,
+          "availableUntil": null,
+          "conceptId": null,
+          "course": {
+            "id": "regq-course",
+            "title": "Regression course"
+          },
+          "courseId": "regq-course",
+          "createdAt": "<date>",
+          "description": "Edited",
+          "dueDate": null,
+          "id": "regq-qual",
+          "instructions": null,
+          "isPublished": true,
+          "lessonId": "regq-lesson",
+          "moduleId": "regq-module",
+          "negativeMarking": 0,
+          "order": null,
+          "passingScore": 50,
+          "quizTag": "QUALIFYING",
+          "shuffleOptions": false,
+          "shuffleQuestions": false,
+          "startDate": null,
+          "status": "ACTIVE",
+          "subTopicId": null,
+          "timeLimit": 25,
+          "title": "Quiz regq-qual",
+          "topicId": null,
+          "totalMarks": 1,
+          "updatedAt": "<date>"
+        },
+        {
+          "_count": {
+            "quizQuestions": 1
+          },
+          "attempts": 0,
+          "availableFrom": null,
+          "availableUntil": null,
+          "conceptId": null,
+          "course": {
+            "id": "regq-course",
+            "title": "Regression course"
+          },
+          "courseId": "regq-course",
+          "createdAt": "<date>",
+          "description": "Edited",
+          "dueDate": null,
+          "id": "regq-self",
+          "instructions": null,
+          "isPublished": true,
+          "lessonId": null,
+          "moduleId": null,
+          "negativeMarking": 0,
+          "order": null,
+          "passingScore": 50,
+          "quizTag": "SELF_TEST",
+          "shuffleOptions": false,
+          "shuffleQuestions": false,
+          "startDate": null,
+          "status": "ACTIVE",
+          "subTopicId": null,
+          "timeLimit": null,
+          "title": "Quiz regq-self",
+          "topicId": null,
+          "totalMarks": 1,
+          "updatedAt": "<date>"
+        },
+        {
+          "_count": {
+            "quizQuestions": 1
+          },
+          "attempts": 2,
+          "availableFrom": null,
+          "availableUntil": null,
+          "conceptId": null,
+          "course": {
+            "id": "regq-course",
+            "title": "Regression course"
+          },
+          "courseId": "regq-course",
+          "createdAt": "<date>",
+          "description": "Edited",
+          "dueDate": null,
+          "id": "regq-final",
+          "instructions": null,
+          "isPublished": true,
+          "lessonId": null,
+          "moduleId": null,
+          "negativeMarking": 0,
+          "order": null,
+          "passingScore": 50,
+          "quizTag": "FINAL",
+          "shuffleOptions": false,
+          "shuffleQuestions": false,
+          "startDate": null,
+          "status": "ACTIVE",
+          "subTopicId": null,
+          "timeLimit": 25,
+          "title": "Quiz regq-final",
+          "topicId": null,
+          "totalMarks": 1,
+          "updatedAt": "<date>"
+        }
+      ],
+      "success": true
+    }
+  },
+  "instructor quiz list": {
+    "status": 200,
+    "queries": 2,
+    "body": {
+      "data": [
+        {
+          "_count": {
+            "quizQuestions": 1
+          },
+          "attempts": 2,
+          "availableFrom": null,
+          "availableUntil": null,
+          "conceptId": null,
+          "course": {
+            "id": "regq-course",
+            "title": "Regression course"
+          },
+          "courseId": "regq-course",
+          "createdAt": "<date>",
+          "description": "Edited",
+          "dueDate": null,
+          "id": "regq-qual",
+          "instructions": null,
+          "isPublished": true,
+          "lessonId": "regq-lesson",
+          "moduleId": "regq-module",
+          "negativeMarking": 0,
+          "order": null,
+          "passingScore": 50,
+          "quizTag": "QUALIFYING",
+          "shuffleOptions": false,
+          "shuffleQuestions": false,
+          "startDate": null,
+          "status": "ACTIVE",
+          "subTopicId": null,
+          "timeLimit": 25,
+          "title": "Quiz regq-qual",
+          "topicId": null,
+          "totalMarks": 1,
+          "updatedAt": "<date>"
+        },
+        {
+          "_count": {
+            "quizQuestions": 1
+          },
+          "attempts": 0,
+          "availableFrom": null,
+          "availableUntil": null,
+          "conceptId": null,
+          "course": {
+            "id": "regq-course",
+            "title": "Regression course"
+          },
+          "courseId": "regq-course",
+          "createdAt": "<date>",
+          "description": "Edited",
+          "dueDate": null,
+          "id": "regq-self",
+          "instructions": null,
+          "isPublished": true,
+          "lessonId": null,
+          "moduleId": null,
+          "negativeMarking": 0,
+          "order": null,
+          "passingScore": 50,
+          "quizTag": "SELF_TEST",
+          "shuffleOptions": false,
+          "shuffleQuestions": false,
+          "startDate": null,
+          "status": "ACTIVE",
+          "subTopicId": null,
+          "timeLimit": null,
+          "title": "Quiz regq-self",
+          "topicId": null,
+          "totalMarks": 1,
+          "updatedAt": "<date>"
+        },
+        {
+          "_count": {
+            "quizQuestions": 1
+          },
+          "attempts": 2,
+          "availableFrom": null,
+          "availableUntil": null,
+          "conceptId": null,
+          "course": {
+            "id": "regq-course",
+            "title": "Regression course"
+          },
+          "courseId": "regq-course",
+          "createdAt": "<date>",
+          "description": "Edited",
+          "dueDate": null,
+          "id": "regq-final",
+          "instructions": null,
+          "isPublished": true,
+          "lessonId": null,
+          "moduleId": null,
+          "negativeMarking": 0,
+          "order": null,
+          "passingScore": 50,
+          "quizTag": "FINAL",
+          "shuffleOptions": false,
+          "shuffleQuestions": false,
+          "startDate": null,
+          "status": "ACTIVE",
+          "subTopicId": null,
+          "timeLimit": 25,
+          "title": "Quiz regq-final",
+          "topicId": null,
+          "totalMarks": 1,
+          "updatedAt": "<date>"
+        }
+      ],
+      "success": true
+    }
+  },
+  "my submissions": {
+    "status": 200,
+    "queries": 6,
+    "body": {
+      "data": [
+        {
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "id": "<id>",
+              "passed": false,
+              "percentage": 0,
+              "score": 0,
+              "submittedAt": "<date>",
+              "timeTakenSeconds": 30,
+              "totalMarks": 1
+            },
+            {
+              "attemptNumber": 2,
+              "id": "<id>",
+              "passed": true,
+              "percentage": 100,
+              "score": 1,
+              "submittedAt": "<date>",
+              "timeTakenSeconds": null,
+              "totalMarks": 1
+            }
+          ],
+          "attemptsRemaining": 0,
+          "attemptsUsed": 2,
+          "bestPercentage": 100,
+          "canAttempt": false,
+          "course": {
+            "id": "regq-course",
+            "title": "Regression course"
+          },
+          "id": "regq-qual",
+          "kind": "quiz",
+          "latestAttempt": {
+            "attemptNumber": 2,
+            "id": "<id>",
+            "passed": true,
+            "percentage": 100,
+            "score": 1,
+            "submittedAt": "<date>",
+            "timeTakenSeconds": null,
+            "totalMarks": 1
+          },
+          "lessonId": "regq-lesson",
+          "lessonTitle": "Lesson",
+          "maxAttempts": 2,
+          "moduleTitle": "Module",
+          "passingScore": 50,
+          "quizTag": "QUALIFYING",
+          "title": "Quiz regq-qual",
+          "totalQuestions": 1,
+          "unlimitedAttempts": false
+        },
+        {
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "id": "<id>",
+              "passed": false,
+              "percentage": 0,
+              "score": 0,
+              "submittedAt": "<date>",
+              "timeTakenSeconds": 30,
+              "totalMarks": 1
+            },
+            {
+              "attemptNumber": 2,
+              "id": "<id>",
+              "passed": true,
+              "percentage": 100,
+              "score": 1,
+              "submittedAt": "<date>",
+              "timeTakenSeconds": null,
+              "totalMarks": 1
+            }
+          ],
+          "attemptsRemaining": null,
+          "attemptsUsed": 2,
+          "bestPercentage": 100,
+          "canAttempt": true,
+          "course": {
+            "id": "regq-course",
+            "title": "Regression course"
+          },
+          "id": "regq-self",
+          "kind": "quiz",
+          "latestAttempt": {
+            "attemptNumber": 2,
+            "id": "<id>",
+            "passed": true,
+            "percentage": 100,
+            "score": 1,
+            "submittedAt": "<date>",
+            "timeTakenSeconds": null,
+            "totalMarks": 1
+          },
+          "lessonId": null,
+          "lessonTitle": null,
+          "maxAttempts": null,
+          "moduleTitle": null,
+          "passingScore": 50,
+          "quizTag": "SELF_TEST",
+          "title": "Quiz regq-self",
+          "totalQuestions": 1,
+          "unlimitedAttempts": true
+        },
+        {
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "id": "<id>",
+              "passed": false,
+              "percentage": 0,
+              "score": 0,
+              "submittedAt": "<date>",
+              "timeTakenSeconds": 30,
+              "totalMarks": 1
+            },
+            {
+              "attemptNumber": 2,
+              "id": "<id>",
+              "passed": true,
+              "percentage": 100,
+              "score": 1,
+              "submittedAt": "<date>",
+              "timeTakenSeconds": null,
+              "totalMarks": 1
+            }
+          ],
+          "attemptsRemaining": 0,
+          "attemptsUsed": 2,
+          "bestPercentage": 100,
+          "canAttempt": false,
+          "course": {
+            "id": "regq-course",
+            "title": "Regression course"
+          },
+          "id": "regq-final",
+          "kind": "quiz",
+          "latestAttempt": {
+            "attemptNumber": 2,
+            "id": "<id>",
+            "passed": true,
+            "percentage": 100,
+            "score": 1,
+            "submittedAt": "<date>",
+            "timeTakenSeconds": null,
+            "totalMarks": 1
+          },
+          "lessonId": null,
+          "lessonTitle": null,
+          "maxAttempts": 2,
+          "moduleTitle": null,
+          "passingScore": 50,
+          "quizTag": "FINAL",
+          "title": "Quiz regq-final",
+          "totalQuestions": 1,
+          "unlimitedAttempts": false
+        }
+      ],
+      "success": true
+    }
+  },
+  "course progress": {
+    "status": 200,
+    "queries": 17,
+    "body": {
+      "data": {
+        "completed": true,
+        "completedAssignmentIds": [],
+        "completedContentIds": [],
+        "completedItems": 2,
+        "completedQuizIds": [
+          "regq-final",
+          "regq-self"
+        ],
+        "conceptProgresses": [],
+        "courseId": "regq-course",
+        "hierarchy": {
+          "assignments": [],
+          "completed": true,
+          "completedItems": 2,
+          "contents": [],
+          "directCompletedItems": 2,
+          "directTotalItems": 2,
+          "directVisitedItems": 2,
+          "id": "regq-course",
+          "items": [
+            {
+              "attempted": true,
+              "attemptsUsed": 2,
+              "completed": true,
+              "completedAt": "<date>",
+              "contentId": "regq-final-content",
+              "id": "regq-final",
+              "kind": "QUIZ",
+              "maxAttempts": 2,
+              "order": 1,
+              "passed": true,
+              "passingScore": 50,
+              "percentage": 100,
+              "questionCount": 1,
+              "quizId": "regq-final",
+              "quizTag": "FINAL",
+              "score": 1,
+              "submittedAt": "<date>",
+              "timeLimit": 25,
+              "title": "Quiz regq-final",
+              "totalMarks": 1,
+              "type": "QUIZ",
+              "visited": true,
+              "visitedAt": "<date>"
+            },
+            {
+              "attempted": true,
+              "attemptsUsed": 2,
+              "completed": true,
+              "completedAt": "<date>",
+              "contentId": "regq-self-content",
+              "id": "regq-self",
+              "kind": "QUIZ",
+              "maxAttempts": 0,
+              "order": 2,
+              "passed": true,
+              "passingScore": 50,
+              "percentage": 100,
+              "questionCount": 1,
+              "quizId": "regq-self",
+              "quizTag": "SELF_TEST",
+              "score": 1,
+              "submittedAt": "<date>",
+              "timeLimit": null,
+              "title": "Quiz regq-self",
+              "totalMarks": 1,
+              "type": "QUIZ",
+              "visited": true,
+              "visitedAt": "<date>"
+            }
+          ],
+          "language": "English",
+          "modules": [
+            {
+              "applicable": false,
+              "assignments": [],
+              "completed": false,
+              "completedAt": null,
+              "completedItems": 0,
+              "contents": [],
+              "directCompletedItems": 0,
+              "directTotalItems": 0,
+              "directVisitedItems": 0,
+              "id": "regq-module",
+              "items": [],
+              "lessons": [
+                {
+                  "applicable": false,
+                  "assignments": [],
+                  "completed": false,
+                  "completedAt": null,
+                  "completedItems": 0,
+                  "contents": [],
+                  "directCompletedItems": 0,
+                  "directTotalItems": 0,
+                  "directVisitedItems": 0,
+                  "id": "regq-lesson",
+                  "items": [],
+                  "order": 1,
+                  "progressPercent": 0,
+                  "qualified": true,
+                  "qualifiedAt": "<date>",
+                  "quizzes": [],
+                  "satisfied": true,
+                  "title": "Lesson",
+                  "topics": [],
+                  "totalItems": 0,
+                  "visited": false,
+                  "visitedAt": null,
+                  "visitedItems": 0,
+                  "visitedPercent": 0
+                }
+              ],
+              "order": 1,
+              "progressPercent": 0,
+              "qualified": false,
+              "qualifiedAt": null,
+              "quizzes": [],
+              "satisfied": false,
+              "title": "Module",
+              "totalItems": 0,
+              "visited": false,
+              "visitedAt": null,
+              "visitedItems": 0,
+              "visitedPercent": 0
+            }
+          ],
+          "progressPercent": 100,
+          "qualified": false,
+          "qualifiedAt": null,
+          "quizzes": [
+            {
+              "attempted": true,
+              "attemptsUsed": 2,
+              "completed": true,
+              "completedAt": "<date>",
+              "contentId": "regq-final-content",
+              "id": "regq-final",
+              "kind": "QUIZ",
+              "maxAttempts": 2,
+              "order": 1,
+              "passed": true,
+              "passingScore": 50,
+              "percentage": 100,
+              "questionCount": 1,
+              "quizId": "regq-final",
+              "quizTag": "FINAL",
+              "score": 1,
+              "submittedAt": "<date>",
+              "timeLimit": 25,
+              "title": "Quiz regq-final",
+              "totalMarks": 1,
+              "type": "QUIZ",
+              "visited": true,
+              "visitedAt": "<date>"
+            },
+            {
+              "attempted": true,
+              "attemptsUsed": 2,
+              "completed": true,
+              "completedAt": "<date>",
+              "contentId": "regq-self-content",
+              "id": "regq-self",
+              "kind": "QUIZ",
+              "maxAttempts": 0,
+              "order": 2,
+              "passed": true,
+              "passingScore": 50,
+              "percentage": 100,
+              "questionCount": 1,
+              "quizId": "regq-self",
+              "quizTag": "SELF_TEST",
+              "score": 1,
+              "submittedAt": "<date>",
+              "timeLimit": null,
+              "title": "Quiz regq-self",
+              "totalMarks": 1,
+              "type": "QUIZ",
+              "visited": true,
+              "visitedAt": "<date>"
+            }
+          ],
+          "satisfied": true,
+          "status": "PUBLISHED",
+          "title": "Regression course",
+          "totalItems": 2,
+          "visited": true,
+          "visitedItems": 2,
+          "visitedPercent": 100
+        },
+        "lessonProgresses": [],
+        "moduleProgresses": [],
+        "progressPercent": 100,
+        "studentId": "regq-student-profile",
+        "subTopicProgresses": [],
+        "topicProgresses": [],
+        "totalItems": 2,
+        "visited": true,
+        "visitedAssignmentIds": [],
+        "visitedConceptProgresses": [],
+        "visitedContentIds": [],
+        "visitedItems": 2,
+        "visitedLessonProgresses": [],
+        "visitedModuleProgresses": [],
+        "visitedPercent": 100,
+        "visitedQuizIds": [
+          "regq-final",
+          "regq-self"
+        ],
+        "visitedSubTopicProgresses": [],
+        "visitedTopicProgresses": []
+      },
+      "success": true
+    }
+  },
+  "instructor final tests": {
+    "status": 200,
+    "queries": 5,
+    "body": {
+      "data": [
+        {
+          "attemptedCount": 1,
+          "conceptTitle": null,
+          "course": {
+            "id": "regq-course",
+            "status": "PUBLISHED",
+            "title": "Regression course"
+          },
+          "enrolledCount": 1,
+          "failedCount": 0,
+          "id": "regq-final",
+          "lastSubmittedAt": "<date>",
+          "lessonTitle": null,
+          "moduleTitle": null,
+          "notAttemptedCount": 0,
+          "passingScore": 50,
+          "students": [
+            {
+              "attempted": true,
+              "attemptsCount": 1,
+              "passed": true,
+              "percentage": 100,
+              "score": 1,
+              "studentEmail": "regq-student@regression.example.com",
+              "studentId": "regq-student-profile",
+              "studentName": "Regression Student",
+              "submittedAt": "<date>",
+              "totalMarks": 1
+            }
+          ],
+          "subTopicTitle": null,
+          "title": "Quiz regq-final",
+          "topicTitle": null
+        }
+      ],
+      "success": true
+    }
+  },
+  "self generate": {
+    "status": 201,
+    "queries": 8,
+    "body": {
+      "data": {
+        "attempts": 1,
+        "availableFrom": null,
+        "availableUntil": null,
+        "conceptId": null,
+        "courseId": "regq-course",
+        "createdAt": "<date>",
+        "description": "Auto-generated practice quiz from this course's question bank.",
+        "dueDate": null,
+        "id": "<id>",
+        "instructions": null,
+        "isPublished": true,
+        "lessonId": null,
+        "moduleId": null,
+        "negativeMarking": 0,
+        "order": null,
+        "passingScore": 60,
+        "quizTag": "SELF_TEST",
+        "shuffleOptions": false,
+        "shuffleQuestions": false,
+        "startDate": null,
+        "status": "ACTIVE",
+        "subTopicId": null,
+        "timeLimit": null,
+        "title": "Self-Generated Practice Quiz",
+        "topicId": null,
+        "updatedAt": "<date>"
+      },
+      "success": true
+    }
+  },
+  "sequence locked read": {
+    "status": 403,
+    "queries": 20,
+    "body": {
+      "message": "Finish “Quiz regq-seq-a” before opening this item.",
+      "success": false
+    }
+  },
+  "sequence first submit": {
+    "status": 201,
+    "queries": 15,
+    "body": {
+      "data": {
+        "answers": [
+          {
+            "answer": "right",
+            "questionId": "regq-q-regq-seq-a"
+          }
+        ],
+        "attemptId": "<id>",
+        "attemptNumber": 1,
+        "conceptScores": null,
+        "id": "<id>",
+        "passed": true,
+        "percentage": 100,
+        "quizId": "regq-seq-a",
+        "score": 1,
+        "studentId": "regq-student-profile",
+        "submittedAt": "<date>",
+        "totalMarks": 1
+      },
+      "success": true
+    }
+  },
+  "sequence unlocked read": {
+    "status": 200,
+    "queries": 23,
+    "body": {
+      "data": {
+        "attemptStatus": {
+          "attemptsRemaining": 1,
+          "attemptsUsed": 0,
+          "canAttempt": true,
+          "maxAttempts": 1,
+          "unlimitedAttempts": false
+        },
+        "attempts": 1,
+        "availableFrom": null,
+        "availableUntil": null,
+        "conceptId": null,
+        "courseId": "regq-sequential",
+        "createdAt": "<date>",
+        "currentAttemptNumber": 1,
+        "description": null,
+        "dueDate": null,
+        "hintsUnlocked": false,
+        "id": "regq-seq-b",
+        "instructions": null,
+        "isPublished": true,
+        "lessonId": null,
+        "moduleId": null,
+        "negativeMarking": 0,
+        "order": null,
+        "passingScore": 50,
+        "questions": [
+          {
+            "courseId": "regq-sequential",
+            "createdAt": "<date>",
+            "createdBy": null,
+            "difficulty": "MEDIUM",
+            "hasHint": true,
+            "id": "regq-q-regq-seq-b",
+            "isMandatory": true,
+            "isPublished": true,
+            "isRequired": true,
+            "marks": 1,
+            "moduleId": null,
+            "negativeMarks": 0,
+            "options": [
+              "right",
+              "wrong"
+            ],
+            "order": 1,
+            "question": "Question for regq-seq-b?",
+            "questionType": "MCQ_SINGLE",
+            "quizId": null,
+            "quizQuestionId": "regq-seq-b-qq",
+            "status": "ACTIVE",
+            "subject": "General",
+            "tags": "",
+            "title": null,
+            "topic": "General",
+            "updatedAt": "<date>"
+          }
+        ],
+        "quizTag": "FINAL",
+        "revealAnswers": false,
+        "shuffleOptions": false,
+        "shuffleQuestions": false,
+        "startDate": null,
+        "status": "ACTIVE",
+        "subTopicId": null,
+        "timeLimit": null,
+        "title": "Quiz regq-seq-b",
+        "topicId": null,
+        "updatedAt": "<date>"
+      },
+      "success": true
+    }
+  },
+  "learning sequence": {
+    "status": 200,
+    "queries": 19,
+    "body": {
+      "data": {
+        "courseId": "regq-sequential",
+        "currentIndex": 1,
+        "language": "English",
+        "progress": {
+          "completed": false,
+          "completedItems": 1,
+          "progressPercent": 50,
+          "totalItems": 2
+        },
+        "progressTracked": true,
+        "resumeIndex": 1,
+        "steps": [
+          {
+            "assignmentId": null,
+            "attempted": true,
+            "attemptsUsed": 1,
+            "blockedByIndex": null,
+            "body": {
+              "data": null,
+              "duration": null,
+              "externalUrl": null,
+              "fileUrl": null,
+              "htmlContent": null,
+              "videoUrl": null
+            },
+            "completed": true,
+            "completionHint": "Pass this quiz, or use all its attempts, to continue.",
+            "containerId": "regq-sequential",
+            "contentId": "regq-seq-a-content",
+            "contentIds": [
+              "regq-seq-a-content"
+            ],
+            "dueDate": null,
+            "index": 0,
+            "kind": "QUIZ",
+            "level": "course",
+            "locked": false,
+            "marks": null,
+            "maxAttempts": 1,
+            "order": 1,
+            "passed": true,
+            "passingScore": 50,
+            "path": {
+              "conceptId": null,
+              "lessonId": null,
+              "moduleId": null,
+              "subTopicId": null,
+              "topicId": null
+            },
+            "questionCount": 1,
+            "quizId": "regq-seq-a",
+            "quizTag": "FINAL",
+            "submissionStatus": null,
+            "timeLimit": 10,
+            "title": "Quiz regq-seq-a",
+            "type": "QUIZ",
+            "visited": true,
+            "visitedAt": "<date>"
+          },
+          {
+            "assignmentId": null,
+            "attempted": false,
+            "attemptsUsed": 0,
+            "blockedByIndex": null,
+            "body": {
+              "data": null,
+              "duration": null,
+              "externalUrl": null,
+              "fileUrl": null,
+              "htmlContent": null,
+              "videoUrl": null
+            },
+            "completed": false,
+            "completionHint": "Pass this quiz, or use all its attempts, to continue.",
+            "containerId": "regq-sequential",
+            "contentId": "regq-seq-b-content",
+            "contentIds": [
+              "regq-seq-b-content"
+            ],
+            "dueDate": null,
+            "index": 1,
+            "kind": "QUIZ",
+            "level": "course",
+            "locked": false,
+            "marks": null,
+            "maxAttempts": 1,
+            "order": 2,
+            "passed": false,
+            "passingScore": 50,
+            "path": {
+              "conceptId": null,
+              "lessonId": null,
+              "moduleId": null,
+              "subTopicId": null,
+              "topicId": null
+            },
+            "questionCount": 1,
+            "quizId": "regq-seq-b",
+            "quizTag": "FINAL",
+            "submissionStatus": null,
+            "timeLimit": null,
+            "title": "Quiz regq-seq-b",
+            "type": "QUIZ",
+            "visited": false,
+            "visitedAt": null
+          }
+        ],
+        "title": "Regression sequential course",
+        "tree": {
+          "applicable": true,
+          "completed": false,
+          "completedItems": 1,
+          "entries": [
+            {
+              "stepIndex": 0,
+              "type": "step"
+            },
+            {
+              "stepIndex": 1,
+              "type": "step"
+            }
+          ],
+          "firstStepIndex": 0,
+          "id": "regq-sequential",
+          "kind": "COURSE",
+          "lastStepIndex": 1,
+          "level": "course",
+          "locked": false,
+          "order": null,
+          "path": {
+            "conceptId": null,
+            "lessonId": null,
+            "moduleId": null,
+            "subTopicId": null,
+            "topicId": null
+          },
+          "progressPercent": 50,
+          "qualified": false,
+          "satisfied": false,
+          "title": "Regression sequential course",
+          "totalItems": 2
+        }
+      },
+      "success": true
+    }
+  }
+}
