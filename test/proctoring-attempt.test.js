@@ -15,9 +15,11 @@ const OLD_CHROME = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 
 describe("proctored exam state", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_URL not set" }, () => {
   const { createHarness } = require("./helpers/proctoringHarness");
+  const { startFakeAi } = require("./helpers/fakeAi");
   const h = createHarness("att");
   const { prisma, call } = h;
   const browser = { "User-Agent": CHROME };
+  let ai;
   let owner;
   let course;
   let consent;
@@ -45,6 +47,7 @@ describe("proctored exam state", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_UR
 
   before(async () => {
     process.env.PROCTORING_ENABLED = "true";
+    ai = await startFakeAi();
     await h.start();
     owner = await h.makeUser("INSTRUCTOR", "Owner");
     course = await h.makeCourse(owner.id);
@@ -59,7 +62,10 @@ describe("proctored exam state", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_UR
     process.env.PROCTORING_ENABLED = "true";
   });
 
-  after(() => h.stop());
+  after(async () => {
+    await h.stop();
+    await ai.stop();
+  });
 
   describe("existing routes refuse a proctored quiz", () => {
     test("a student reading the quiz gets no questions or answers; the instructor still does", async () => {

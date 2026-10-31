@@ -3,10 +3,15 @@ const express = require("express");
 const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
-const { proctoringAttemptRateLimiter, proctoringAnswerRateLimiter } = require("../../middleware/rateLimit.middleware");
+const {
+  proctoringAttemptRateLimiter,
+  proctoringAnswerRateLimiter,
+  monitorRateLimiter,
+} = require("../../middleware/rateLimit.middleware");
 const { isProctoringAvailable } = require("../../config/proctoring");
 const controller = require("./proctoring.controller");
-const { createAttemptSchema, saveAnswerSchema } = require("./proctoring.validation");
+const { monitorAuth, receiveFrame } = require("./monitor.middleware");
+const { createAttemptSchema, heartbeatSchema, monitorEventSchema, saveAnswerSchema } = require("./proctoring.validation");
 
 const router = express.Router();
 
@@ -27,5 +32,18 @@ router.post("/attempts/:attemptId/resume", student, proctoringAttemptRateLimiter
 router.post("/attempts/:attemptId/start", student, proctoringAttemptRateLimiter, controller.startAttempt);
 router.put("/attempts/:attemptId/answers/:questionId", student, proctoringAnswerRateLimiter, validate(saveAnswerSchema), controller.saveAnswer);
 router.post("/attempts/:attemptId/submit", student, proctoringAttemptRateLimiter, controller.submitAttempt);
+
+// Monitoring: the attempt's own token, checked in memory, so a clean frame costs the
+// database nothing. Limits are per attempt, so one classroom behind one address is not
+// throttled as a single client. A frame every 5 s plus 2 s re-checks stays well inside them.
+router.post("/monitor/snapshots", monitorAuth, monitorRateLimiter("snapshots", 60), receiveFrame, controller.snapshot);
+router.post("/monitor/events", monitorAuth, monitorRateLimiter("events", 120), validate(monitorEventSchema), controller.monitorEvent);
+router.post("/monitor/heartbeat", monitorAuth, monitorRateLimiter("heartbeat", 30), validate(heartbeatSchema), controller.heartbeat);
+router.get("/monitor/context", monitorAuth, monitorRateLimiter("context", 30), controller.context);
+
+// Images reach people only here, never through the LMS file routes or a public URL.
+router.get("/evidence/:evidenceId/file", verifyToken, checkRole(["STUDENT", "INSTRUCTOR", "ADMIN"]), proctoringAttemptRateLimiter, controller.evidenceFile);
+
+router.get("/health", verifyToken, checkRole(["ADMIN"]), controller.health);
 
 module.exports = router;

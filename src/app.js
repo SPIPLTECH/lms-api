@@ -118,7 +118,8 @@ app.use(
 // The request log must not record live signed media URLs: the token in
 // /playback/media/<token> is a bearer credential while its lease is active.
 morgan.token("url", (req) => redactLoggedUrl(req.originalUrl || req.url));
-app.use(morgan("dev"));
+// One line per exam frame would be most of the log, and most of its cost, during an exam.
+app.use(morgan("dev", { skip: (req) => (req.originalUrl || "").startsWith("/proctoring/monitor/") }));
 
 const courseImportLargeJsonRoutes = /^\/course-import\/(?:apply|jobs\/[^/]+)(?:\/|$)/i;
 const standardJsonParser = express.json({

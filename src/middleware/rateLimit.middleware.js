@@ -107,7 +107,19 @@ const proctoringAnswerRateLimiter = rateLimit({
   message: { success: false, message: "Too many answers saved at once, please try again shortly." }
 });
 
+/** Per attempt, per minute, after monitorAuth has identified the attempt from its token. */
+const monitorRateLimiter = (name, max) =>
+  rateLimit({
+    windowMs: 60 * 1000,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `monitor-${name}:${req.monitor.id}`,
+    message: { success: false, message: "Too many monitoring requests, please try again shortly." }
+  });
+
 module.exports = {
+  monitorRateLimiter,
   proctoringAttemptRateLimiter,
   proctoringAnswerRateLimiter,
   refreshRateLimiter,

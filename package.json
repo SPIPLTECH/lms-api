@@ -10,7 +10,8 @@
     "test": "node --test \"test/*.test.js\" \"src/**/*.test.js\"",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "ai:setup": "node scripts/setup-ai.mjs"
   },
   "keywords": [],
   "author": "",

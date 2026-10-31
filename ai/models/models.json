@@ -1,0 +1,38 @@
+{
+  "blaze_face_short_range": {
+    "file": "blaze_face_short_range.tflite",
+    "version": "1",
+    "url": "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
+    "sha256": "b4578f35940bf5a1a655214a1cce5cab13eba73c1297cd78e1a04c2380b0152f",
+    "bytes": 229746,
+    "license": "Apache-2.0",
+    "license_evidence": "MediaPipe BlazeFace Model Card (Short Range), 2021-06-09: 'LICENSED UNDER Apache License, Version 2.0'. https://storage.googleapis.com/mediapipe-assets/MediaPipe%20BlazeFace%20Model%20Card%20(Short%20Range).pdf",
+    "training_data": "Model card: trained and evaluated on consented images captured with smartphone cameras via a mobile AR application.",
+    "intended_use_caveat": "Model card lists 'any form of surveillance or identity recognition' and life-critical decisions as out of scope (intended-use statement, not a licence term). Results are review aids only."
+  },
+  "efficientdet_lite0": {
+    "file": "efficientdet_lite0.tflite",
+    "version": "1",
+    "url": "https://www.kaggle.com/api/v1/models/tensorflow/efficientdet/tfLite/lite0-detection-metadata/1/download",
+    "archive": "tar.gz",
+    "archive_member": "1.tflite",
+    "archive_sha256": "0799da1decd268958a9eb8341aab08eb99dee27b0ffdf9924e10ce428a97e854",
+    "sha256": "2e04c53bfeac0ac2a30c057c7e2a777594ce39baaac35a92f74fb1e8c4fc4e0b",
+    "bytes": 4563519,
+    "license": "Apache-2.0",
+    "license_evidence": "Kaggle Models API, tensorflow/efficientdet/tfLite/lite0-detection-metadata version 1: \"licenseName\": \"Apache 2.0\" (retrieved 2026-10-23 from https://www.kaggle.com/api/v1/models/tensorflow/efficientdet/tfLite/lite0-detection-metadata/get). Source code: google/automl (Apache-2.0).",
+    "training_data": "COCO 2017 (annotations CC BY 4.0; images are Flickr photos under their own licences). The model licence does not resolve dataset terms: open item for legal review, see docs/AI_PROCTORING.md.",
+    "intended_use_caveat": "Generic COCO detector: 'cell phone' recall is limited (4 of 5 real phone photos found in testing) and other rectangular objects can be mistaken for phones. Results are review aids only."
+  },
+  "face_recognition_sface": {
+    "file": "face_recognition_sface_2021dec.onnx",
+    "version": "2021dec",
+    "url": "https://huggingface.co/opencv/face_recognition_sface/resolve/main/face_recognition_sface_2021dec.onnx",
+    "sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+    "bytes": 38696353,
+    "license": "Apache-2.0",
+    "license_evidence": "OpenCV Zoo models/face_recognition_sface/LICENSE: 'Apache License, Version 2.0' (retrieved 2026-10-27 from https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface). The Hugging Face mirror opencv/face_recognition_sface is published by the OpenCV organisation; its LFS SHA-256 equals the pinned hash.",
+    "training_data": "Model card: MobileFaceNet trained with the SFace loss (Zhong et al., arXiv:2205.12010); the card does not name the training set. The SFace paper reports experiments on research face datasets (CASIA-WebFace / MS1M family) whose terms restrict use; the provenance of these exact weights is unconfirmed: open item for legal review before production.",
+    "intended_use_caveat": "1:1 face verification feature. Accuracy varies with lighting, pose, age and demographics and has not been independently validated here. A mismatch is a review signal, never proof that another person sat the exam."
+  }
+}

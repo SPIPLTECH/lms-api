@@ -10,8 +10,11 @@ const { isPlaybackHeldElsewhere } = require("../playback/playback.service");
 const { expireLeasesWhere } = require("../sessions/session.service");
 const quizService = require("../quizzes/quiz.service");
 const { OPEN_STATUSES } = require("./attemptStanding");
+const { isAiHealthy } = require("./ai/health");
 const { assertAllowedBrowser, isAllowedBrowser } = require("./browserPolicy");
 const { consentWording } = require("./consent.config");
+const { holdAttemptEvidence, isEvidenceStoreReady } = require("./evidence.service");
+const registry = require("./monitorRegistry");
 const { isTokenSecretConfigured, signMonitorToken } = require("./monitorToken");
 
 /**
@@ -32,10 +35,11 @@ const SWEEP_CONCURRENCY = 5;
 const STATUS_BY_END_REASON = { SUBMITTED: "SUBMITTED", TIME_EXPIRED: "EXPIRED", TERMINATED: "TERMINATED" };
 
 /** Monitoring must work before an exam can begin. Never checked once one is under way. */
-const isMonitoringAvailable = () => isProctoringAvailable() && isTokenSecretConfigured();
+const isMonitoringAvailable = async () =>
+  isProctoringAvailable() && isTokenSecretConfigured() && isEvidenceStoreReady() && (await isAiHealthy());
 
-function assertMonitoringAvailable() {
-  if (!isMonitoringAvailable()) {
+async function assertMonitoringAvailable() {
+  if (!(await isMonitoringAvailable())) {
     throw new ApiError(503, "Exam monitoring is unavailable right now. Please try again later. No attempt was used.", "PROCTORING_UNAVAILABLE");
   }
 }
@@ -142,7 +146,7 @@ async function getStatus(user, quizId, headers) {
   ]);
   const identityMatching = isIdentityMatchingEnabled();
   const { wordingVersion, text } = consentWording(identityMatching);
-  const reason = !isMonitoringAvailable() ? "PROCTORING_UNAVAILABLE" : standing.refusal;
+  const reason = !(await isMonitoringAvailable()) ? "PROCTORING_UNAVAILABLE" : standing.refusal;
   return {
     quizId,
     title: quiz.title,
@@ -182,6 +186,14 @@ async function takeOver(attempt, user) {
         ...(moved && !preparing && { identityRecheckPending: true }),
       },
     });
+    registry.patch(attempt.id, {
+      tokenVersion: updated.tokenVersion,
+      identityRecheckPending: updated.identityRecheckPending,
+      identityCheck: updated.identityCheck,
+      identityFailures: updated.identityFailures,
+      cameraSeenAt: updated.cameraSeenAt,
+      ...(moved && preparing && { baseline: null }),
+    });
     return withToken(updated, user);
   } catch (error) {
     if (error.code === "P2025") throw ended();
@@ -193,7 +205,7 @@ async function takeOver(attempt, user) {
 async function createAttempt(user, quizId, { consent } = {}, headers = {}) {
   const studentId = await studentIdOf(user);
   const quiz = await loadProctoredQuiz(studentId, quizId);
-  assertMonitoringAvailable();
+  await assertMonitoringAvailable();
   assertAllowedBrowser(headers);
 
   const identityMatching = isIdentityMatchingEnabled();
@@ -269,7 +281,7 @@ async function startAttempt(user, attemptId) {
   }
   if (attempt.status !== "PREPARING") throw ended();
   assertOnThisDevice(attempt, user);
-  assertMonitoringAvailable();
+  await assertMonitoringAvailable();
 
   const reasons = [
     ...(attempt.consentId ? [] : ["CONSENT_MISSING"]),
@@ -293,6 +305,13 @@ async function startAttempt(user, attemptId) {
     },
   });
   const current = await prisma.proctoredAttempt.findUnique({ where: { id: attempt.id } });
+  registry.patch(attempt.id, {
+    status: current.status,
+    startedAt: current.startedAt,
+    deadlineAt: current.deadlineAt,
+    microphoneStatus: current.microphoneStatus,
+    lastSnapshotAt: current.startedAt,
+  });
   if (count > 0) {
     // A video left playing on this device stops at its next heartbeat.
     await expireLeasesWhere({ userId: user.id }, "PROCTORED_EXAM_STARTED", prisma, now);
@@ -412,6 +431,7 @@ async function finalizeAttempt(attemptId, { endReason, rule = null, terminationR
           });
           if (count === 0) throw new AlreadyClosed();
           await tx.proctoringIdentityBaseline.deleteMany({ where: { attemptId } });
+          if (needsReview) await holdAttemptEvidence(attemptId, tx, now);
         },
         onAttemptCreated: (tx, quizAttempt) =>
           tx.proctoredAttempt.update({ where: { id: attemptId }, data: { quizAttemptId: quizAttempt.id } }),
@@ -422,6 +442,7 @@ async function finalizeAttempt(attemptId, { endReason, rule = null, terminationR
     throw error;
   }
 
+  await registry.notifyEnded(attemptId, status);
   await recordAuditEvent({
     userId: attempt.userId,
     eventType: terminated ? AUDIT_EVENTS.PROCTORING_ATTEMPT_TERMINATED : AUDIT_EVENTS.PROCTORING_ATTEMPT_ENDED,
@@ -466,6 +487,7 @@ async function sweepAttempts(now = new Date()) {
       data: { status: "ABANDONED", endReason: "ABANDONED", endedAt: now },
     }));
     await prisma.proctoringIdentityBaseline.deleteMany({ where: { attemptId: { in: ids } } });
+    await Promise.all(ids.map((id) => registry.notifyEnded(id, "ABANDONED")));
   }
   return { expired, abandoned };
 }
