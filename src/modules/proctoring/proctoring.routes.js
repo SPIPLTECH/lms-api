@@ -32,6 +32,7 @@ router.post("/attempts/:attemptId/resume", student, proctoringAttemptRateLimiter
 router.post("/attempts/:attemptId/start", student, proctoringAttemptRateLimiter, controller.startAttempt);
 router.put("/attempts/:attemptId/answers/:questionId", student, proctoringAnswerRateLimiter, validate(saveAnswerSchema), controller.saveAnswer);
 router.post("/attempts/:attemptId/submit", student, proctoringAttemptRateLimiter, controller.submitAttempt);
+router.get("/attempts/:attemptId/result", student, proctoringAttemptRateLimiter, controller.getAttemptResult);
 
 // Monitoring: the attempt's own token, checked in memory, so a clean frame costs the
 // database nothing. Limits are per attempt, so one classroom behind one address is not

@@ -43,6 +43,7 @@ module.exports = {
   getAttempt: respond((req) => attempts.getAttempt(req.user, req.params.attemptId)),
   saveAnswer: respond((req) => attempts.saveAnswer(req.user, req.params.attemptId, req.params.questionId, req.body)),
   submitAttempt: respond((req) => attempts.submitAttempt(req.user, req.params.attemptId)),
+  getAttemptResult: respond((req) => attempts.getAttemptResult(req.user, req.params.attemptId)),
   snapshot: respond(snapshot),
   monitorEvent: respond((req) => monitor.ingestEvent(req.monitor, req.body)),
   heartbeat: respond((req) => monitor.heartbeat(req.monitor, req.body)),

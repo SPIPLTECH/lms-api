@@ -800,5 +800,81 @@ describe("exam monitoring", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_URL not
     });
   });
 
-  test("finalize is reachable from the module", () => assert.strictEqual(typeof attempts.finalizeAttempt, "function"));
+  describe("the exam-ended view", () => {
+    const result = (attemptId, who) => call("GET", `/proctoring/attempts/${attemptId}/result`, who);
+    const HIDDEN = ["confidence", "signalConfidence", "similarity", "embedding", "analysis", "objectKey", "tempPath", "flags", "reviewReason"];
+
+    test("ended by proctoring: the reason, the score, never passed, evidence the student can open, no scores from the AI", async () => {
+      const { quiz, student, attemptId, token } = await inExam();
+      await call("PUT", `/proctoring/attempts/${attemptId}/answers/${quiz.quizQuestions[0].questionId}`, student, { answer: "right", clientRevision: 1 });
+      await monitorCall("POST", "events", token, { eventType: "FULLSCREEN_EXIT" });
+      await upload(token, "PHONE");
+      await upload(token, "PHONE");
+      await settle();
+      const res = await result(attemptId, student);
+      assert.strictEqual(res.status, 200, res.text);
+      assert.strictEqual(res.data.outcome, "ENDED_BY_PROCTORING");
+      assert.strictEqual(res.data.endedBy, "PROCTORING");
+      assert.ok(/phone/i.test(res.data.reason));
+      assert.strictEqual(res.data.score, 1);
+      assert.strictEqual(res.data.totalMarks, 2);
+      assert.strictEqual(res.data.passed, false);
+      assert.strictEqual(res.data.identityCheck, "FACE_CHECK_PASSED");
+      assert.ok(res.data.warningCount >= 1);
+      assert.strictEqual(res.data.telemetry.framesReceived, 2);
+      assert.strictEqual(res.data.quiz.title, quiz.title);
+      assert.strictEqual(res.data.answers.length, 2);
+      assert.strictEqual(res.data.answers.filter((a) => a.saved).length, 1);
+      assert.ok(res.data.answers.every((a) => !("correctAnswer" in a)));
+      for (const word of HIDDEN) assert.ok(!res.text.includes(word), word);
+
+      const types = res.data.violations.map((v) => v.eventType);
+      assert.ok(types.includes("FULLSCREEN_EXIT"));
+      assert.ok(types.includes("PROHIBITED_OBJECT_DETECTED"));
+      assert.ok(types.includes("AUTO_TERMINATION_ENFORCED"));
+      assert.ok(!types.includes("ATTEMPT_FLAGGED"), "review detail is for staff");
+      const phone = res.data.violations.find((v) => v.eventType === "PROHIBITED_OBJECT_DETECTED");
+      assert.ok(phone.explanation);
+      assert.ok(phone.evidenceId, "the frame is attached");
+      const image = await fetch(`${h.baseUrl()}/proctoring/evidence/${phone.evidenceId}/file`, { headers: { Authorization: `Bearer ${student.token}`, "X-Device-Key": student.deviceKey } });
+      assert.strictEqual(image.status, 200);
+      assert.strictEqual(res.data.violations.find((v) => v.eventType === "FULLSCREEN_EXIT").warningNumber, 1);
+    });
+
+    test("flagged: the score stands, marked under review, and the student is not told why", async () => {
+      const { quiz, student, attemptId, token } = await inExam();
+      await call("PUT", `/proctoring/attempts/${attemptId}/answers/${quiz.quizQuestions[0].questionId}`, student, { answer: "right", clientRevision: 1 });
+      await upload(token, "PHONE");
+      await settle();
+      await call("POST", `/proctoring/attempts/${attemptId}/submit`, student);
+      const res = await result(attemptId, student);
+      assert.strictEqual(res.data.outcome, "UNDER_REVIEW");
+      assert.strictEqual(res.data.endedBy, "STUDENT");
+      assert.strictEqual(res.data.passed, true);
+      assert.strictEqual(res.data.percentage, 50);
+      assert.strictEqual(res.data.reason, null);
+      for (const word of HIDDEN) assert.ok(!res.text.includes(word), word);
+    });
+
+    test("clean: an ordinary result; time running out says so", async () => {
+      const clean = await inExam();
+      await call("POST", `/proctoring/attempts/${clean.attemptId}/submit`, clean.student);
+      const cleanResult = await result(clean.attemptId, clean.student);
+      assert.strictEqual(cleanResult.data.outcome, "SCORED");
+      assert.strictEqual(cleanResult.data.endedBy, "STUDENT");
+
+      const late = await inExam();
+      await prisma.proctoredAttempt.update({ where: { id: late.attemptId }, data: { deadlineAt: new Date(Date.now() - 60_000) } });
+      await attempts.sweepAttempts();
+      assert.strictEqual((await result(late.attemptId, late.student)).data.endedBy, "TIME");
+    });
+
+    test("only after the end, and only the student's own", async () => {
+      const { student, attemptId } = await inExam();
+      const running = await result(attemptId, student);
+      assert.strictEqual(running.status, 409);
+      assert.strictEqual(running.json.code, "ATTEMPT_NOT_ENDED");
+      assert.strictEqual((await result(attemptId, await newStudent())).status, 403);
+    });
+  });
 });

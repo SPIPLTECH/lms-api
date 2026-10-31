@@ -149,6 +149,7 @@ async function getStatus(user, quizId, headers) {
   const reason = !(await isMonitoringAvailable()) ? "PROCTORING_UNAVAILABLE" : standing.refusal;
   return {
     quizId,
+    courseId: quiz.courseId,
     title: quiz.title,
     quizTag: quiz.quizTag,
     durationMinutes: quiz.timeLimit,
@@ -386,6 +387,114 @@ async function submitAttempt(user, attemptId) {
   return toView(await ownAttempt(user, attemptId), user);
 }
 
+const END_REASON_LABEL = { SUBMITTED: "STUDENT", TIME_EXPIRED: "TIME", TERMINATED: "PROCTORING" };
+
+// What a student reads about each event: plain words, and never anything from the AI's analysis.
+const EVENT_EXPLANATIONS = {
+  TAB_HIDDEN: "You left the exam tab or minimised the window.",
+  WINDOW_BLUR: "The exam window lost focus.",
+  FULLSCREEN_EXIT: "You left fullscreen.",
+  COPY_ATTEMPT: "A copy was blocked.",
+  PASTE_ATTEMPT: "A paste was blocked.",
+  CUT_ATTEMPT: "A cut was blocked.",
+  CONTEXT_MENU: "The right-click menu was blocked.",
+  SCREENSHOT_ATTEMPT: "A screenshot shortcut was blocked.",
+  SCREEN_SHARE_ATTEMPT: "A screen share was blocked.",
+  CAMERA_DENIED: "The camera was not available.",
+  CAMERA_INTERRUPTED: "The camera stopped.",
+  DISCONNECT: "The connection dropped.",
+  MONITORING_GAP: "Monitoring was interrupted.",
+  VOICE_ACTIVITY_DETECTED: "Speech was noticed near your microphone. No audio was recorded.",
+  FACE_NOT_DETECTED: "Your face was not visible to the camera.",
+  MULTIPLE_FACES_DETECTED: "Another person was seen in your camera view.",
+  HEAD_POSE_AWAY: "You appeared to be looking away from the screen.",
+  PROHIBITED_OBJECT_DETECTED: "A mobile phone or other prohibited item was seen.",
+  IDENTITY_MISMATCH_DETECTED: "The person on camera did not appear to match your identity photo.",
+  AUTO_TERMINATION_ENFORCED: "The exam was ended by proctoring.",
+};
+const EVIDENCE_NEARBY_MS = 10 * 1000;
+
+function studentOutcome(attempt) {
+  if (attempt.status === "TERMINATED") return "ENDED_BY_PROCTORING";
+  if (attempt.reviewState === "PENDING") return "UNDER_REVIEW";
+  return "SCORED";
+}
+
+/** Attaches a kept frame to an event: the one it names, else the nearest in time. */
+function evidenceFor(event, kept) {
+  const byFrame = new Map(kept.map((row) => [row.frameId, row]));
+  const named = (event.metadata?.evidenceIds ?? []).map((frameId) => byFrame.get(frameId)).find(Boolean);
+  if (named) return named;
+  const at = event.serverTimestamp.getTime();
+  let nearest = null;
+  for (const row of kept) {
+    const distance = Math.abs(row.receivedAt.getTime() - at);
+    if (distance <= EVIDENCE_NEARBY_MS && (!nearest || distance < Math.abs(nearest.receivedAt.getTime() - at))) nearest = row;
+  }
+  return nearest;
+}
+
+/** GET /attempts/:id/result: the exam-ended view. A student's own, with nothing from the AI's analysis. */
+async function getAttemptResult(user, attemptId) {
+  const attempt = await ownAttempt(user, attemptId, {
+    quizAttempt: true,
+    answers: { select: { questionId: true, answer: true } },
+    quiz: { select: { title: true, passingScore: true, quizTag: true, quizQuestions: { orderBy: { order: "asc" }, select: { questionId: true, marks: true, question: { select: { question: true, marks: true } } } } } },
+    events: { orderBy: { serverTimestamp: "asc" }, select: { id: true, eventType: true, severity: true, warningIssued: true, serverTimestamp: true, metadata: true } },
+    evidence: { where: { category: { not: "IDENTITY" } }, select: { id: true, frameId: true, receivedAt: true } },
+  });
+  if (OPEN_STATUSES.includes(attempt.status)) throw new ApiError(409, "This exam has not ended.", "ATTEMPT_NOT_ENDED");
+
+  let warningNumber = 0;
+  const violations = [];
+  for (const event of attempt.events) {
+    if (event.warningIssued) warningNumber += 1;
+    const explanation = EVENT_EXPLANATIONS[event.eventType];
+    if (!explanation) continue;
+    const kept = evidenceFor(event, attempt.evidence);
+    violations.push({
+      id: event.id,
+      eventType: event.eventType,
+      severity: event.severity,
+      explanation,
+      timestamp: event.serverTimestamp,
+      warningNumber: event.warningIssued ? warningNumber : null,
+      evidenceId: kept?.id ?? null,
+      evidenceCapturedAt: kept?.receivedAt ?? null,
+    });
+  }
+
+  const saved = new Map(attempt.answers.map((row) => [row.questionId, row.answer]));
+  const scored = attempt.quizAttempt;
+  return {
+    attemptId: attempt.id,
+    quizId: attempt.quizId,
+    courseId: attempt.courseId,
+    status: attempt.status,
+    outcome: studentOutcome(attempt),
+    endedBy: END_REASON_LABEL[attempt.endReason] ?? null,
+    reason: attempt.status === "TERMINATED" ? attempt.terminationReason : null,
+    startedAt: attempt.startedAt,
+    endedAt: attempt.endedAt,
+    quiz: { title: attempt.quiz.title, quizTag: attempt.quiz.quizTag, passingScore: attempt.quiz.passingScore },
+    score: scored?.score ?? null,
+    totalMarks: scored?.totalMarks ?? null,
+    percentage: scored?.percentage ?? null,
+    passed: scored?.passed ?? false,
+    quizAttemptId: scored?.id ?? null,
+    warningCount: attempt.warningCount,
+    identityCheck: attempt.identityCheck,
+    identityMatching: attempt.identityMatching,
+    microphoneStatus: attempt.microphoneStatus,
+    telemetry: { framesReceived: attempt.framesReceived, framesAnalysed: attempt.framesAnalysed, longestGapSeconds: attempt.longestGapSeconds },
+    violations,
+    answers: attempt.quiz.quizQuestions.map((row) => {
+      const answer = saved.get(row.questionId);
+      return { questionId: row.questionId, questionText: row.question.question, marks: row.marks ?? row.question.marks ?? 1, answer: answer ?? null, saved: answer !== undefined && answer !== null };
+    }),
+  };
+}
+
 class AlreadyClosed extends Error {}
 
 /**
@@ -496,6 +605,7 @@ module.exports = {
   createAttempt,
   finalizeAttempt,
   getAttempt,
+  getAttemptResult,
   getStatus,
   resumeAttempt,
   saveAnswer,
