@@ -158,6 +158,13 @@ describe("runs of frames", () => {
     const oneConfident = activeRuns([frame("f1", 0, phone)])[0];
     assert.strictEqual(ruleMet(findRule("PROHIBITED_OBJECT_DETECTED"), oneConfident, settings), true);
   });
+
+  test("a phone held close to the camera warns from one frame, though the model rarely sees it twice", () => {
+    // A real exam on 2026-11-03: a phone in view for 8 s scored 0.543, then nothing on the re-check.
+    const findRule = (type) => AI_RULES.find((r) => r.eventType === type);
+    const heldUp = ok({ objects: { status: "OK", items: [{ label: "cell phone", score: 0.543 }] } });
+    assert.strictEqual(ruleMet(findRule("PROHIBITED_OBJECT_DETECTED"), activeRuns([frame("f1", 0, heldUp)])[0], settings), true);
+  });
 });
 
 describe("correlation", () => {

@@ -29,6 +29,11 @@ const intOf = (env, key, fallback) => {
   return env[key] !== undefined && env[key] !== "" && Number.isFinite(value) ? value : fallback;
 };
 
+const positiveOf = (env, key, fallback) => {
+  const value = intOf(env, key, fallback);
+  return value > 0 ? value : fallback;
+};
+
 const boolOf = (env, key, fallback) => (env[key] === undefined || env[key] === "" ? fallback : isTrue(env[key]));
 
 /** Only these rules can end an exam. Every other rule flags it for review. */
@@ -43,7 +48,8 @@ const proctoringSettings = (env = process.env) => ({
     : DEFAULT_TERMINATING_RULES,
   minConfidence: intOf(env, "AI_AUTO_TERMINATE_MIN_CONFIDENCE", 0.8),
   objectMinConfidence: intOf(env, "AI_AUTO_TERMINATE_OBJECT_MIN_CONFIDENCE", 0.6),
-  objectWarnMinConfidence: intOf(env, "AI_OBJECT_WARN_MIN_CONFIDENCE", 0.6),
+  // 0.5: a phone held up close scored 0.543 once and was then missed; faces alone score under 0.15.
+  objectWarnMinConfidence: intOf(env, "AI_OBJECT_WARN_MIN_CONFIDENCE", 0.5),
   persistSeconds: intOf(env, "AI_TERMINATE_PERSIST_SECONDS", 10),
   faceAbsentConsecutive: intOf(env, "AI_FACE_ABSENT_CONSECUTIVE", 2),
   faceAbsentSustainedSeconds: intOf(env, "AI_FACE_ABSENT_SUSTAINED_SECONDS", 4),
@@ -65,13 +71,19 @@ const proctoringSettings = (env = process.env) => ({
   voiceCooldownSeconds: intOf(env, "AI_VAD_COOLDOWN_SECONDS", 30),
   studentWarnings: boolOf(env, "AI_STUDENT_WARNINGS", true),
   recheckSeconds: intOf(env, "AI_RECHECK_SECONDS", 2),
-  uploadWaitMs: intOf(env, "AI_UPLOAD_WAIT_MS", 800),
+  // How long an upload may be held for the AI's answer. None: decisions reach the page through
+  // the notice channel, so a slow AI never holds an upload open.
+  uploadWaitMs: intOf(env, "AI_UPLOAD_WAIT_MS", 0),
+  noticeHoldSeconds: positiveOf(env, "PROCTORING_NOTICE_HOLD_SECONDS", 25),
   identityWaitMs: intOf(env, "AI_IDENTITY_WAIT_MS", 8000),
   aiTimeoutMs: intOf(env, "AI_SERVICE_TIMEOUT_MS", 3000),
   objectDetection: boolOf(env, "AI_OBJECT_DETECTION", true),
   queueConcurrency: intOf(env, "AI_ANALYSIS_CONCURRENCY", 2),
   queueMax: intOf(env, "AI_ANALYSIS_QUEUE_MAX", 500),
   uploadGapSeconds: intOf(env, "PROCTORING_UPLOAD_GAP_SECONDS", 60),
+  // Nonsense falls back to the default, so a bad setting can never delete evidence early.
+  cleanRetentionDays: positiveOf(env, "PROCTORING_CLEAN_RETENTION_DAYS", 7),
+  violationRetentionDays: positiveOf(env, "PROCTORING_VIOLATION_RETENTION_DAYS", 90),
 });
 
 module.exports = {

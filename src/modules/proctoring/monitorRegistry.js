@@ -59,6 +59,11 @@ const newMonitor = (row) => {
     emittedRuns: new Map(),
     activeEpisodes: new Map(),
     notices: [],
+    // The notice channel. Ids start from the clock, so they keep rising across a restart.
+    noticeCursor: Date.now(),
+    noticeLog: [],
+    noticeWaiters: new Set(),
+    publishedConditions: null,
     lastSameActionAt: {},
     lastWarningAt: null,
     lastAlert: null,
@@ -75,6 +80,8 @@ const newMonitor = (row) => {
     countersDirty: false,
     flagsDirty: false,
     ending: false,
+    // Ended as far as the student is concerned, while the database catches up.
+    closing: false,
     pendingTermination: null,
     ended: !OPEN.has(row.status),
   };

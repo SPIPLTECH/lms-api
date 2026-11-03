@@ -30,6 +30,7 @@ const {
  *
  *   upload    token checked in memory, frame saved to disk, queued, response sent
  *   queue     AI call, then the rules over the attempt's in-memory window
+ *   notices   what the rules decided goes to the student at once, before any database write
  *   counters  flushed about once a minute, for all attempts in one statement
  *   kept      batched across attempts (evidence.service)
  *   flags and terminations  written at once, because they must survive a restart
@@ -38,6 +39,8 @@ const {
 const FRAME_WINDOW = 40;
 const DISK_MS = 70 * 1000;
 const VIOLATION_RADIUS_MS = 60 * 1000;
+const INCIDENT_KEEP_MS = 10 * 1000;
+const NOTICE_LOG = 20;
 const PERIODIC_EVERY_MS = 60 * 1000;
 const LATE_MS = 20 * 1000;
 const LATE_RUN_FLAG = 3;
@@ -104,6 +107,71 @@ function recordEvent(monitor, { eventType, metadata = {}, warningIssued = false,
   return event;
 }
 
+/* ------------------------------ telling the student ------------------------------ */
+
+function wakeNoticeWaiters(monitor) {
+  for (const wake of [...monitor.noticeWaiters]) wake();
+}
+
+/** Puts a notice on the channel and wakes whoever is waiting. Returns its id. */
+function publishNotice(monitor, notice) {
+  monitor.noticeCursor += 1;
+  const published = { ...notice, id: monitor.noticeCursor };
+  monitor.noticeLog.push(published);
+  if (monitor.noticeLog.length > NOTICE_LOG) monitor.noticeLog.shift();
+  wakeNoticeWaiters(monitor);
+  return published.id;
+}
+
+/** A condition starting or ending is news too: the page's ongoing banner follows it. */
+function publishConditions(monitor) {
+  const conditions = currentActiveConditions(monitor);
+  if (conditions === null) return;
+  const key = JSON.stringify(conditions);
+  if (key === monitor.publishedConditions) return;
+  const first = monitor.publishedConditions === null && conditions.length === 0;
+  monitor.publishedConditions = key;
+  if (first) return;
+  monitor.noticeCursor += 1;
+  wakeNoticeWaiters(monitor);
+}
+
+const noticesAfter = (monitor, after) => {
+  const activeConditions = currentActiveConditions(monitor);
+  return {
+    cursor: monitor.noticeCursor,
+    // Without a cursor the page is only asking where things stand, as after a refresh.
+    notices: after === undefined ? [] : monitor.noticeLog.filter((notice) => notice.id > after),
+    currentWarnings: Math.min(monitor.warningCount, monitor.policy.maxWarnings),
+    maxWarnings: monitor.policy.maxWarnings,
+    ...(activeConditions !== null ? { activeConditions } : {}),
+  };
+};
+
+/**
+ * GET /monitor/notices: answers when there is something newer than the cursor, or when the wait
+ * is over. In memory, like everything else on this path. The page always has one of these open.
+ */
+async function pollNotices(monitor, after, signal) {
+  if (after === undefined || monitor.noticeCursor > after) return noticesAfter(monitor, after);
+  await new Promise((resolve) => {
+    let timer = null;
+    const done = () => {
+      clearTimeout(timer);
+      monitor.noticeWaiters.delete(done);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    timer = setTimeout(done, proctoringSettings().noticeHoldSeconds * 1000);
+    monitor.noticeWaiters.add(done);
+    signal?.addEventListener("abort", done);
+  });
+  // A termination is on the log and reaches the page as that notice. Anything else that closed
+  // the attempt, such as a submit or the deadline, is said the usual way.
+  if (monitor.ended && !monitor.closing) throw new ApiError(409, "This exam has ended.", "ATTEMPT_ENDED");
+  return noticesAfter(monitor, after);
+}
+
 /* ------------------------------ flags and endings ------------------------------ */
 
 const framesWithin = (monitor, ids) => monitor.frames.filter((frame) => ids.includes(frame.id));
@@ -145,6 +213,12 @@ async function terminate(monitor, trigger) {
   if (monitor.ending || monitor.ended) return false;
   monitor.ending = true;
   const now = new Date();
+  // Over for the student from this moment. What follows is the record catching up, and the
+  // watchdog retries it if the database fails.
+  if (!monitor.closing) {
+    monitor.closing = true;
+    publishNotice(monitor, { warningIssued: false, eventType: null, message: null, currentWarnings: Math.min(monitor.warningCount, monitor.policy.maxWarnings), maxWarnings: monitor.policy.maxWarnings, terminated: true, recheckInMs: null });
+  }
   try {
     monitor.holdEvidence = true;
     for (const frame of framesWithin(monitor, trigger.evidenceFrameIds)) evidence.keepFrame(monitor, frame, "VIOLATION", now);
@@ -505,9 +579,19 @@ async function applyRules(monitor, frame, outcome, settings) {
     }
   }
 
+  const limitReached = monitor.warningCount >= maxWarnings;
+  const endingAtLimit = limitReached && willTerminateOnLimit;
+  if (isSuspicious(frame.result) && settings.recheckSeconds > 0) outcome.recheckInMs = settings.recheckSeconds * 1000;
+
+  // The decision is made, so the student hears it now. The writes below can take a second.
+  publishConditions(monitor);
+  const notice = studentNotice({ ...outcome, terminated: endingAtLimit });
+  if (endingAtLimit) monitor.closing = true;
+  if (notice) outcome.noticeId = publishNotice(monitor, notice);
+
   await evaluate(monitor, outcome);
 
-  if (monitor.warningCount >= maxWarnings) {
+  if (limitReached) {
     await raiseFlag(monitor, "WARNING_LIMIT_REACHED", { warnings: monitor.warningCount, maxWarnings });
     if (!outcome.terminated && willTerminateOnLimit) {
       outcome.terminated =
@@ -520,26 +604,27 @@ async function applyRules(monitor, frame, outcome, settings) {
         })) || outcome.terminated;
     }
   }
+}
 
-  if (!outcome.terminated && isSuspicious(frame.result) && settings.recheckSeconds > 0) {
-    outcome.recheckInMs = settings.recheckSeconds * 1000;
-  }
+/** In flight when the exam closed. A clean attempt keeps no extra frames for this; one being ended by proctoring does. */
+async function setAsideLateFrame(monitor, frame) {
+  if (monitor.closing) evidence.keepFrame(monitor, { ...frame, result: { status: "SKIPPED", errorCode: "EXAM_ENDED", facesDetected: null, note: "Arrived as the exam ended; not analysed." }, analysed: false }, "UNANALYSED");
+  else await evidence.removeFile(frame.path);
 }
 
 /** Queue job: one exam frame. */
 async function analyseExamFrame(monitor, frame) {
   const outcome = { warnings: [], terminated: false, recheckInMs: null };
   const settings = proctoringSettings();
-  // In flight when the student submitted. A clean attempt keeps no extra frames for this.
-  if (monitor.ended) {
-    await evidence.removeFile(frame.path);
+  if (monitor.ended || monitor.closing) {
+    await setAsideLateFrame(monitor, frame);
     return outcome;
   }
 
   const raw = await analyzeImage(frame.path, frame.mimeType, { identity: monitor.identityMatching });
   noteAnalysisOutcome(raw);
-  if (monitor.ended) {
-    await evidence.removeFile(frame.path);
+  if (monitor.ended || monitor.closing) {
+    await setAsideLateFrame(monitor, frame);
     return outcome;
   }
   const now = new Date();
@@ -577,6 +662,7 @@ function studentNotice(outcome) {
   const last = outcome.warnings[outcome.warnings.length - 1];
   if (!last && !outcome.terminated && !outcome.recheckInMs) return null;
   return {
+    ...(outcome.noticeId ? { id: outcome.noticeId } : {}),
     warningIssued: Boolean(last),
     eventType: last?.eventType ?? null,
     message: last ? formatStudentWarning(last.message, last.currentWarnings, last.maxWarnings, last.willTerminate) : null,
@@ -645,6 +731,7 @@ async function ingestFrame(monitor, file, { type = "PERIODIC_SNAPSHOT", frameId,
     return runIdentityJob(monitor, frame, analyseIdentityRecheck, settings, () => ({ identityRecheckRequired: true, message: FACE_CHECK_MESSAGES.NOT_ANALYSED }));
   }
 
+  if (monitor.closing) await refuse(409, "This exam has ended.", "ATTEMPT_ENDED");
   if (monitor.status !== "IN_PROGRESS") await refuse(409, "Monitoring is not running for this attempt.", "MONITORING_NOT_ACTIVE");
   if (monitor.identityRecheckPending) await refuse(409, "Repeat the identity check to continue on this device.", "IDENTITY_RECHECK_REQUIRED");
 
@@ -730,8 +817,19 @@ function warningMessage(eventType, count, max, willTerminate) {
   return formatStudentWarning(base, count, max, willTerminate);
 }
 
+/** A warning needs something to show for it: the latest frame, and the ones about to arrive. */
+function keepForIncident(monitor, now) {
+  const until = new Date(now.getTime() + INCIDENT_KEEP_MS);
+  if (!monitor.violationUntil || monitor.violationUntil < until) monitor.violationUntil = until;
+  const latest = monitor.frames.find((frame) => frame.path);
+  if (!latest || now.getTime() - latest.receivedAt.getTime() > INCIDENT_KEEP_MS) return null;
+  evidence.keepFrame(monitor, latest, "VIOLATION", now);
+  return latest.id;
+}
+
 /** POST /monitor/events: what the browser saw. Severity and AI signals belong to the server. */
 async function ingestEvent(monitor, input) {
+  if (monitor.closing) throw new ApiError(409, "This exam has ended.", "ATTEMPT_ENDED");
   if (monitor.status !== "IN_PROGRESS") throw new ApiError(409, "Monitoring is not running for this attempt.", "MONITORING_NOT_ACTIVE");
 
   const now = new Date();
@@ -766,6 +864,10 @@ async function ingestEvent(monitor, input) {
   for (const name of SENSITIVE_METADATA) delete metadata[name];
 
   const eligible = isWarningEligible(input.eventType);
+  if (eligible) {
+    const kept = keepForIncident(monitor, now);
+    if (kept) metadata.evidenceIds = [kept];
+  }
   const atWarningLimitBefore = monitor.warningCount >= maxWarnings;
   const warningIssued = eligible && issueWarning(monitor, now);
   const recorded = recordEvent(
@@ -779,6 +881,18 @@ async function ingestEvent(monitor, input) {
     },
     now
   );
+  // As with frames: the student hears before the writes below.
+  const endingAtLimit = monitor.warningCount >= maxWarnings && willTerminateOnLimit;
+  const clampedWarnings = Math.min(monitor.warningCount, maxWarnings);
+  const notice = snapshot({
+    warningIssued,
+    terminated: endingAtLimit,
+    recheckInMs: null,
+    eventType: warningIssued ? input.eventType : null,
+    message: warningIssued ? warningMessage(input.eventType, clampedWarnings, maxWarnings, willTerminateOnLimit) : null,
+  });
+  if (endingAtLimit) monitor.closing = true;
+  const noticeId = warningIssued || endingAtLimit ? publishNotice(monitor, notice) : null;
 
   if (input.eventType === "CAMERA_INTERRUPTED" || input.eventType === "CAMERA_DENIED") await raiseFlag(monitor, "CAMERA_LOST", { eventType: input.eventType });
 
@@ -799,16 +913,16 @@ async function ingestEvent(monitor, input) {
     }
   }
 
-  const clampedWarnings = Math.min(monitor.warningCount, maxWarnings);
   return {
     deduplicated: false,
     policyResult: snapshot({
       warningIssued,
-      terminated: outcome.terminated,
+      terminated: outcome.terminated || endingAtLimit,
+      ...(noticeId ? { noticeId } : {}),
       ...(warningIssued
         ? {
             eventType: input.eventType,
-            message: warningMessage(input.eventType, clampedWarnings, maxWarnings, willTerminateOnLimit),
+            message: notice.message,
           }
         : {}),
     }),
@@ -954,6 +1068,8 @@ registry.onEnded(async (monitor) => {
   // Everything still only in memory is written before it goes.
   await flushBuffers().catch((error) => console.warn("[proctoring] could not write events at close; will retry:", error?.message));
   await flushCounters([monitor]).catch((error) => console.warn("[proctoring] could not write counters at close:", error?.message));
+  // Whoever is waiting reads the result next, so this comes after the counters.
+  wakeNoticeWaiters(monitor);
   monitor.endedSeenAt = new Date();
   for (const frame of monitor.frames) {
     if (frame.path && !frame.kept) {
@@ -970,6 +1086,7 @@ module.exports = {
   heartbeat,
   ingestEvent,
   ingestFrame,
+  pollNotices,
   recoverAfterRestart,
   watchdogTick,
 };

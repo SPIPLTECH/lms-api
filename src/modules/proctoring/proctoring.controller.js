@@ -26,6 +26,19 @@ async function snapshot(req) {
   return monitor.ingestFrame(req.monitor, req.file, value);
 }
 
+/** A long wait, so it stops as soon as the page goes away. */
+async function notices(req, res, next) {
+  const gone = new AbortController();
+  res.once("close", () => gone.abort());
+  try {
+    const after = req.query.after === undefined ? undefined : Number(req.query.after);
+    const data = await monitor.pollNotices(req.monitor, after, gone.signal);
+    if (!res.writableEnded && !gone.signal.aborted) res.json({ success: true, data });
+  } catch (error) {
+    if (!gone.signal.aborted) next(error);
+  }
+}
+
 async function evidenceFile(req, res, next) {
   try {
     const { bytes, mimeType } = await evidence.readEvidenceFile(req.user, req.params.evidenceId);
@@ -40,7 +53,7 @@ module.exports = {
   getStatus: respond((req) => attempts.getStatus(req.user, req.params.quizId, req.headers)),
   createAttempt: respond((req) => attempts.createAttempt(req.user, req.params.quizId, req.body, req.headers), 201),
   resumeAttempt: respond((req) => attempts.resumeAttempt(req.user, req.params.attemptId, req.headers)),
-  startAttempt: respond((req) => attempts.startAttempt(req.user, req.params.attemptId)),
+  startAttempt: respond((req) => attempts.startAttempt(req.user, req.params.attemptId, req.body)),
   getAttempt: respond((req) => attempts.getAttempt(req.user, req.params.attemptId)),
   saveAnswer: respond((req) => attempts.saveAnswer(req.user, req.params.attemptId, req.params.questionId, req.body)),
   submitAttempt: respond((req) => attempts.submitAttempt(req.user, req.params.attemptId)),
@@ -61,6 +74,7 @@ module.exports = {
   monitorEvent: respond((req) => monitor.ingestEvent(req.monitor, req.body)),
   heartbeat: respond((req) => monitor.heartbeat(req.monitor, req.body)),
   context: respond((req) => monitor.context(req.monitor)),
+  notices,
   evidenceFile,
   // No URLs, tokens or paths: state and numbers only.
   health: respond(async () => ({

@@ -13,6 +13,10 @@ const sessionService = require("../../src/modules/sessions/session.service");
 
 const PASSWORD = "Str0ng!Pass-proctoring";
 
+// These suites read a decision from the upload's own response, so they ask for the upload to wait
+// for it. test/proctoring-realtime.test.js sets it back to the shipped 0.
+process.env.AI_UPLOAD_WAIT_MS = "800";
+
 function createHarness(label) {
   const run = `${label}-${crypto.randomBytes(3).toString("hex")}`;
   const state = { server: null, baseUrl: null, userIds: [], courseIds: [], quizIds: [] };

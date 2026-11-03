@@ -49,7 +49,7 @@ async function monitorAuth(req, res, next) {
     if (!claims) throw new ApiError(401, "Exam monitoring needs a valid token. Reload the exam page.", "MONITORING_TOKEN_INVALID");
     const monitor = await registry.load(claims.attemptId);
     if (!monitor) throw new ApiError(401, "Exam monitoring needs a valid token. Reload the exam page.", "MONITORING_TOKEN_INVALID");
-    if (monitor.ended) throw new ApiError(409, "This exam has ended.", "ATTEMPT_ENDED");
+    if (monitor.ended || monitor.closing) throw new ApiError(409, "This exam has ended.", "ATTEMPT_ENDED");
     if (claims.version !== monitor.tokenVersion) throw new ApiError(409, "This exam is now open in another tab or device.", "TOKEN_SUPERSEDED");
     req.monitor = monitor;
     next();

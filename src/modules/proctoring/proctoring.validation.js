@@ -9,6 +9,15 @@ const createAttemptSchema = Joi.object({
   }).optional(),
 });
 
+// What the browser saw at the moment Start was pressed. A claim, kept on the audit record. A page
+// can only see captures it could reach itself, never a recorder running elsewhere on the computer.
+const startAttemptSchema = Joi.object({
+  readiness: Joi.object({
+    screenCaptureSessions: Joi.number().integer().min(0).max(100),
+    recordingClosedConfirmed: Joi.boolean(),
+  }).optional(),
+});
+
 const MAX_ANSWER_CHARS = 20000;
 
 const saveAnswerSchema = Joi.object({
@@ -62,6 +71,8 @@ const heartbeatSchema = Joi.object({
   microphoneStatus: Joi.string().valid("GRANTED", "REFUSED").optional(),
 });
 
+const noticesQuerySchema = Joi.object({ after: Joi.number().integer().min(0).optional() });
+
 const snapshotFieldsSchema = Joi.object({
   type: Joi.string().valid("PRE_EXAM_IDENTITY", "IDENTITY_RECHECK", "PERIODIC_SNAPSHOT", "INCIDENT_SNAPSHOT").default("PERIODIC_SNAPSHOT"),
   frameId: Joi.string().pattern(/^[A-Za-z0-9-]{8,64}$/).optional(),
@@ -82,4 +93,4 @@ const appealSchema = Joi.object({ reason: Joi.string().trim().min(5).max(2000).r
 
 const deleteEvidenceSchema = Joi.object({ reason: Joi.string().trim().min(5).max(500).required() });
 
-module.exports = { appealSchema, createAttemptSchema, decisionSchema, deleteEvidenceSchema, heartbeatSchema, monitorEventSchema, saveAnswerSchema, snapshotFieldsSchema };
+module.exports = { appealSchema, createAttemptSchema, decisionSchema, deleteEvidenceSchema, heartbeatSchema, monitorEventSchema, noticesQuerySchema, saveAnswerSchema, snapshotFieldsSchema, startAttemptSchema };

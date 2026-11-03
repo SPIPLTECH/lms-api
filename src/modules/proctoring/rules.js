@@ -160,7 +160,7 @@ const AI_RULES = [
     source: "ai-object-detection",
     threshold: (settings, details) => {
       const confidence = details?.signalConfidence ?? 0;
-      const minWarn = settings.objectWarnMinConfidence ?? 0.6;
+      const minWarn = settings.objectWarnMinConfidence ?? 0.5;
       return confidence >= minWarn ? settings.objectConsecutive : Math.max(2, settings.objectConsecutive);
     },
     minSustainedSeconds: () => 0,

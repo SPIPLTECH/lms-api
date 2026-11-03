@@ -5,6 +5,7 @@ const path = require("path");
 
 const prisma = require("../../config/database");
 const ApiError = require("../../utils/ApiError");
+const { proctoringSettings } = require("../../config/proctoring");
 const audit = require("../audit/audit.service");
 const { createConfiguredStore } = require("./evidenceStore");
 
@@ -15,8 +16,8 @@ const { createConfiguredStore } = require("./evidenceStore");
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const VIOLATION_RETENTION_MS = 90 * DAY_MS;
-const CLEAN_RETENTION_MS = 7 * DAY_MS;
+const violationRetentionMs = () => proctoringSettings().violationRetentionDays * DAY_MS;
+const cleanRetentionMs = () => proctoringSettings().cleanRetentionDays * DAY_MS;
 const FLUSH_DELAY_MS = 1000;
 const BATCH_SIZE = 100;
 const COPY_CONCURRENCY = 4;
@@ -69,7 +70,7 @@ const retention = (monitor, category, now) => {
   const hold = Boolean(monitor.holdEvidence);
   return {
     reviewHold: hold,
-    retainUntil: new Date(now.getTime() + (hold || LONG_TERM.has(category) ? VIOLATION_RETENTION_MS : CLEAN_RETENTION_MS)),
+    retainUntil: new Date(now.getTime() + (hold || LONG_TERM.has(category) ? violationRetentionMs() : cleanRetentionMs())),
   };
 };
 
@@ -166,7 +167,7 @@ async function flush() {
   }
   if (pendingUpgrades.length > 0) {
     const ids = pendingUpgrades.splice(0);
-    await prisma.proctoringEvidence.updateMany({ where: { id: { in: ids } }, data: { category: "VIOLATION", retainUntil: new Date(Date.now() + VIOLATION_RETENTION_MS) } });
+    await prisma.proctoringEvidence.updateMany({ where: { id: { in: ids } }, data: { category: "VIOLATION", retainUntil: new Date(Date.now() + violationRetentionMs()) } });
   }
   if (storedIds.length > 0) {
     const done = storedIds.splice(0);
@@ -198,7 +199,7 @@ async function drain() {
 
 /** The attempt is flagged or under review: everything it has kept stays until review closes. */
 async function holdAttemptEvidence(attemptId, client = prisma, now = new Date()) {
-  await client.proctoringEvidence.updateMany({ where: { attemptId }, data: { reviewHold: true, retainUntil: new Date(now.getTime() + VIOLATION_RETENTION_MS) } });
+  await client.proctoringEvidence.updateMany({ where: { attemptId }, data: { reviewHold: true, retainUntil: new Date(now.getTime() + violationRetentionMs()) } });
 }
 
 /** Removes one kept image altogether. */

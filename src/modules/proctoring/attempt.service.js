@@ -281,7 +281,7 @@ async function resumeAttempt(user, attemptId, headers = {}) {
 }
 
 /** POST /attempts/:id/start: the clock starts here, once, from the server's time. */
-async function startAttempt(user, attemptId) {
+async function startAttempt(user, attemptId, { readiness } = {}) {
   const attempt = await ownAttempt(user, attemptId);
   if (attempt.status === "IN_PROGRESS") {
     assertOnThisDevice(attempt, user);
@@ -290,6 +290,9 @@ async function startAttempt(user, attemptId) {
   if (attempt.status !== "PREPARING") throw ended();
   assertOnThisDevice(attempt, user);
   await assertMonitoringAvailable();
+  if (readiness?.screenCaptureSessions > 0) {
+    throw new ApiError(409, "A screen capture is running in this browser. Stop it, then press Start exam again. No attempt has been used.", "SCREEN_CAPTURE_ACTIVE");
+  }
 
   const reasons = [
     ...(attempt.consentId ? [] : ["CONSENT_MISSING"]),
@@ -328,7 +331,7 @@ async function startAttempt(user, attemptId) {
       sessionId: user.sessionId,
       deviceId: user.deviceId,
       eventType: AUDIT_EVENTS.PROCTORING_ATTEMPT_STARTED,
-      metadata: { quizId: attempt.quizId, attemptId: attempt.id, microphoneStatus: current.microphoneStatus },
+      metadata: { quizId: attempt.quizId, attemptId: attempt.id, microphoneStatus: current.microphoneStatus, ...(readiness && { readiness }) },
     });
   }
   return withToken(current, user);
@@ -387,6 +390,8 @@ async function saveAnswer(user, attemptId, questionId, { answer, clientRevision,
 async function submitAttempt(user, attemptId) {
   const attempt = await ownAttempt(user, attemptId);
   if (attempt.status === "PREPARING") throw new ApiError(409, "This exam has not started.", "ATTEMPT_NOT_STARTED");
+  // Proctoring has already ended it, and the record is catching up.
+  if (registry.peek(attemptId)?.closing) throw ended();
   if (attempt.status === "IN_PROGRESS") {
     assertOnThisDevice(attempt, user);
     await finalizeAttempt(attempt.id, { endReason: isOverdue(attempt) ? "TIME_EXPIRED" : "SUBMITTED" });
@@ -540,12 +545,21 @@ async function finalizeAttempt(attemptId, { endReason, rule = null, terminationR
       {
         forceFailed: terminated,
         onTransactionStart: async (tx) => {
+          // Counters otherwise reach the database in batches, and the result can be read from this moment.
+          const live = registry.peek(attemptId);
           const { count } = await tx.proctoredAttempt.updateMany({
             where: { id: attemptId, status: "IN_PROGRESS" },
             data: {
               status,
               endReason,
               endedAt: now,
+              ...(live && {
+                warningCount: live.warningCount,
+                framesReceived: live.framesReceived,
+                framesAnalysed: live.framesAnalysed,
+                framesSkipped: live.framesSkipped,
+                longestGapSeconds: live.longestGapSeconds ?? null,
+              }),
               ...(terminated && { terminatedAt: cutoff, terminationRule: rule, terminationReason }),
               ...(needsReview && {
                 reviewState: "PENDING",

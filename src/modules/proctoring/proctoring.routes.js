@@ -11,7 +11,7 @@ const {
 const { isProctoringAvailable } = require("../../config/proctoring");
 const controller = require("./proctoring.controller");
 const { monitorAuth, receiveFrame, refuseWhenDiskFull } = require("./monitor.middleware");
-const { appealSchema, createAttemptSchema, decisionSchema, deleteEvidenceSchema, heartbeatSchema, monitorEventSchema, saveAnswerSchema } = require("./proctoring.validation");
+const { appealSchema, createAttemptSchema, decisionSchema, deleteEvidenceSchema, heartbeatSchema, monitorEventSchema, noticesQuerySchema, saveAnswerSchema, startAttemptSchema } = require("./proctoring.validation");
 
 const router = express.Router();
 
@@ -29,7 +29,7 @@ router.get("/quizzes/:quizId/status", student, proctoringAttemptRateLimiter, con
 router.post("/quizzes/:quizId/attempts", student, proctoringAttemptRateLimiter, validate(createAttemptSchema), controller.createAttempt);
 router.get("/attempts/:attemptId", student, proctoringAttemptRateLimiter, controller.getAttempt);
 router.post("/attempts/:attemptId/resume", student, proctoringAttemptRateLimiter, controller.resumeAttempt);
-router.post("/attempts/:attemptId/start", student, proctoringAttemptRateLimiter, controller.startAttempt);
+router.post("/attempts/:attemptId/start", student, proctoringAttemptRateLimiter, validate(startAttemptSchema), controller.startAttempt);
 router.put("/attempts/:attemptId/answers/:questionId", student, proctoringAnswerRateLimiter, validate(saveAnswerSchema), controller.saveAnswer);
 router.post("/attempts/:attemptId/submit", student, proctoringAttemptRateLimiter, controller.submitAttempt);
 router.get("/attempts/:attemptId/result", student, proctoringAttemptRateLimiter, controller.getAttemptResult);
@@ -48,6 +48,7 @@ router.delete("/attempts/:attemptId/evidence", verifyToken, checkRole(["ADMIN"])
 router.post("/monitor/snapshots", monitorAuth, monitorRateLimiter("snapshots", 60), refuseWhenDiskFull, receiveFrame, controller.snapshot);
 router.post("/monitor/events", monitorAuth, monitorRateLimiter("events", 120), validate(monitorEventSchema), controller.monitorEvent);
 router.post("/monitor/heartbeat", monitorAuth, monitorRateLimiter("heartbeat", 30), validate(heartbeatSchema), controller.heartbeat);
+router.get("/monitor/notices", monitorAuth, monitorRateLimiter("notices", 120), validate(noticesQuerySchema, "query"), controller.notices);
 router.get("/monitor/context", monitorAuth, monitorRateLimiter("context", 30), controller.context);
 
 // Images reach people only here, never through the LMS file routes or a public URL.
