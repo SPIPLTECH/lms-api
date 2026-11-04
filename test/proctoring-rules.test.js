@@ -146,10 +146,10 @@ describe("runs of frames", () => {
     const sustainedAway = activeRuns([frame("f2", 5, away), frame("f1", 0, away)])[0];
     assert.strictEqual(ruleMet(findRule("HEAD_POSE_AWAY"), sustainedAway, settings), true, "5s sustained head turn warns");
 
-    const briefNone = activeRuns([frame("f2", 2, none), frame("f1", 0, none)])[0];
-    assert.strictEqual(ruleMet(findRule("FACE_NOT_DETECTED"), briefNone, settings), false);
-    const sustainedNone = activeRuns([frame("f2", 4, none), frame("f1", 0, none)])[0];
-    assert.strictEqual(ruleMet(findRule("FACE_NOT_DETECTED"), sustainedNone, settings), true);
+    const briefNone = activeRuns([frame("f2", 1, none), frame("f1", 0, none)])[0];
+    assert.strictEqual(ruleMet(findRule("FACE_NOT_DETECTED"), briefNone, settings), false, "two photos 1 s apart: a blink or a blur");
+    const sustainedNone = activeRuns([frame("f2", 2, none), frame("f1", 0, none)])[0];
+    assert.strictEqual(ruleMet(findRule("FACE_NOT_DETECTED"), sustainedNone, settings), true, "2 s without a face warns");
 
     const oneBorderline = activeRuns([frame("f1", 0, borderlinePhone)])[0];
     assert.strictEqual(ruleMet(findRule("PROHIBITED_OBJECT_DETECTED"), oneBorderline, settings), false, "single 0.45 object waits for recheck");
@@ -157,6 +157,54 @@ describe("runs of frames", () => {
     assert.strictEqual(ruleMet(findRule("PROHIBITED_OBJECT_DETECTED"), twoBorderline, settings), true);
     const oneConfident = activeRuns([frame("f1", 0, phone)])[0];
     assert.strictEqual(ruleMet(findRule("PROHIBITED_OBJECT_DETECTED"), oneConfident, settings), true);
+  });
+
+  describe("a count is not restarted by a photo that says nothing against it", () => {
+    const findRule = (type) => AI_RULES.find((r) => r.eventType === type);
+    const none = ok({ classification: "NO_FACE", facesDetected: 0, faces: [] });
+    const you = ok({ identity: { status: "MATCH", similarity: 0.85 } });
+    const other = (similarity, score = 0.63) => ok({ faces: [{ score }], identity: { status: "MISMATCH", similarity } });
+    const run = (frames, type) => activeRuns(frames).find((r) => r.eventType === type);
+    const met = (frames, type) => Boolean(run(frames, type) && ruleMet(findRule(type), run(frames, type), settings));
+
+    test("a moment with no face does not restart a different-person count; the student's own face does", () => {
+      const across = run([frame("f3", 3, other(0.3)), frame("f2", 2, none), frame("f1", 0, other(0.3))], "IDENTITY_MISMATCH_DETECTED");
+      assert.strictEqual(across.consecutiveSnapshots, 2);
+      assert.deepStrictEqual(across.evidenceFrameIds, ["f3", "f1"], "only photos that show the other person are evidence");
+      assert.strictEqual(run([frame("f3", 3, other(0.3)), frame("f2", 2, you), frame("f1", 0, other(0.3))], "IDENTITY_MISMATCH_DETECTED").consecutiveSnapshots, 1);
+    });
+
+    test("one glimpse of a face does not restart a no-face count; two in a row do", () => {
+      assert.strictEqual(run([frame("f3", 3, none), frame("f2", 2, you), frame("f1", 0, none)], "FACE_NOT_DETECTED").consecutiveSnapshots, 2);
+      assert.strictEqual(run([frame("f4", 4, none), frame("f3", 3, you), frame("f2", 2, you), frame("f1", 0, none)], "FACE_NOT_DETECTED").consecutiveSnapshots, 1);
+      assert.strictEqual(run([frame("f5", 5, none), frame("f4", 4, you), frame("f3", 3, none), frame("f2", 2, you), frame("f1", 0, none)], "FACE_NOT_DETECTED").consecutiveSnapshots, 2, "only one glimpse is forgiven per run");
+    });
+
+    test("a problem shows as current only while the newest photo shows it", () => {
+      assert.strictEqual(run([frame("f2", 2, you), frame("f1", 0, none)], "FACE_NOT_DETECTED"), undefined);
+      assert.strictEqual(run([frame("f2", 2, none), frame("f1", 0, other(0.3))], "IDENTITY_MISMATCH_DETECTED"), undefined);
+    });
+
+    test("one clearly different person warns at once; a doubtful one or a blurred face waits for a second photo", () => {
+      assert.strictEqual(met([frame("f1", 0, other(0.07))], "IDENTITY_MISMATCH_DETECTED"), true, "similarity 0.07, face 63%");
+      assert.strictEqual(met([frame("f1", 0, other(0.3))], "IDENTITY_MISMATCH_DETECTED"), false, "0.30 is close to the 0.36 match line");
+      assert.strictEqual(met([frame("f1", 0, other(0.07, 0.5))], "IDENTITY_MISMATCH_DETECTED"), false, "a weak face can be misread");
+      assert.strictEqual(met([frame("f2", 2, other(0.3)), frame("f1", 0, other(0.3))], "IDENTITY_MISMATCH_DETECTED"), true);
+    });
+
+    test("the exam of 2026-11-04 12:07 IST, replayed: each problem is confirmed at its first possible photo", () => {
+      // The 16 analysed photos of that exam: warnings were confirmed at 13.9, 24.2 and 33.2 s.
+      const photos = [[8.084, you], [10.897, you], [13.883, ok({ objects: { status: "OK", items: [{ label: "cell phone", score: 0.71 }] } })], [16.069, you], [16.874, you],
+        [19.872, other(0.073)], [22.059, none], [22.892, other(0.123, 0.61)], [24.204, other(0.144, 0.55)], [25.873, other(-0.106, 0.61)], [26.381, none],
+        [28.436, you], [28.872, none], [31.035, none], [31.868, none], [33.192, none]];
+      const firstMet = {};
+      const newest = [];
+      for (const [seconds, result] of photos) {
+        newest.unshift({ id: String(seconds), receivedAt: new Date(at(0).getTime() + seconds * 1000), result });
+        for (const type of ["PROHIBITED_OBJECT_DETECTED", "IDENTITY_MISMATCH_DETECTED", "FACE_NOT_DETECTED"]) if (!(type in firstMet) && met(newest, type)) firstMet[type] = seconds;
+      }
+      assert.deepStrictEqual(firstMet, { PROHIBITED_OBJECT_DETECTED: 13.883, IDENTITY_MISMATCH_DETECTED: 19.872, FACE_NOT_DETECTED: 28.872 });
+    });
   });
 
   test("a phone held close to the camera warns from one frame, though the model rarely sees it twice", () => {

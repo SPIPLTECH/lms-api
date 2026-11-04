@@ -44,8 +44,9 @@ router.delete("/attempts/:attemptId/evidence", verifyToken, checkRole(["ADMIN"])
 
 // Monitoring: the attempt's own token, checked in memory, so a clean frame costs the
 // database nothing. Limits are per attempt, so one classroom behind one address is not
-// throttled as a single client. A frame every 5 s plus 2 s re-checks stays well inside them.
-router.post("/monitor/snapshots", monitorAuth, monitorRateLimiter("snapshots", 60), refuseWhenDiskFull, receiveFrame, controller.snapshot);
+// throttled as a single client. A frame every 3 s plus a re-check every second while something
+// looks wrong is about 80 a minute at most, inside the 120 allowed for frames.
+router.post("/monitor/snapshots", monitorAuth, monitorRateLimiter("snapshots", 120), refuseWhenDiskFull, receiveFrame, controller.snapshot);
 router.post("/monitor/events", monitorAuth, monitorRateLimiter("events", 120), validate(monitorEventSchema), controller.monitorEvent);
 router.post("/monitor/heartbeat", monitorAuth, monitorRateLimiter("heartbeat", 30), validate(heartbeatSchema), controller.heartbeat);
 router.get("/monitor/notices", monitorAuth, monitorRateLimiter("notices", 120), validate(noticesQuerySchema, "query"), controller.notices);

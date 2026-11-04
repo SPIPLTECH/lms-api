@@ -53,7 +53,8 @@ const proctoringSettings = (env = process.env) => ({
   objectWarnMinConfidence: intOf(env, "AI_OBJECT_WARN_MIN_CONFIDENCE", 0.5),
   persistSeconds: intOf(env, "AI_TERMINATE_PERSIST_SECONDS", 10),
   faceAbsentConsecutive: intOf(env, "AI_FACE_ABSENT_CONSECUTIVE", 2),
-  faceAbsentSustainedSeconds: intOf(env, "AI_FACE_ABSENT_SUSTAINED_SECONDS", 4),
+  // 2 s: at 4 s a covered camera went unwarned for 7 s in a real exam. Two photos 1 s apart (a blink) still do not warn.
+  faceAbsentSustainedSeconds: intOf(env, "AI_FACE_ABSENT_SUSTAINED_SECONDS", 2),
   faceMultipleConsecutive: intOf(env, "AI_FACE_MULTIPLE_CONSECUTIVE", 1),
   objectConsecutive: intOf(env, "AI_OBJECT_CONSECUTIVE", 1),
   headPoseConsecutive: intOf(env, "AI_HEAD_POSE_CONSECUTIVE", 2),
@@ -65,13 +66,17 @@ const proctoringSettings = (env = process.env) => ({
   episodeClearSeconds: intOf(env, "AI_EPISODE_CLEAR_SECONDS", 10),
   identityMatchThreshold: intOf(env, "AI_IDENTITY_MATCH_THRESHOLD", 0.363),
   identityMismatchConsecutive: intOf(env, "AI_IDENTITY_MISMATCH_CONSECUTIVE", 2),
+  // One photo warns when it is this far below the match line on a clear face (a real other person scored 0.07 on a 63% face).
+  identityStrongMismatch: intOf(env, "AI_IDENTITY_STRONG_MISMATCH", 0.15),
+  identityStrongMinFaceScore: intOf(env, "AI_IDENTITY_STRONG_MIN_FACE_SCORE", 0.6),
   identityFlagConsecutive: intOf(env, "AI_IDENTITY_TERMINATE_CONSECUTIVE", 3),
   correlationWindowSeconds: intOf(env, "AI_CORRELATION_WINDOW_SECONDS", 120),
   correlationMinSignals: Math.max(2, intOf(env, "AI_CORRELATION_MIN_SIGNALS", 2)),
   alertDedupSeconds: intOf(env, "AI_ALERT_DEDUP_SECONDS", 300),
   voiceCooldownSeconds: intOf(env, "AI_VAD_COOLDOWN_SECONDS", 30),
   studentWarnings: boolOf(env, "AI_STUDENT_WARNINGS", true),
-  recheckSeconds: intOf(env, "AI_RECHECK_SECONDS", 2),
+  // A suspicious photo asks for the next one this soon, so a second photo confirms it within about a second.
+  recheckSeconds: intOf(env, "AI_RECHECK_SECONDS", 1),
   // How long an upload may be held for the AI's answer. None: decisions reach the page through
   // the notice channel, so a slow AI never holds an upload open.
   uploadWaitMs: intOf(env, "AI_UPLOAD_WAIT_MS", 0),

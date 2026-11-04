@@ -292,11 +292,14 @@ async function evaluate(monitor, outcome = {}) {
   }
 }
 
+/** Inside the gap the policy keeps between two warnings. */
+const inWarningGap = (monitor, now) =>
+  Boolean(monitor.lastWarningAt) && now.getTime() - monitor.lastWarningAt.getTime() < monitor.policy.cooldownSeconds * 1000;
+
 function issueWarning(monitor, now) {
   const maxWarnings = monitor.policy.maxWarnings;
   if (monitor.warningCount >= maxWarnings) return false;
-  const cooldownMs = monitor.policy.cooldownSeconds * 1000;
-  if (monitor.lastWarningAt && now.getTime() - monitor.lastWarningAt.getTime() < cooldownMs) return false;
+  if (inWarningGap(monitor, now)) return false;
   monitor.lastWarningAt = now;
   monitor.warningCount = Math.min(maxWarnings, monitor.warningCount + 1);
   monitor.countersDirty = true;
@@ -522,23 +525,7 @@ async function applyRules(monitor, frame, outcome, settings) {
   let latestTriggerEvent = null;
   let latestEvidenceIds = [];
 
-  for (const run of activeRuns(monitor.frames)) {
-    const rule = AI_RULES.find((candidate) => candidate.eventType === run.eventType);
-    if (!ruleMet(rule, run, settings)) continue;
-
-    for (const kept of framesWithin(monitor, run.evidenceFrameIds)) evidence.keepFrame(monitor, kept, "VIOLATION", now);
-
-    const existingEpisode = monitor.activeEpisodes.get(rule.eventType);
-    if (existingEpisode) {
-      existingEpisode.lastMatchedAt = frame.receivedAt;
-      existingEpisode.cleanAnalysedStreak = 0;
-      continue;
-    }
-    if (monitor.emittedRuns.get(rule.eventType) === run.runStartFrameId) continue;
-    monitor.emittedRuns.set(rule.eventType, run.runStartFrameId);
-
-    const atWarningLimitBefore = monitor.warningCount >= maxWarnings;
-    const warningIssued = settings.studentWarnings && issueWarning(monitor, now);
+  const recordRun = (rule, run, { warningIssued, extra = {} }) => {
     const event = recordEvent(
       monitor,
       {
@@ -552,20 +539,13 @@ async function applyRules(monitor, frame, outcome, settings) {
           sustainedSeconds: run.sustainedSeconds,
           evidenceIds: run.evidenceFrameIds,
           ...run.details,
-          ...(atWarningLimitBefore ? { postWarningLimit: true } : {}),
+          ...extra,
           studentMessage: STUDENT_MESSAGES[rule.eventType],
           note: "Automated signal for human review; not proof of misconduct.",
         },
       },
       now
     );
-    monitor.activeEpisodes.set(rule.eventType, {
-      eventType: rule.eventType,
-      openedAt: now,
-      lastMatchedAt: frame.receivedAt,
-      cleanAnalysedStreak: 0,
-      emittedEventId: event.id,
-    });
     latestTriggerEvent = event;
     latestEvidenceIds = run.evidenceFrameIds;
     if (warningIssued) {
@@ -577,6 +557,43 @@ async function applyRules(monitor, frame, outcome, settings) {
         willTerminate: willTerminateOnLimit,
       });
     }
+    return event;
+  };
+
+  for (const run of activeRuns(monitor.frames)) {
+    const rule = AI_RULES.find((candidate) => candidate.eventType === run.eventType);
+    if (!ruleMet(rule, run, settings)) continue;
+
+    for (const kept of framesWithin(monitor, run.evidenceFrameIds)) evidence.keepFrame(monitor, kept, "VIOLATION", now);
+
+    const existingEpisode = monitor.activeEpisodes.get(rule.eventType);
+    if (existingEpisode) {
+      existingEpisode.lastMatchedAt = frame.receivedAt;
+      existingEpisode.cleanAnalysedStreak = 0;
+      // Met inside the gap after another warning and still here now the gap is over: the warning it was owed.
+      if (existingEpisode.warningOwed && !inWarningGap(monitor, now)) {
+        existingEpisode.warningOwed = false;
+        if (issueWarning(monitor, now)) recordRun(rule, run, { warningIssued: true, extra: { postponedFrom: existingEpisode.emittedEventId } });
+      }
+      continue;
+    }
+    if (monitor.emittedRuns.get(rule.eventType) === run.runStartFrameId) continue;
+    monitor.emittedRuns.set(rule.eventType, run.runStartFrameId);
+
+    const atWarningLimitBefore = monitor.warningCount >= maxWarnings;
+    // Inside the gap the policy keeps between warnings, the problem is recorded now (for review
+    // and for ending the exam) and its warning waits, rather than being lost, until the gap is over.
+    const warningOwed = settings.studentWarnings && !atWarningLimitBefore && inWarningGap(monitor, now);
+    const warningIssued = settings.studentWarnings && issueWarning(monitor, now);
+    const event = recordRun(rule, run, { warningIssued, extra: atWarningLimitBefore ? { postWarningLimit: true } : {} });
+    monitor.activeEpisodes.set(rule.eventType, {
+      eventType: rule.eventType,
+      openedAt: now,
+      lastMatchedAt: frame.receivedAt,
+      cleanAnalysedStreak: 0,
+      emittedEventId: event.id,
+      warningOwed,
+    });
   }
 
   const limitReached = monitor.warningCount >= maxWarnings;

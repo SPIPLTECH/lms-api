@@ -121,6 +121,11 @@ const STUDENT_MESSAGES = {
  * A rule's event is raised when the latest frames in a row all match. A single frame
  * is rarely enough, and any frame that was not analysed breaks the run, so an outage can
  * never build toward a signal.
+ *
+ * Real cheating rarely gives clean runs: a second person moves into view, a hand passes over
+ * the lens. So a rule may name `neutral` frames, which say nothing either way and are skipped,
+ * and `graceFrames`, a number of single contradicting frames it forgives per run. Neither is
+ * ever counted, and the newest frame must always show the problem.
  */
 const AI_RULES = [
   {
@@ -129,6 +134,8 @@ const AI_RULES = [
     threshold: (settings) => settings.faceAbsentConsecutive,
     minSustainedSeconds: (settings) => settings.faceAbsentSustainedSeconds ?? 0,
     matches: (result) => result.classification === "NO_FACE",
+    // A hand moving over the lens shows the face for an instant. Two face frames in a row end it.
+    graceFrames: 1,
     describe: () => ({ signalConfidence: null }),
   },
   {
@@ -173,13 +180,23 @@ const AI_RULES = [
   {
     eventType: "IDENTITY_MISMATCH_DETECTED",
     source: "ai-identity",
-    threshold: (settings) => settings.identityMismatchConsecutive,
+    // One photo is enough when nobody could mistake it: far below the match line, on a clear face.
+    threshold: (settings, details) =>
+      details?.maxSimilarity <= settings.identityStrongMismatch && details?.minFaceScore >= settings.identityStrongMinFaceScore ? 1 : settings.identityMismatchConsecutive,
     minSustainedSeconds: () => 0,
     matches: (result) => result.classification === "ONE_FACE" && result.identity?.status === "MISMATCH",
+    // Only a single face compared with the identity photo says who is there. No face or two faces
+    // (someone moving into view) says nothing either way; the student's own face ends the run.
+    neutral: (result) => !(result.classification === "ONE_FACE" && ["MATCH", "MISMATCH"].includes(result.identity?.status)),
     describe: (run) => {
       const best = Math.max(...run.map((result) => result.identity?.similarity ?? 0));
       const threshold = run[0].identity?.threshold ?? 0.363;
-      return { maxSimilarity: round2(best), matchThreshold: threshold, signalConfidence: round2(Math.min(1, Math.max(0, 1 - best / threshold))) };
+      return {
+        maxSimilarity: round2(best),
+        matchThreshold: threshold,
+        minFaceScore: round2(Math.min(...run.map((result) => result.faces?.[0]?.score ?? 0))),
+        signalConfidence: round2(Math.min(1, Math.max(0, 1 - best / threshold))),
+      };
     },
   },
 ];
@@ -194,19 +211,42 @@ function ruleMet(rule, run, settings) {
 /** The latest frame matches a rule, so a quick re-check is worthwhile. */
 const isSuspicious = (result) => result?.status === "OK" && AI_RULES.some((rule) => rule.matches(result));
 
+const analysedAndMatching = (rule, frame) => frame?.result?.status === "OK" && rule.matches(frame.result);
+
+/** The frames of a rule's run, newest first: matching ones only, across neutral frames and forgiven ones. */
+function runFrames(rule, recent) {
+  const frames = [];
+  let grace = rule.graceFrames ?? 0;
+  for (let i = 0; i < recent.length; i += 1) {
+    const frame = recent[i];
+    if (frame.result?.status !== "OK") break;
+    if (rule.matches(frame.result)) {
+      frames.push(frame);
+    } else if (frames.length === 0) {
+      break;
+    } else if (rule.neutral?.(frame.result)) {
+      continue;
+    } else if (grace > 0 && analysedAndMatching(rule, recent[i + 1])) {
+      grace -= 1;
+    } else {
+      break;
+    }
+  }
+  return frames;
+}
+
 /** The run still in progress for each rule. `recent` is newest first. */
 function activeRuns(recent) {
   const runs = [];
   for (const rule of AI_RULES) {
-    let length = 0;
-    while (length < recent.length && recent[length].result?.status === "OK" && rule.matches(recent[length].result)) length += 1;
-    if (length === 0) continue;
-    const frames = recent.slice(0, length);
+    const frames = runFrames(rule, recent);
+    if (frames.length === 0) continue;
+    const oldest = frames[frames.length - 1];
     runs.push({
       eventType: rule.eventType,
-      runStartFrameId: frames[length - 1].id,
-      consecutiveSnapshots: length,
-      sustainedSeconds: Math.round((frames[0].receivedAt.getTime() - frames[length - 1].receivedAt.getTime()) / 1000),
+      runStartFrameId: oldest.id,
+      consecutiveSnapshots: frames.length,
+      sustainedSeconds: Math.round((frames[0].receivedAt.getTime() - oldest.receivedAt.getTime()) / 1000),
       evidenceFrameIds: frames.slice(0, 20).map((frame) => frame.id),
       details: rule.describe(frames.map((frame) => frame.result)),
     });
