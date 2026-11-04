@@ -29,7 +29,9 @@
  *   lesson must not shut a student out of material they were already in).
  *   A lesson/topic the student qualified out of counts as complete (the
  *   roll-up marks its items complete), and so does a Final the student failed
- *   with no attempts left — they move on, it just stays not passed.
+ *   with no attempts left — they move on, it just stays not passed. Its items
+ *   never re-lock either, visited or not: the student earned their way past
+ *   them, so new content added earlier must not shut them out of reviewing it.
  *
  *   `unlockAll` opens every step: for evaluator accounts (utils/evaluatorAccess),
  *   whose completion, current step and resume are tracked as usual, and in
@@ -110,6 +112,7 @@ function newStep(raw, index, bodies) {
     completed: item.completed === true,
     visited: item.visited === true,
     visitedAt: item.visitedAt ?? null,
+    qualifiedOut: item.qualifiedOut === true,
     attempted: item.attempted === true,
     // A Final also completes when its last attempt fails, so `completed` alone
     // does not say whether it was passed. Null for anything but a quiz.
@@ -136,6 +139,7 @@ function mergeIntoDocument(step, raw, bodies) {
   step.contentIds.push(item.contentId);
   step.completed = step.completed && item.completed === true;
   step.visited = step.visited && item.visited === true;
+  step.qualifiedOut = step.qualifiedOut && item.qualifiedOut === true;
   // The document was last visited when its most recently visited part was.
   if (visitedTime(item.visitedAt) > visitedTime(step.visitedAt)) step.visitedAt = item.visitedAt;
   const html = bodies?.get(item.contentId)?.htmlContent;
@@ -203,10 +207,10 @@ function buildLearningSequence(hierarchy, { bodies = null, unlockAll = false } =
     stepOfRaw.push(step.index);
   }
 
-  // Locks: linear by completion; visited steps never re-lock.
+  // Locks: linear by completion; visited and qualified-out steps never re-lock.
   let firstIncomplete = -1;
   for (const step of steps) {
-    step.locked = !unlockAll && firstIncomplete !== -1 && !step.visited;
+    step.locked = !unlockAll && firstIncomplete !== -1 && !step.visited && !step.qualifiedOut;
     step.blockedByIndex = step.locked ? firstIncomplete : null;
     if (!step.completed && firstIncomplete === -1) firstIncomplete = step.index;
     delete step._mergeable;
