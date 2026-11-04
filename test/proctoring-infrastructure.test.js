@@ -11,6 +11,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
+const { captureIntervalSeconds } = require("../src/config/proctoring");
 const { AnalysisQueue, intervalFor } = require("../src/modules/proctoring/aiQueue");
 const { createLocalStore, createR2Store, decrypt, encrypt, parseKeys } = require("../src/modules/proctoring/evidenceStore");
 const { AiProcessManager, resolveAiLaunch, startManagedAi } = require("../src/modules/proctoring/ai/processManager");
@@ -108,6 +109,12 @@ describe("analysis queue", () => {
     const at = (backlog) => intervalFor(5, { backlog, queueLimit: 100 });
     assert.deepStrictEqual([at(0), at(24), at(25), at(49), at(50), at(100)], [5, 5, 10, 10, 15, 15]);
     assert.strictEqual(intervalFor(20, { backlog: 100, queueLimit: 100 }), 20, "never shorter than the setting");
+  });
+
+  test("frames are taken every 3 s unless the owner sets otherwise", () => {
+    assert.strictEqual(captureIntervalSeconds({}), 3);
+    assert.strictEqual(captureIntervalSeconds({ PROCTORING_CAPTURE_INTERVAL_SECONDS: "5" }), 5);
+    assert.strictEqual(captureIntervalSeconds({ PROCTORING_CAPTURE_INTERVAL_SECONDS: "0" }), 3, "nonsense falls back to the default");
   });
 });
 

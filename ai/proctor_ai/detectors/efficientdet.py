@@ -8,6 +8,11 @@ The 90-entry COCO label map is embedded in the .tflite file (TFLite metadata is 
 
 Only the configured labels (default: "cell phone") are reported; everything else is discarded, so
 people, furniture and the exam laptop itself never reach the backend.
+
+A phone held up to a webcam was missed on real exam frames: squeezed into the square input it scored
+0.21, and from the back the model called it a "remote". So each frame is looked at four ways (the plain
+resize, the whole frame undistorted, and its left and right parts), the best score wins, and a "remote"
+counts as a phone. About 20 ms per view on a laptop CPU.
 """
 
 from __future__ import annotations
@@ -30,6 +35,54 @@ OUT_BOXES = "StatefulPartitionedCall:3"
 OUT_CLASSES = "StatefulPartitionedCall:2"
 OUT_SCORES = "StatefulPartitionedCall:1"
 OUT_COUNT = "StatefulPartitionedCall:0"
+# Classes the model gives a wanted object instead. Faces, rooms and portraits keep "remote" under
+# 0.25; a phone held to text scores 0.43-0.52 as one (head_turned_texting.jpg).
+LOOKALIKES = {"cell phone": ("remote",)}
+# Each side crop is 5/8 of the width, so an object on the centre line is whole in at least one.
+SIDE_CROP = 0.625
+# Detections of one label from different views overlapping this much are the same object.
+SAME_OBJECT_IOU = 0.5
+LETTERBOX_FILL = (114, 114, 114)
+
+
+def _undistorted(image: Image.Image, left: int, width: int) -> tuple[Image.Image, tuple[int, int, int, int]]:
+    """A full-height strip padded to a square, and how its normalised boxes map back to frame pixels."""
+    height = image.height
+    side = max(width, height)
+    pad_x, pad_y = (side - width) // 2, (side - height) // 2
+    square = Image.new("RGB", (side, side), LETTERBOX_FILL)
+    square.paste(image.crop((left, 0, left + width, height)), (pad_x, pad_y))
+    return square, (left - pad_x, -pad_y, side, side)
+
+
+def _views(image: Image.Image) -> list[tuple[Image.Image, tuple[int, int, int, int]]]:
+    """Each view with (left, top, span_x, span_y): frame pixel = left + normalised x * span_x."""
+    width, height = image.size
+    crop = round(width * SIDE_CROP)
+    return [
+        (image, (0, 0, width, height)),
+        _undistorted(image, 0, width),
+        _undistorted(image, 0, crop),
+        _undistorted(image, width - crop, crop),
+    ]
+
+
+def _iou(a: BoundingBox, b: BoundingBox) -> float:
+    w = min(a.x + a.width, b.x + b.width) - max(a.x, b.x)
+    h = min(a.y + a.height, b.y + b.height) - max(a.y, b.y)
+    if w <= 0 or h <= 0:
+        return 0.0
+    overlap = w * h
+    return overlap / (a.width * a.height + b.width * b.height - overlap)
+
+
+def _distinct(found: list[ObjectDetection]) -> list[ObjectDetection]:
+    """One detection per object: the best-scoring view of it."""
+    kept: list[ObjectDetection] = []
+    for o in sorted(found, key=lambda o: o.score, reverse=True):
+        if not any(k.label == o.label and _iou(k.box, o.box) >= SAME_OBJECT_IOU for k in kept):
+            kept.append(o)
+    return kept
 
 
 def read_embedded_labels(model_path: Path) -> list[str]:
@@ -63,6 +116,10 @@ class EfficientDetObjectDetector:
         if unknown or not labels:
             raise ModelLoadError(f"Unknown object labels: {', '.join(unknown) or '(none configured)'}")
         self._wanted = {label_map.index(label): label for label in labels}
+        for label in labels:
+            for lookalike in LOOKALIKES.get(label, ()):
+                if lookalike in label_map and lookalike not in labels:
+                    self._wanted.setdefault(label_map.index(lookalike), label)
 
         try:
             from ai_edge_litert.interpreter import Interpreter
@@ -99,30 +156,34 @@ class EfficientDetObjectDetector:
         if rgb.ndim != 3 or rgb.shape[2] != 3 or rgb.dtype != np.uint8:
             raise ValueError("expected an H x W x 3 uint8 RGB array")
         started = time.perf_counter()
-        tensor = np.asarray(Image.fromarray(rgb).resize((INPUT_SIZE, INPUT_SIZE), Image.BILINEAR), dtype=np.uint8)[np.newaxis]
-        with self._lock:
-            self._interpreter.set_tensor(self._input_index, tensor)
-            self._interpreter.invoke()
-            boxes = self._interpreter.get_tensor(self._out[OUT_BOXES])[0].copy()
-            classes = self._interpreter.get_tensor(self._out[OUT_CLASSES])[0].copy()
-            scores = self._interpreter.get_tensor(self._out[OUT_SCORES])[0].copy()
-            count = int(self._interpreter.get_tensor(self._out[OUT_COUNT])[0])
-
+        image = Image.fromarray(rgb)
+        frame_w, frame_h = image.size
         found: list[ObjectDetection] = []
-        for i in range(min(count, MAX_DETECTIONS)):
-            label = self._wanted.get(int(classes[i]))
-            score = float(scores[i])
-            if label is None or score < self._score_threshold:
-                continue
-            ymin, xmin, ymax, xmax = (float(np.clip(v, 0.0, 1.0)) for v in boxes[i])
-            if xmax <= xmin or ymax <= ymin:
-                continue
-            found.append(
-                ObjectDetection(
-                    label=label,
-                    score=round(score, 4),
-                    box=BoundingBox(x=round(xmin, 4), y=round(ymin, 4), width=round(xmax - xmin, 4), height=round(ymax - ymin, 4)),
+        for view, (left, top, span_x, span_y) in _views(image):
+            tensor = np.asarray(view.resize((INPUT_SIZE, INPUT_SIZE), Image.BILINEAR), dtype=np.uint8)[np.newaxis]
+            with self._lock:
+                self._interpreter.set_tensor(self._input_index, tensor)
+                self._interpreter.invoke()
+                boxes = self._interpreter.get_tensor(self._out[OUT_BOXES])[0].copy()
+                classes = self._interpreter.get_tensor(self._out[OUT_CLASSES])[0].copy()
+                scores = self._interpreter.get_tensor(self._out[OUT_SCORES])[0].copy()
+                count = int(self._interpreter.get_tensor(self._out[OUT_COUNT])[0])
+
+            for i in range(min(count, MAX_DETECTIONS)):
+                label = self._wanted.get(int(classes[i]))
+                score = float(scores[i])
+                if label is None or score < self._score_threshold:
+                    continue
+                ymin, xmin, ymax, xmax = (float(v) for v in boxes[i])
+                x0, x1 = (float(np.clip((left + v * span_x) / frame_w, 0.0, 1.0)) for v in (xmin, xmax))
+                y0, y1 = (float(np.clip((top + v * span_y) / frame_h, 0.0, 1.0)) for v in (ymin, ymax))
+                if x1 <= x0 or y1 <= y0:
+                    continue
+                found.append(
+                    ObjectDetection(
+                        label=label,
+                        score=round(score, 4),
+                        box=BoundingBox(x=round(x0, 4), y=round(y0, 4), width=round(x1 - x0, 4), height=round(y1 - y0, 4)),
+                    )
                 )
-            )
-        found.sort(key=lambda o: o.score, reverse=True)
-        return ObjectDetectionResult(objects=found, inference_ms=round((time.perf_counter() - started) * 1000, 2))
+        return ObjectDetectionResult(objects=_distinct(found), inference_ms=round((time.perf_counter() - started) * 1000, 2))

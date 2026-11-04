@@ -2,7 +2,9 @@
 
 import json
 
+import numpy as np
 import pytest
+from PIL import Image
 
 from conftest import ROOT, load_fixture
 from proctor_ai.detectors.blazeface import ModelLoadError
@@ -35,6 +37,32 @@ def test_phones_in_real_photos_are_detected(phones, name):
 )
 def test_portraits_without_phones_report_nothing(phones, name):
     assert phones.detect(load_fixture(name)).objects == []
+
+
+def wide_frame(phone=True):
+    """A wide webcam-like frame: a portrait on the left and, optionally, a phone photo on the right."""
+    canvas = Image.new("RGB", (1920, 480), (235, 235, 235))
+    canvas.paste(Image.fromarray(load_fixture("face_raja_chari.jpg")).resize((384, 480)), (0, 0))
+    if phone:
+        canvas.paste(Image.fromarray(load_fixture("phone_hand_closeup.jpg")), (1280, 26))
+    return np.asarray(canvas, dtype=np.uint8)
+
+
+def test_a_phone_the_model_names_a_remote_is_reported_as_a_phone(phones):
+    # The model calls a phone held up to text a "remote" (0.43-0.52), as it did with a phone held
+    # to a real exam webcam; its own "cell phone" score stays under 0.1.
+    assert {o.label for o in phones.detect(load_fixture("head_turned_texting.jpg")).objects} == {"cell phone"}
+
+
+def test_a_phone_in_a_wide_frame_survives_the_square_resize(phones):
+    # Squeezed into 320x320 the phone scores ~0.16; seen undistorted it scores over 0.5.
+    found = phones.detect(wide_frame()).objects
+    assert found and found[0].label == "cell phone"
+    assert found[0].box.x >= 0.6 and found[0].box.x + found[0].box.width <= 1
+
+
+def test_a_wide_frame_without_a_phone_reports_nothing(phones):
+    assert phones.detect(wide_frame(phone=False)).objects == []
 
 
 def test_raising_object_threshold_blindly_causes_false_negatives_on_angled_phones():

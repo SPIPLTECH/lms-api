@@ -17,7 +17,8 @@ const MAX_PROCTORED_MINUTES = 480;
 const isIdentityMatchingEnabled = (env = process.env) =>
   env.AI_IDENTITY_MATCHING === undefined || env.AI_IDENTITY_MATCHING === "" || isTrue(env.AI_IDENTITY_MATCHING);
 
-const DEFAULT_CAPTURE_INTERVAL_SECONDS = 5;
+/** 3 s: at 5 s a phone shown briefly could wait that long to be seen. Back-pressure still lengthens it. */
+const DEFAULT_CAPTURE_INTERVAL_SECONDS = 3;
 
 const captureIntervalSeconds = (env = process.env) => {
   const value = Number(env.PROCTORING_CAPTURE_INTERVAL_SECONDS);
