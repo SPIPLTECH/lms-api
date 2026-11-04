@@ -10,6 +10,7 @@ const {
   isQuizComplete,
   isAssignmentSubmissionComplete
 } = require('./itemCompletion');
+const { wasEverProctored } = require('../modules/proctoring/attemptStanding');
 
 /**
  * Authoritative bottom-up progress roll-up engine.
@@ -107,6 +108,7 @@ const CONTENT_SELECT = {
       attempts: true,
       isPublished: true,
       proctoringEnabled: true,
+      proctoringSetAt: true,
       _count: { select: { questions: true, quizQuestions: true } }
     }
   },
@@ -339,8 +341,8 @@ async function readStudentRows(client, studentId, items) {
   const contentIds = items.allContents.map((c) => c.id);
   const quizIdList = Array.from(items.quizIds);
   const assignmentIdList = Array.from(items.assignmentIds);
-  // Only a course with a proctored quiz reads these, so any other course runs no new query.
-  const proctoredQuizIds = items.allContents.filter((content) => content.quiz?.proctoringEnabled).map((content) => content.quizId);
+  // Only a course with a quiz that is or was proctored reads these, so any other course runs no new query.
+  const proctoredQuizIds = items.allContents.filter((content) => wasEverProctored(content.quiz)).map((content) => content.quizId);
 
   const [
     cpRecords,
@@ -526,7 +528,8 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
         attempts,
         latest,
         content.quiz.passingScore,
-        content.quiz.proctoringEnabled ? proctoredStandings.get(content.quizId) ?? { proctored: true } : undefined
+        // Switched off, only the students with proctored attempts keep a standing.
+        content.quiz.proctoringEnabled ? proctoredStandings.get(content.quizId) ?? { proctored: true } : proctoredStandings.get(content.quizId)
       );
       completed = isQuizComplete(content.quiz.quizTag, summary, content.quiz.attempts);
       activity = summary.attempted;

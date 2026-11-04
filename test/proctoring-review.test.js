@@ -172,6 +172,13 @@ describe("after a proctored exam", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_
       assert.strictEqual(await complete(student, quiz), false);
     });
 
+    test("a terminated attempt stays held after the instructor switches proctoring off", async () => {
+      const { quiz, student } = await terminated({ attempts: 1, inCourse: await sequential() });
+      const off = await call("PUT", `/quizzes/${quiz.id}`, owner, { proctoringEnabled: false });
+      assert.strictEqual(off.status, 200, off.text);
+      assert.strictEqual(await complete(student, quiz), false);
+    });
+
     test("uphold completes it, not passed, even with attempts left", async () => {
       const { quiz, student, attemptId } = await terminated({ attempts: 3, inCourse: await sequential() });
       assert.strictEqual(await complete(student, quiz), false, "held until the decision");

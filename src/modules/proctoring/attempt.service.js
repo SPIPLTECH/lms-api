@@ -52,14 +52,26 @@ async function studentIdOf(user) {
   return profile.id;
 }
 
-async function loadProctoredQuiz(studentId, quizId) {
+/** `examUnderWay`: an exam that began before proctoring was switched off can still be reached and finished. */
+async function loadProctoredQuiz(studentId, quizId, { examUnderWay = false } = {}) {
   await quizService.assertStudentQuizAccess(studentId, quizId);
   const quiz = await prisma.quiz.findUnique({
     where: { id: quizId },
     select: { id: true, title: true, courseId: true, quizTag: true, attempts: true, timeLimit: true, passingScore: true, proctoringEnabled: true, _count: { select: { quizQuestions: true } } },
   });
-  if (!quiz.proctoringEnabled) throw new ApiError(400, "This quiz is not proctored.", "QUIZ_NOT_PROCTORED");
+  if (!quiz.proctoringEnabled && !examUnderWay) throw new ApiError(400, "This quiz is not proctored.", "QUIZ_NOT_PROCTORED");
   return quiz;
+}
+
+/** Readiness checks that will never start: no attempt is used, and the face template goes. */
+async function abandonReadinessChecks(ids, now = new Date()) {
+  const { count } = await prisma.proctoredAttempt.updateMany({
+    where: { id: { in: ids }, status: "PREPARING" },
+    data: { status: "ABANDONED", endReason: "ABANDONED", endedAt: now },
+  });
+  await prisma.proctoringIdentityBaseline.deleteMany({ where: { attemptId: { in: ids } } });
+  await Promise.all(ids.map((id) => registry.notifyEnded(id, "ABANDONED")));
+  return count;
 }
 
 const findOpenAttempt = (quizId, userId) =>
@@ -141,9 +153,9 @@ const withToken = (attempt, user) => ({ ...toView(attempt, user), monitoringToke
 /** GET /quizzes/:quizId/status */
 async function getStatus(user, quizId, headers) {
   const studentId = await studentIdOf(user);
-  const quiz = await loadProctoredQuiz(studentId, quizId);
-  const [open, standing, last] = await Promise.all([
-    findOpenAttempt(quizId, user.id),
+  const open = await findOpenAttempt(quizId, user.id);
+  const quiz = await loadProctoredQuiz(studentId, quizId, { examUnderWay: open?.status === "IN_PROGRESS" });
+  const [standing, last] = await Promise.all([
     startStanding(quiz, studentId),
     prisma.proctoredAttempt.findFirst({
       where: { quizId, userId: user.id, status: { notIn: [...OPEN_STATUSES, "ABANDONED"] } },
@@ -306,7 +318,8 @@ async function startAttempt(user, attemptId, { readiness } = {}) {
 
   const now = new Date();
   const { count } = await prisma.proctoredAttempt.updateMany({
-    where: { id: attempt.id, status: "PREPARING" },
+    // Not once the instructor has switched proctoring off: the quiz is taken the ordinary way now.
+    where: { id: attempt.id, status: "PREPARING", quiz: { proctoringEnabled: true } },
     data: {
       status: "IN_PROGRESS",
       startedAt: now,
@@ -316,6 +329,10 @@ async function startAttempt(user, attemptId, { readiness } = {}) {
     },
   });
   const current = await prisma.proctoredAttempt.findUnique({ where: { id: attempt.id } });
+  if (current.status === "PREPARING") {
+    await abandonReadinessChecks([attempt.id], now);
+    throw new ApiError(409, "This quiz is no longer proctored. Take it from the course page. No attempt has been used.", "QUIZ_NOT_PROCTORED");
+  }
   registry.patch(attempt.id, {
     status: current.status,
     startedAt: current.startedAt,
@@ -622,16 +639,7 @@ async function sweepAttempts(now = new Date()) {
     select: { id: true },
     take: SWEEP_BATCH,
   });
-  let abandoned = 0;
-  if (stale.length > 0) {
-    const ids = stale.map(({ id }) => id);
-    ({ count: abandoned } = await prisma.proctoredAttempt.updateMany({
-      where: { id: { in: ids }, status: "PREPARING" },
-      data: { status: "ABANDONED", endReason: "ABANDONED", endedAt: now },
-    }));
-    await prisma.proctoringIdentityBaseline.deleteMany({ where: { attemptId: { in: ids } } });
-    await Promise.all(ids.map((id) => registry.notifyEnded(id, "ABANDONED")));
-  }
+  const abandoned = stale.length > 0 ? await abandonReadinessChecks(stale.map(({ id }) => id), now) : 0;
   return { expired, abandoned };
 }
 

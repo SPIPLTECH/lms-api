@@ -638,4 +638,46 @@ describe("proctored exam state", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_UR
       assert.ok(!res.text.includes("correctAnswer"));
     });
   });
+
+  describe("switching proctoring off and on after students have started", () => {
+    const switchTo = (quiz, enabled) => call("PUT", `/quizzes/${quiz.id}`, owner, { proctoringEnabled: enabled });
+
+    test("an exam under way can still be reloaded and submitted", async () => {
+      const quiz = await h.makeQuiz(course, { proctoringEnabled: true });
+      const student = await newStudent();
+      const attemptId = await startedExam(quiz, student);
+      assert.strictEqual((await switchTo(quiz, false)).status, 200);
+      const status = await call("GET", `/proctoring/quizzes/${quiz.id}/status`, student);
+      assert.strictEqual(status.status, 200, status.text);
+      assert.strictEqual(status.data.attempt?.attemptId ?? status.data.attempt?.id, attemptId);
+      await save(attemptId, student, questionId(quiz), "right");
+      assert.strictEqual((await call("POST", `/proctoring/attempts/${attemptId}/submit`, student)).status, 200);
+      assert.strictEqual((await prisma.proctoredAttempt.findUnique({ where: { id: attemptId } })).status, "SUBMITTED");
+    });
+
+    test("a readiness check that has not started cannot start once it is off, and no attempt is used", async () => {
+      const quiz = await h.makeQuiz(course, { proctoringEnabled: true });
+      const student = await newStudent();
+      const created = await begin(quiz, student);
+      await makeReady(created.data.attemptId);
+      assert.strictEqual((await switchTo(quiz, false)).status, 200);
+      const start = await call("POST", `/proctoring/attempts/${created.data.attemptId}/start`, student, undefined, browser);
+      assert.strictEqual(start.status, 409, start.text);
+      assert.strictEqual(start.json.code, "QUIZ_NOT_PROCTORED");
+      assert.strictEqual((await prisma.proctoredAttempt.findUnique({ where: { id: created.data.attemptId } })).status, "ABANDONED");
+    });
+
+    test("once off it is an ordinary quiz, and switched on again it is proctored again", async () => {
+      const quiz = await h.makeQuiz(course, { proctoringEnabled: true });
+      const first = await newStudent();
+      await startedExam(quiz, first);
+      assert.strictEqual((await switchTo(quiz, false)).status, 200);
+      const later = await newStudent();
+      assert.ok((await call("GET", `/quizzes/${quiz.id}`, later)).data.questions.length > 0, "questions reach the student the ordinary way");
+      assert.strictEqual((await begin(quiz, later)).json.code, "QUIZ_NOT_PROCTORED");
+      assert.strictEqual((await switchTo(quiz, true)).status, 200);
+      assert.strictEqual((await call("GET", `/quizzes/${quiz.id}`, later)).data.questions.length, 0);
+      assert.strictEqual((await begin(quiz, later)).status, 201);
+    });
+  });
 });

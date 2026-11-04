@@ -18,7 +18,7 @@ const { QUALIFYING_TAG } = require("../../utils/qualification");
 const { effectiveMaxAttempts, buildAttemptAllowance } = require("../../utils/attemptAllowance");
 const { choiceMatches } = require("../../utils/choiceAnswer");
 const quizLock = require("../proctoring/quizLock.service");
-const { proctoredResultLabel, resultStanding } = require("../proctoring/attemptStanding");
+const { proctoredResultLabel, resultStanding, wasEverProctored } = require("../proctoring/attemptStanding");
 const ApiError = require("../../utils/ApiError");
 
 
@@ -1798,7 +1798,8 @@ const getQuizResult = async (studentId, quizId, attemptId = null) => {
 
   if (!selected) return null;
 
-  const proctoring = quiz?.proctoringEnabled ? await resultStanding(studentId, quizId) : null;
+  // Also after proctoring is switched off: a past exam under review or ended stays held.
+  const proctoring = wasEverProctored(quiz) ? await resultStanding(studentId, quizId) : null;
   // Only after the exam: the previous attempt's marks must not be open beside it.
   if (proctoring?.examInProgress) {
     throw new ApiError(409, "Finish your proctored exam before viewing results for this quiz.", "PROCTORED_EXAM_IN_PROGRESS");
@@ -1811,7 +1812,7 @@ const getQuizResult = async (studentId, quizId, attemptId = null) => {
   const revealAnswerKey = mayRevealAnswerKey({
     quiz,
     // On a proctored quiz a pass can still be reviewed or retaken, so it reveals nothing.
-    passed: !proctoring && history.some((a) => a.passed === true),
+    passed: !quiz?.proctoringEnabled && history.some((a) => a.passed === true),
     canAttempt: allowance.canAttempt
   }) && !proctoring?.holdAnswerKey;
 

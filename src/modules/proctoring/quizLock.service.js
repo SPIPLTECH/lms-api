@@ -7,12 +7,17 @@ const { AUDIT_EVENTS, recordAuditEvent } = require("../audit/audit.service");
  * The rules around Quiz.proctoringEnabled: which quizzes may have it, and what
  * locks once a student has started a readiness check.
  *
+ * The checkbox itself can be switched off and on at any time. While it is on and a
+ * student has started, the tag, time limit and questions are fixed. Switched off, the
+ * quiz is an ordinary quiz again; exams already under way finish as they began, and
+ * past proctored attempts keep their standing (see attemptStanding.wasEverProctored).
+ *
  * A quiz without the checkbox runs none of the queries here on its normal paths,
  * so it behaves exactly as it did before proctoring existed.
  */
 
 const LOCKED_MESSAGE =
-  "This quiz is proctored and a student has started it, so its proctoring setting, tag, time limit and questions can no longer change.";
+  "This quiz is proctored and a student has started it, so its tag, time limit and questions can no longer change. Switch proctoring off first to change them.";
 
 const locked = (message = LOCKED_MESSAGE) => new ApiError(409, message, "PROCTORING_LOCKED");
 
@@ -52,16 +57,6 @@ const recordSettingChange = (client, { userId, quizId, enabled }) =>
 const proctoredAttemptExists = async (client, quizId) =>
   Boolean(await client.proctoredAttempt.findFirst({ where: { quizId }, select: { id: true } }));
 
-/** Attempts of any kind, proctored or not: a quiz students have already sat cannot be ticked. */
-const anyAttemptExists = async (client, quizId) => {
-  const [proctored, attempt, submission] = await Promise.all([
-    proctoredAttemptExists(client, quizId),
-    client.quizAttempt.findFirst({ where: { quizId }, select: { id: true } }),
-    client.quizSubmission.findFirst({ where: { quizId }, select: { id: true } }),
-  ]);
-  return proctored || Boolean(attempt) || Boolean(submission);
-};
-
 const lockQuizRow = (client, quizId) => client.$queryRaw`SELECT "id" FROM "Quiz" WHERE "id" = ${quizId} FOR UPDATE`;
 
 /**
@@ -81,14 +76,13 @@ async function resolveUpdate(tx, existing, { proctoringEnabled, quizData, questi
   const timeLimitSent = Object.prototype.hasOwnProperty.call(quizData, "timeLimit");
   const effectiveTimeLimit = timeLimitSent ? quizData.timeLimit : existing.timeLimit;
 
-  if (existing.proctoringEnabled) {
+  // Only a quiz that stays proctored is held still; switching it off is always allowed.
+  if (existing.proctoringEnabled && effectiveEnabled) {
     const tagChanges = effectiveTag !== existing.quizTag;
     const timeChanges = (effectiveTimeLimit ?? null) !== (existing.timeLimit ?? null);
-    if ((settingChanges || tagChanges || timeChanges || questionsSent) && (await proctoredAttemptExists(tx, existing.id))) {
+    if ((tagChanges || timeChanges || questionsSent) && (await proctoredAttemptExists(tx, existing.id))) {
       throw locked();
     }
-  } else if (await anyAttemptExists(tx, existing.id)) {
-    throw locked("Students have already attempted this quiz, so it cannot be proctored now.");
   }
 
   if (askedToTick) assertAvailable();

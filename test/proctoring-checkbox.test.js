@@ -162,12 +162,13 @@ describe("proctoring checkbox", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_URL
       assert.strictEqual(refused2.json.code, "PROCTORING_REQUIRES_TIME_LIMIT");
     });
 
-    test("ticking a quiz that already has unproctored attempts is refused", async () => {
+    test("a quiz that already has unproctored attempts can be ticked; those attempts stay as they were", async () => {
       const quiz = await h.makeQuiz(course);
       await prisma.quizAttempt.create({ data: { quizId: quiz.id, studentId: student.studentId, attemptNumber: 1, answers: [], score: 0, totalMarks: 1, percentage: 0 } });
       const res = await call("PUT", `/quizzes/${quiz.id}`, owner, { proctoringEnabled: true });
-      assert.strictEqual(res.status, 409);
-      assert.strictEqual(res.json.code, "PROCTORING_LOCKED");
+      assert.strictEqual(res.status, 200, res.text);
+      assert.strictEqual(res.data.proctoringEnabled, true);
+      assert.strictEqual(await prisma.quizAttempt.count({ where: { quizId: quiz.id } }), 1);
     });
 
     test("an unticked quiz with attempts can still change its tag and time limit", async () => {
@@ -196,8 +197,8 @@ describe("proctoring checkbox", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_URL
       assert.strictEqual(res.data.proctoringLocked, true);
     });
 
-    test("the checkbox, tag and time limit cannot change", async () => {
-      for (const change of [{ proctoringEnabled: false }, { quizTag: "SELF_TEST" }, { timeLimit: 45 }, { timeLimit: null }]) {
+    test("the tag and time limit cannot change while it stays on", async () => {
+      for (const change of [{ quizTag: "SELF_TEST" }, { timeLimit: 45 }, { timeLimit: null }, { proctoringEnabled: true, timeLimit: 45 }]) {
         const res = await call("PUT", `/quizzes/${quiz.id}`, owner, change);
         assert.strictEqual(res.status, 409, JSON.stringify(change));
         assert.strictEqual(res.json.code, "PROCTORING_LOCKED");
@@ -207,8 +208,8 @@ describe("proctoring checkbox", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_URL
       assert.strictEqual(row.timeLimit, 30);
     });
 
-    test("an admin is locked out too", async () => {
-      const res = await call("PUT", `/quizzes/${quiz.id}`, admin, { proctoringEnabled: false });
+    test("an admin is held to the same lock", async () => {
+      const res = await call("PUT", `/quizzes/${quiz.id}`, admin, { timeLimit: 45 });
       assert.strictEqual(res.status, 409);
     });
 
@@ -266,6 +267,54 @@ describe("proctoring checkbox", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_URL
       assert.strictEqual(viaContent.status, 409, viaContent.text);
       assert.ok(await prisma.quiz.findUnique({ where: { id: quiz.id } }));
       assert.ok(await prisma.content.findUnique({ where: { id: wrapper.id } }), "the place in the course is kept");
+    });
+  });
+
+  describe("switching it off and on after a student has started", () => {
+    test("the owner can switch it off, and it is audited", async () => {
+      const quiz = await h.makeQuiz(course, { proctoringEnabled: true });
+      await addAttempt(quiz, "SUBMITTED");
+      const off = await call("PUT", `/quizzes/${quiz.id}`, owner, { proctoringEnabled: false });
+      assert.strictEqual(off.status, 200, off.text);
+      assert.strictEqual(off.data.proctoringEnabled, false);
+      const audit = await prisma.auditEvent.findFirst({ where: { eventType: "PROCTORING_SETTING_CHANGED", metadata: { path: ["quizId"], equals: quiz.id } }, orderBy: { createdAt: "desc" } });
+      assert.strictEqual(audit.metadata.enabled, false);
+      assert.notStrictEqual((await call("GET", `/quizzes/${quiz.id}`, owner)).data.proctoringLocked, true);
+    });
+
+    test("an admin can switch it off too", async () => {
+      const quiz = await h.makeQuiz(course, { proctoringEnabled: true });
+      await addAttempt(quiz, "SUBMITTED");
+      assert.strictEqual((await call("PUT", `/quizzes/${quiz.id}`, admin, { proctoringEnabled: false })).status, 200);
+    });
+
+    test("switched off, its time limit and questions can change, as on any quiz", async () => {
+      const quiz = await h.makeQuiz(course, { proctoringEnabled: true });
+      await addAttempt(quiz, "SUBMITTED");
+      const off = await call("PUT", `/quizzes/${quiz.id}`, owner, { proctoringEnabled: false, timeLimit: 45 });
+      assert.strictEqual(off.status, 200, off.text);
+      assert.strictEqual(off.data.timeLimit, 45);
+      const q = quiz.quizQuestions[0].question;
+      assert.strictEqual((await call("PUT", `/questions/${q.id}`, owner, { question: "Edited?" })).status, 200);
+    });
+
+    test("switched on again, it is locked again", async () => {
+      const quiz = await h.makeQuiz(course, { proctoringEnabled: true });
+      await addAttempt(quiz, "SUBMITTED");
+      assert.strictEqual((await call("PUT", `/quizzes/${quiz.id}`, owner, { proctoringEnabled: false })).status, 200);
+      const on = await call("PUT", `/quizzes/${quiz.id}`, owner, { proctoringEnabled: true });
+      assert.strictEqual(on.status, 200, on.text);
+      assert.strictEqual((await call("GET", `/quizzes/${quiz.id}`, owner)).data.proctoringLocked, true);
+      assert.strictEqual((await call("PUT", `/quizzes/${quiz.id}`, owner, { timeLimit: 45 })).status, 409);
+    });
+
+    test("switching on still needs a timed graded quiz and the feature", async () => {
+      const quiz = await h.makeQuiz(course, { proctoringEnabled: true });
+      await addAttempt(quiz, "SUBMITTED");
+      assert.strictEqual((await call("PUT", `/quizzes/${quiz.id}`, owner, { proctoringEnabled: false, timeLimit: null })).status, 200);
+      assert.strictEqual((await call("PUT", `/quizzes/${quiz.id}`, owner, { proctoringEnabled: true })).json.code, "PROCTORING_REQUIRES_TIME_LIMIT");
+      process.env.PROCTORING_ENABLED = "false";
+      assert.strictEqual((await call("PUT", `/quizzes/${quiz.id}`, owner, { proctoringEnabled: true, timeLimit: 30 })).json.code, "PROCTORING_NOT_AVAILABLE");
     });
   });
 

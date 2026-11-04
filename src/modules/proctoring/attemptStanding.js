@@ -2,12 +2,19 @@ const prisma = require("../../config/database");
 
 /**
  * Small reads about a student's proctored attempts that the quiz and playback
- * services need. Only ever called for a proctored quiz, or while the feature is on.
+ * services need. Only ever called for a quiz that is or was proctored, or while the feature is on.
  * Depends on nothing but the database, so those services can require it freely.
  */
 
 const OPEN_STATUSES = ["PREPARING", "IN_PROGRESS"];
 const APPEAL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Whether students may have proctored attempts on a quiz, now or from before an instructor
+ * switched it off. proctoringSetAt is written on every change of the setting and never
+ * cleared, so a quiz that was never ticked is false and runs no proctoring query.
+ */
+const wasEverProctored = (quiz) => Boolean(quiz?.proctoringEnabled || quiz?.proctoringSetAt);
 
 /** Whether a decision can still be asked about: within 30 days, and not one the student already has in their favour. */
 const canStillAppeal = (attempt, now = new Date()) =>
@@ -56,4 +63,4 @@ async function resultStanding(studentId, quizId, now = new Date()) {
   };
 }
 
-module.exports = { OPEN_STATUSES, APPEAL_WINDOW_MS, canStillAppeal, isExamInProgress, proctoredResultLabel, resultStanding, studentOutcome };
+module.exports = { OPEN_STATUSES, APPEAL_WINDOW_MS, canStillAppeal, isExamInProgress, proctoredResultLabel, resultStanding, studentOutcome, wasEverProctored };
