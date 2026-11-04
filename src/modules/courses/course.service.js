@@ -818,8 +818,8 @@ const publishCourse = async (courseId, userId, userRole) => {
     throw error;
   }
 
-  if (userRole !== "ADMIN") {
-    throw new ApiError(403, "Forbidden: Publishing courses is restricted to administrators.");
+  if (userRole !== "ADMIN" && !(userRole === "INSTRUCTOR" && course.creatorId === userId)) {
+    throw new ApiError(403, "Forbidden: Only an administrator or the course's instructor can publish it.");
   }
 
   // Reported, not enforced. Most courses already published predate this
@@ -922,8 +922,8 @@ const unpublishCourse = async (courseId, userId, userRole) => {
     throw new ApiError(404, "Course not found");
   }
 
-  if (userRole !== "ADMIN") {
-    throw new ApiError(403, "Forbidden: Unpublishing courses is restricted to administrators.");
+  if (userRole !== "ADMIN" && !(userRole === "INSTRUCTOR" && course.creatorId === userId)) {
+    throw new ApiError(403, "Forbidden: Only an administrator or the course's instructor can unpublish it.");
   }
 
   const updatedCourse = await prisma.course.update({

@@ -90,8 +90,10 @@ router.post(
   "/:courseId/publish",
   verifyToken,
   checkRole([
-    "ADMIN"
+    "ADMIN",
+    "INSTRUCTOR"
   ]),
+  verifyCourseOwnership,
   controller.publishCourse
 );
 
@@ -99,8 +101,10 @@ router.post(
   "/:courseId/unpublish",
   verifyToken,
   checkRole([
-    "ADMIN"
+    "ADMIN",
+    "INSTRUCTOR"
   ]),
+  verifyCourseOwnership,
   controller.unpublishCourse
 );
 

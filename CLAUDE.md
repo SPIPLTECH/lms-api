@@ -49,16 +49,20 @@ Course
 ### ADMIN
 Only Admin can:
 - Create, update, or delete Store pricing (`/store/:courseId`)
-- Publish, unpublish, or archive courses (`/courses/:courseId/status`)
+- Change course status generically or archive/restore courses (`PATCH /courses/:courseId/status`, `/restore`)
 - Review submitted courses
+
+Admin can also publish/unpublish any course.
 
 ### INSTRUCTOR
 Instructor can:
 - Create courses and edit owned course content
 - Manage modules, lessons, topics, content items, and quizzes
+- Publish and unpublish **owned** courses (`POST /courses/:courseId/publish`, `/unpublish`)
 Instructor must receive `403 Forbidden` for:
 - Store pricing mutations (`POST/PUT/DELETE /store/:courseId`)
-- Course status publication mutations (`PATCH /courses/:courseId/status`)
+- Publishing or unpublishing a course they do not own
+- Generic status changes and archive/restore (`PATCH /courses/:courseId/status`, `/restore`)
 
 ### STUDENT
 Student can:
