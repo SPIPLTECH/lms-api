@@ -86,12 +86,15 @@ router.put(
   controller.updateCourse
 );
 
+// The course's own instructor may publish and unpublish it, as well as an admin.
 router.post(
   "/:courseId/publish",
   verifyToken,
   checkRole([
-    "ADMIN"
+    "ADMIN",
+    "INSTRUCTOR"
   ]),
+  verifyCourseOwnership,
   controller.publishCourse
 );
 
@@ -99,8 +102,10 @@ router.post(
   "/:courseId/unpublish",
   verifyToken,
   checkRole([
-    "ADMIN"
+    "ADMIN",
+    "INSTRUCTOR"
   ]),
+  verifyCourseOwnership,
   controller.unpublishCourse
 );
 

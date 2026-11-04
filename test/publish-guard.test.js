@@ -5,7 +5,8 @@ const courseService = require("../src/modules/courses/course.service");
 const prisma = require("../src/config/database");
 
 // validateCourseForPublish reports completeness warnings when an ADMIN publishes
-// a course; publishing, unpublishing, and status changes are ADMIN-only per CLAUDE.md.
+// a course. An ADMIN or the course's own INSTRUCTOR may publish and unpublish it;
+// other status changes (archive, the admin status menu) are ADMIN-only.
 
 function stubCourse({ modules = [], status = "DRAFT" } = {}) {
   return async (args) => {
@@ -78,21 +79,39 @@ test("publishCourse returns no warnings for a complete course published by ADMIN
   assert.deepStrictEqual(result.publishWarnings, []);
 });
 
-test("publishCourse, unpublishCourse, and updateStatus reject INSTRUCTOR (even course owner) and STUDENT with 403", async (t) => {
+test("the course's own INSTRUCTOR can publish and unpublish it", async (t) => {
   stubWrites(t);
   prisma.course.findUnique = stubCourse({ modules: [] });
 
+  const published = await courseService.publishCourse("course-1", "instructor-1", "INSTRUCTOR");
+  assert.ok(Array.isArray(published.publishWarnings), "the owner gets the same completeness warnings");
+  const unpublished = await courseService.unpublishCourse("course-1", "instructor-1", "INSTRUCTOR");
+  assert.strictEqual(unpublished.status, "DRAFT");
+});
+
+test("another INSTRUCTOR and a STUDENT cannot publish or unpublish a course", async (t) => {
+  stubWrites(t);
+  prisma.course.findUnique = stubCourse({ modules: [] });
+
+  for (const [userId, role] of [["instructor-2", "INSTRUCTOR"], ["instructor-1", "STUDENT"]]) {
+    await assert.rejects(
+      () => courseService.publishCourse("course-1", userId, role),
+      (err) => err.statusCode === 403
+    );
+    await assert.rejects(
+      () => courseService.unpublishCourse("course-1", userId, role),
+      (err) => err.statusCode === 403
+    );
+  }
+});
+
+test("archiving stays ADMIN-only, even for the course's own INSTRUCTOR", async (t) => {
+  stubWrites(t);
+  prisma.course.findUnique = stubCourse({ modules: [], status: "PUBLISHED" });
+
   for (const role of ["INSTRUCTOR", "STUDENT"]) {
     await assert.rejects(
-      () => courseService.publishCourse("course-1", "instructor-1", role),
-      (err) => err.statusCode === 403
-    );
-    await assert.rejects(
-      () => courseService.unpublishCourse("course-1", "instructor-1", role),
-      (err) => err.statusCode === 403
-    );
-    await assert.rejects(
-      () => courseService.updateStatus("course-1", "PUBLISHED", "instructor-1", role),
+      () => courseService.updateStatus("course-1", "ARCHIVED", "instructor-1", role),
       (err) => err.statusCode === 403
     );
   }

@@ -803,6 +803,10 @@ const validateCourseForPublish = async (courseId) => {
   };
 };
 
+/** Publishing and unpublishing: an ADMIN, or the INSTRUCTOR who owns the course. Archiving stays ADMIN-only. */
+const mayChangePublication = (course, userId, userRole) =>
+  userRole === "ADMIN" || (userRole === "INSTRUCTOR" && course.creatorId === userId);
+
 /**
  * Publishes a course (DRAFT -> PUBLISHED).
  */
@@ -818,8 +822,8 @@ const publishCourse = async (courseId, userId, userRole) => {
     throw error;
   }
 
-  if (userRole !== "ADMIN") {
-    throw new ApiError(403, "Forbidden: Publishing courses is restricted to administrators.");
+  if (!mayChangePublication(course, userId, userRole)) {
+    throw new ApiError(403, "Forbidden: Only the course's instructor or an administrator can publish it.");
   }
 
   // Reported, not enforced. Most courses already published predate this
@@ -922,8 +926,8 @@ const unpublishCourse = async (courseId, userId, userRole) => {
     throw new ApiError(404, "Course not found");
   }
 
-  if (userRole !== "ADMIN") {
-    throw new ApiError(403, "Forbidden: Unpublishing courses is restricted to administrators.");
+  if (!mayChangePublication(course, userId, userRole)) {
+    throw new ApiError(403, "Forbidden: Only the course's instructor or an administrator can unpublish it.");
   }
 
   const updatedCourse = await prisma.course.update({
