@@ -11,8 +11,8 @@ const { OPEN_STATUSES } = require("./attemptStanding");
  * time, so it fixes what ProctorGuard's sweep could not do: hold events that nothing could
  * create, and flagged evidence that was never deleted at all.
  *
- *   Violation and unanalysed frames: 90 days, or until review closes, whichever is later.
- *   Clean attempts' one-a-minute frames and identity photo: 7 days.
+ *   Every kept frame (violation, unanalysed, one-a-minute, identity photo): 3 days, or until an
+ *   open review is decided, whichever is later. Deciding a review does not extend the date.
  *   Detection frames: temp disk only. Gone when the attempt closes, and this sweep clears
  *   any left behind (a restart, say), within an hour of the close.
  *

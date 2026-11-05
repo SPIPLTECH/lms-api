@@ -47,6 +47,7 @@ const protectVideoSources = require("./middleware/mediaProtection.middleware");
 const stripResponseSecrets = require("./middleware/responseSecrets.middleware");
 const uploadsHandler = require("./middleware/uploads.middleware");
 const { redactLoggedUrl } = require("./utils/logRedaction");
+const { defaultHealthChecks } = require("./utils/healthCheck");
 const evaluatorRoutes = require("./modules/evaluators/evaluator.routes");
 const proctoringRoutes = require("./modules/proctoring/proctoring.routes");
 const app = express();
@@ -167,6 +168,17 @@ app.get("/", (req, res) => {
     success: true,
     message: "Orange LMS API Running",
   });
+});
+
+// For the container platform: /healthz is liveness only; /readyz adds the database and,
+// while proctoring is on, exam monitoring. See src/utils/healthCheck.js.
+app.get("/healthz", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
+app.get("/readyz", async (req, res) => {
+  const result = await defaultHealthChecks().readiness();
+  res.status(result.ready ? 200 : 503).json(result);
 });
 
 /*

@@ -544,23 +544,23 @@ describe("exam monitoring, in real time", { skip: HAS_TEST_DB ? false : "TEST_DA
       return Math.round((kept.retainUntil.getTime() - kept.receivedAt.getTime()) / 86_400_000);
     };
 
-    test("clean photos default to seven days, and violations to ninety", async () => {
+    test("clean photos and violations both default to three days", async () => {
       const { attemptId, token } = await inExam();
       await upload(token, "ONE");
       await queue.analysisQueue.drain();
       await monitorCall("POST", "events", token, { eventType: "FULLSCREEN_EXIT" });
       await upload(token, "ONE");
       await settle();
-      assert.strictEqual(await daysKept(attemptId, "VIOLATION"), 90);
+      assert.strictEqual(await daysKept(attemptId, "VIOLATION"), 3);
     });
 
     test("the settings change both, and nonsense cannot delete evidence early", async () => {
-      process.env.PROCTORING_CLEAN_RETENTION_DAYS = "3";
+      process.env.PROCTORING_CLEAN_RETENTION_DAYS = "5";
       process.env.PROCTORING_VIOLATION_RETENTION_DAYS = "30";
       const { attemptId, token } = await inExam();
       await upload(token, "ONE");
       await settle();
-      assert.strictEqual(await daysKept(attemptId, "PERIODIC"), 3);
+      assert.strictEqual(await daysKept(attemptId, "PERIODIC"), 5);
       await monitorCall("POST", "events", token, { eventType: "FULLSCREEN_EXIT" });
       await upload(token, "ONE");
       await settle();
@@ -568,8 +568,8 @@ describe("exam monitoring, in real time", { skip: HAS_TEST_DB ? false : "TEST_DA
 
       const { proctoringSettings } = require("../src/config/proctoring");
       const settings = proctoringSettings({ PROCTORING_CLEAN_RETENTION_DAYS: "0", PROCTORING_VIOLATION_RETENTION_DAYS: "-5" });
-      assert.strictEqual(settings.cleanRetentionDays, 7);
-      assert.strictEqual(settings.violationRetentionDays, 90);
+      assert.strictEqual(settings.cleanRetentionDays, 3);
+      assert.strictEqual(settings.violationRetentionDays, 3);
     });
 
     test("evidence under review stays for the long period whatever it was kept as", async () => {

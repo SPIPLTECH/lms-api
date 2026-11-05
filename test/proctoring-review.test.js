@@ -506,14 +506,14 @@ describe("after a proctored exam", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_
   });
 
   describe("evidence after a decision", () => {
-    test("a closed review releases the hold, with the 30 days to appeal still covered", async () => {
+    test("a closed review releases the hold without extending the three days", async () => {
       const { attemptId } = await terminated();
       const held = await prisma.proctoringEvidence.findMany({ where: { attemptId } });
       assert.ok(held.length > 0 && held.every((row) => row.reviewHold));
       await decide(attemptId, owner, "UPHOLD");
       const released = await prisma.proctoringEvidence.findMany({ where: { attemptId } });
       assert.ok(released.every((row) => !row.reviewHold));
-      assert.ok(released.every((row) => row.retainUntil.getTime() > Date.now() + 29 * DAY));
+      assert.ok(released.every((row) => row.retainUntil.getTime() <= Date.now() + 3 * DAY));
     });
 
     test("an appeal holds it again", async () => {

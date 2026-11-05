@@ -12,9 +12,12 @@ const os = require("os");
 const app = require("./src/app");
 const {
     initializeSocket,
+    getIO,
 } = require("./src/socket");
 const { startSessionCleanupJob } = require("./src/jobs/sessionCleanup.job");
-const { startProctoringJobs } = require("./src/jobs/proctoringSweep.job");
+const { startProctoringJobs, stopProctoringJobs } = require("./src/jobs/proctoringSweep.job");
+const { createShutdown } = require("./src/utils/gracefulShutdown");
+const prisma = require("./src/config/database");
 
 
 const PORT = process.env.PORT || 5000;
@@ -76,3 +79,16 @@ server.listen(PORT, HOST, () => {
     // over from before a restart (EVALUATION_WORKER=off disables it here).
     require("./src/modules/assignment-evaluation/evaluationQueue").startWorker();
 });
+
+// Render sends SIGTERM on every deploy and restart, Docker on `docker stop`, and Ctrl+C is
+// SIGINT. Save what is still in memory before exiting; see src/utils/gracefulShutdown.js.
+const shutdown = createShutdown({
+    server,
+    steps: [
+        ["disconnect sockets", async () => getIO().disconnectSockets(true)],
+        ["save proctoring state and stop the AI", () => stopProctoringJobs()],
+        ["close the database connection", () => prisma.$disconnect()],
+    ],
+});
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

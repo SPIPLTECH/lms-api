@@ -2,7 +2,7 @@ const prisma = require("../../config/database");
 const ApiError = require("../../utils/ApiError");
 const { AUDIT_EVENTS, recordAuditEvent } = require("../audit/audit.service");
 const notificationService = require("../notifications/notification.service");
-const { APPEAL_WINDOW_MS, OPEN_STATUSES, canStillAppeal } = require("./attemptStanding");
+const { OPEN_STATUSES, canStillAppeal } = require("./attemptStanding");
 const evidence = require("./evidence.service");
 const { DEFAULT_POLICY, calculateRisk, isViolationEvent } = require("./rules");
 
@@ -221,8 +221,6 @@ async function decide(user, attemptId, { decision, note = null }) {
   }
 
   const now = new Date();
-  // A person can still appeal for 30 days after this, so the images must last that long.
-  const appealCover = new Date(now.getTime() + APPEAL_WINDOW_MS);
   // Only an Accept can leave a pass in place. A terminated attempt never has one.
   const passed = decision === "ACCEPT" && attempt.status !== "TERMINATED" && (attempt.quizAttempt?.percentage ?? 0) >= attempt.quiz.passingScore;
 
@@ -247,8 +245,8 @@ async function decide(user, attemptId, { decision, note = null }) {
         await tx.proctoringRetakeGrant.deleteMany({ where: { sourceAttemptId: attemptId, usedAt: null } });
       }
 
+      // The hold ends with the review. Images already past their date go at the next retention sweep.
       await tx.proctoringEvidence.updateMany({ where: { attemptId }, data: { reviewHold: false } });
-      await tx.proctoringEvidence.updateMany({ where: { attemptId, retainUntil: { lt: appealCover } }, data: { retainUntil: appealCover } });
       await tx.proctoringReviewRequest.updateMany({ where: { attemptId, decidedAt: null }, data: { decidedAt: now } });
       await recordAuditEvent(
         { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, eventType: AUDIT_EVENTS.PROCTORING_DECISION, reasonCode: decision, metadata: { attemptId, quizId: attempt.quizId, round: attempt.reviewRound, passed } },

@@ -649,6 +649,7 @@ module.exports = {
   getAttempt,
   getAttemptResult,
   getStatus,
+  isMonitoringAvailable,
   resumeAttempt,
   saveAnswer,
   startAttempt,

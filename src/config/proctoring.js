@@ -87,9 +87,10 @@ const proctoringSettings = (env = process.env) => ({
   queueConcurrency: intOf(env, "AI_ANALYSIS_CONCURRENCY", 2),
   queueMax: intOf(env, "AI_ANALYSIS_QUEUE_MAX", 500),
   uploadGapSeconds: intOf(env, "PROCTORING_UPLOAD_GAP_SECONDS", 60),
-  // Nonsense falls back to the default, so a bad setting can never delete evidence early.
-  cleanRetentionDays: positiveOf(env, "PROCTORING_CLEAN_RETENTION_DAYS", 7),
-  violationRetentionDays: positiveOf(env, "PROCTORING_VIOLATION_RETENTION_DAYS", 90),
+  // Every kept image is deleted 3 days after capture (owner decision 2026-11-05); an open review
+  // holds them until it is decided. Nonsense falls back to the default.
+  cleanRetentionDays: positiveOf(env, "PROCTORING_CLEAN_RETENTION_DAYS", 3),
+  violationRetentionDays: positiveOf(env, "PROCTORING_VIOLATION_RETENTION_DAYS", 3),
 });
 
 module.exports = {

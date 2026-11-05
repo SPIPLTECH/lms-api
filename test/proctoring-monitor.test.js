@@ -526,7 +526,7 @@ describe("exam monitoring", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_URL not
       assert.ok((await flagReasons(attemptId)).includes("AI_UNAVAILABLE"));
       const kept = await prisma.proctoringEvidence.findMany({ where: { attemptId, category: "UNANALYSED" } });
       assert.strictEqual(kept.length, 4);
-      assert.ok(kept.every((e) => e.retainUntil.getTime() > Date.now() + 80 * 86_400_000));
+      assert.ok(kept.every((e) => e.retainUntil.getTime() > Date.now() + 2.9 * 86_400_000));
       assert.strictEqual(attempt.framesSkipped ?? 0, 0, "counters flush on the minute, not per frame");
     });
 
@@ -744,7 +744,7 @@ describe("exam monitoring", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_URL not
       const kept = await prisma.proctoringEvidence.findMany({ where: { attemptId, category: "PERIODIC" } });
       assert.strictEqual(kept.length, 1);
       const days = (kept[0].retainUntil.getTime() - Date.now()) / 86_400_000;
-      assert.ok(days > 6.9 && days <= 7, String(days));
+      assert.ok(days > 2.9 && days <= 3, String(days));
       assert.strictEqual(kept[0].reviewHold, false);
     });
 
@@ -908,7 +908,7 @@ describe("exam monitoring", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_URL not
       assert.ok(await prisma.auditEvent.findFirst({ where: { eventType: "PROCTORING_RETENTION_SWEEP" } }));
     });
 
-    test("flagging holds what was already kept, for 90 days or until review closes", async () => {
+    test("flagging holds what was already kept, for 3 days or until review closes", async () => {
       const { attemptId, token } = await inExam();
       await upload(token, "ONE");
       await settle();
@@ -918,7 +918,7 @@ describe("exam monitoring", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_URL not
       await settle();
       const held = await prisma.proctoringEvidence.findUnique({ where: { id: clean.id } });
       assert.strictEqual(held.reviewHold, true);
-      assert.ok(held.retainUntil.getTime() > Date.now() + 80 * 86_400_000);
+      assert.ok(held.retainUntil.getTime() > Date.now() + 2.9 * 86_400_000);
     });
 
     test("detection frames go when the attempt closes; nothing is left on disk", async () => {

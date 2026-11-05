@@ -63,23 +63,59 @@ function startProctoringJobs() {
     process.pid
   );
   const health = async () => (await getAiServiceHealth()).reachable;
-  startManagedAi({ plan, health }).catch((error) => console.warn("[proctoring-ai] could not start:", error?.message));
+  const aiManager = startManagedAi({ plan, health }).catch((error) => {
+    console.warn("[proctoring-ai] could not start:", error?.message);
+    return null;
+  });
 
   monitor.recoverAfterRestart().catch((error) => console.warn("[proctoring] recovery failed:", error?.message));
 
   const watchdog = setInterval(() => monitor.watchdogTick().catch((error) => console.warn("[proctoring] watchdog failed:", error?.message)), WATCHDOG_MS);
   watchdog.unref?.();
 
-  schedule("PROCTORING_SWEEP_CRON", process.env.PROCTORING_SWEEP_CRON, DEFAULT_SWEEP, async () => {
-    const { expired, abandoned } = await sweepAttempts();
-    if (expired || abandoned) console.log(`[proctoring] closed ${expired} overdue exam(s), abandoned ${abandoned} readiness check(s)`);
-    await monitor.flushCounters();
-  });
-  schedule("PROCTORING_RETENTION_CRON", process.env.PROCTORING_RETENTION_CRON, DEFAULT_RETENTION, async () => {
-    await retentionSweep();
-    await reviewReminderSweep();
-  });
+  const tasks = [
+    schedule("PROCTORING_SWEEP_CRON", process.env.PROCTORING_SWEEP_CRON, DEFAULT_SWEEP, async () => {
+      const { expired, abandoned } = await sweepAttempts();
+      if (expired || abandoned) console.log(`[proctoring] closed ${expired} overdue exam(s), abandoned ${abandoned} readiness check(s)`);
+      await monitor.flushCounters();
+    }),
+    schedule("PROCTORING_RETENTION_CRON", process.env.PROCTORING_RETENTION_CRON, DEFAULT_RETENTION, async () => {
+      await retentionSweep();
+      await reviewReminderSweep();
+    }),
+  ];
+  running = { aiManager, watchdog, tasks };
   return true;
 }
 
-module.exports = { startProctoringJobs };
+let running = null;
+
+/**
+ * For a clean shutdown: stops the schedules and the watchdog, saves what is still waiting in
+ * memory (events, kept-photo rows, counters, photos still being copied to the store), and stops
+ * the AI process. Exams in progress are recovered from the database by the next start.
+ */
+async function stopProctoringJobs({ waitMs = 10 * 1000 } = {}) {
+  if (!running) return;
+  const { aiManager, watchdog, tasks } = running;
+  running = null;
+  clearInterval(watchdog);
+  for (const task of tasks) task?.stop();
+
+  const monitor = require("../modules/proctoring/monitor.service");
+  const evidence = require("../modules/proctoring/evidence.service");
+  const { analysisQueue } = require("../modules/proctoring/aiQueue");
+  const settle = (promise) => {
+    let timer;
+    return Promise.race([promise, new Promise((resolve) => { timer = setTimeout(resolve, waitMs); })]).finally(() => clearTimeout(timer));
+  };
+  // Frames already with the AI finish first, so their results and warnings are written too.
+  await settle(analysisQueue.drain());
+  await monitor.flushBuffers();
+  await monitor.flushCounters();
+  await settle(evidence.drain());
+
+  (await aiManager)?.stop();
+}
+
+module.exports = { startProctoringJobs, stopProctoringJobs };
