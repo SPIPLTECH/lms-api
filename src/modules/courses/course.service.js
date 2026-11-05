@@ -669,12 +669,21 @@ const createCourse = async (data, userId) => {
 };
 
 const updateCourse = async (courseId, data) => {
-  return await prisma.course.update({
+  const updatedCourse = await prisma.course.update({
     where: {
       id: courseId
     },
     data
   });
+
+  // When course accessDurationDays is updated (or cleared to null), sync all
+  // enrollments for this course so students immediately see their new expiration.
+  if (data.accessDurationDays !== undefined) {
+    const { syncEnrollmentExpirationsForCourse } = require("../enrollments/enrollment.service");
+    await syncEnrollmentExpirationsForCourse(courseId, data.accessDurationDays);
+  }
+
+  return updatedCourse;
 };
 /**
  * Validates whether a course is ready to be published.

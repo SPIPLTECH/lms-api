@@ -187,7 +187,13 @@ model Course {
   language               String?          @default("English")
   tags                   String[]         @default([])
   estimatedLearningHours Float?
+  /// Configured course access duration in days. Null = unlimited / self-paced.
+  accessDurationDays     Int?
   certificatesEnabled    Boolean          @default(false)
+  certificateTitle       String?          @default("Certificate of Completion")
+  certificateDescription String?
+  courseMemo             String?
+  certificateTemplate    Json?
   discussionEnabled      Boolean          @default(true)
   /// Students must finish each item before the next one opens
   /// (utils/learningSequence.js). Off: every item is open from the start and
@@ -440,11 +446,13 @@ model Enrollment {
   completed       Boolean        @default(false)
   completedAt     DateTime?
   progressPercent Int            @default(0)
+  expiresAt       DateTime?
   studentId       String
   course          Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
   student         StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, courseId])
+  @@index([expiresAt])
 }
 
 model ContentProgress {
@@ -741,14 +749,21 @@ model QuizQuestion {
 }
 
 model Review {
-  id        String         @id @default(cuid())
-  rating    Int
-  review    String?
-  courseId  String
-  createdAt DateTime       @default(now())
-  studentId String
-  course    Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  id                    String         @id @default(cuid())
+  rating                Int
+  review                String?
+  courseId              String
+  createdAt             DateTime       @default(now())
+  studentId             String
+  overallRating         Int?
+  contentQualityRating  Int?
+  quizzesRating         Int?
+  assignmentsRating     Int?
+  syllabusRating        Int?
+  teachingRating        Int?
+  comments              String?
+  course                Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  student               StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, courseId])
 }
@@ -869,13 +884,20 @@ model QuestionAttempt {
 }
 
 model Certificate {
-  id            String         @id @default(cuid())
-  certificateNo String         @unique
-  courseId      String
-  issuedAt      DateTime       @default(now())
-  studentId     String
-  course        Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  student       StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  id                     String         @id @default(cuid())
+  certificateNo          String         @unique
+  courseId               String
+  issuedAt               DateTime       @default(now())
+  studentId              String
+  grade                  String?
+  score                  Int?
+  performanceDescription String?
+  instructorRemarks      String?
+  courseMemo             String?
+  brandingName           String?        @default("Course Ranger")
+  brandingPoweredBy      String?        @default("Course Powered By SPIPL")
+  course                 Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  student                StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, courseId])
 }

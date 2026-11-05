@@ -20,6 +20,7 @@ const { choiceMatches } = require("../../utils/choiceAnswer");
 const quizLock = require("../proctoring/quizLock.service");
 const { proctoredResultLabel, resultStanding, wasEverProctored } = require("../proctoring/attemptStanding");
 const ApiError = require("../../utils/ApiError");
+const { authError } = require("../../utils/authErrors");
 
 
 // Tracks classifyAndApply() calls dispatched below fire-and-forget (never
@@ -413,7 +414,7 @@ const assertStudentCourseAccess = async (studentId, courseId) => {
     }),
     prisma.enrollment.findUnique({
       where: { studentId_courseId: { studentId, courseId } },
-      select: { id: true },
+      select: { id: true, expiresAt: true },
     }),
   ]);
 
@@ -422,6 +423,9 @@ const assertStudentCourseAccess = async (studentId, courseId) => {
   }
   if (!enrollment) {
     throw makeQuizHttpError(403, "Forbidden: you are not enrolled in this course");
+  }
+  if (enrollment.expiresAt && new Date(enrollment.expiresAt).getTime() <= Date.now()) {
+    throw authError("ENROLLMENT_EXPIRED");
   }
   if (course.status !== "PUBLISHED") {
     throw makeQuizHttpError(403, "Forbidden: this course is not currently available");
@@ -463,11 +467,15 @@ const assertStudentQuizAccess = async (studentId, quizId) => {
 
   const enrollment = await prisma.enrollment.findUnique({
     where: { studentId_courseId: { studentId, courseId: quiz.courseId } },
-    select: { id: true },
+    select: { id: true, expiresAt: true },
   });
 
   if (!enrollment) {
     throw makeQuizHttpError(403, "Forbidden: you are not enrolled in this course");
+  }
+
+  if (enrollment.expiresAt && new Date(enrollment.expiresAt).getTime() <= Date.now()) {
+    throw authError("ENROLLMENT_EXPIRED");
   }
 
   if (
@@ -531,7 +539,12 @@ const getQuizzes = async (
     where.status = { not: "ARCHIVED" };
     where.course = {
       status: "PUBLISHED",
-      enrollments: { some: { studentId } },
+      enrollments: {
+        some: {
+          studentId,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
+      },
     };
   }
 

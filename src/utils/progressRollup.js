@@ -196,7 +196,7 @@ async function loadPublishedHierarchy(client, courseId) {
   const published = (level) => ({ where: { isPublished: true, ...IN_COURSE[level](courseId) }, orderBy: ORDERED });
 
   const [course, modules, lessons, topics, subTopics, concepts, contents] = await Promise.all([
-    client.course.findUnique({ where: { id: courseId }, select: { id: true, title: true, status: true, language: true, sequentialLearning: true } }),
+    client.course.findUnique({ where: { id: courseId }, select: { id: true, title: true, status: true, language: true, sequentialLearning: true, certificatesEnabled: true, courseMemo: true, certificateTitle: true, certificateTemplate: true } }),
     client.module.findMany({ ...published('module'), select: CONTAINER_SELECT }),
     client.lesson.findMany({ ...published('lesson'), select: { ...CONTAINER_SELECT, moduleId: true } }),
     client.topic.findMany({ ...published('topic'), select: { ...CONTAINER_SELECT, lessonId: true } }),
@@ -991,6 +991,59 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
         lastAccessedAt: now
       }
     });
+
+    if (isCourseCompleted && course?.certificatesEnabled) {
+      try {
+        const existingCert = await client.certificate.findUnique({
+          where: { studentId_courseId: { studentId, courseId } }
+        });
+        const { computeCourseGradeForStudent } = require("./courseGrading");
+        if (!existingCert) {
+          const gradingResult = await computeCourseGradeForStudent(client, studentId, courseId);
+          const certificateNo = "CR-" + Math.random().toString(36).substring(2, 8).toUpperCase();
+          const { normalizeTemplateId } = require("./certificatePdf");
+          const tConfig = course.certificateTemplate || {};
+          const serializedRemarks = JSON.stringify({
+            __snapshot: true,
+            templateId: normalizeTemplateId(tConfig.templateId || tConfig.style || "CLASSIC_GOLD_V1"),
+            accentColor: tConfig.accentColor || null,
+            signatoryName: tConfig.signatoryName || null,
+            signatoryTitle: tConfig.signatoryTitle || null,
+            remarks: null,
+          });
+
+          await client.certificate.create({
+            data: {
+              certificateNo,
+              courseId,
+              studentId,
+              issuedAt: courseCompletedAt || now,
+              grade: gradingResult.grade,
+              score: gradingResult.score,
+              performanceDescription: gradingResult.performanceDescription,
+              courseMemo: course.courseMemo || null,
+              instructorRemarks: serializedRemarks,
+              brandingName: "Course Ranger",
+              brandingPoweredBy: "Course Powered By SPIPL"
+            }
+          });
+        } else if (existingCert.grade === null && existingCert.score === null) {
+          // Safely backfill missing grade & score on previously auto-issued certificates
+          const gradingResult = await computeCourseGradeForStudent(client, studentId, courseId);
+          await client.certificate.update({
+            where: { id: existingCert.id },
+            data: {
+              grade: gradingResult.grade,
+              score: gradingResult.score,
+              performanceDescription: gradingResult.performanceDescription,
+              courseMemo: existingCert.courseMemo || course.courseMemo || null,
+            }
+          });
+        }
+      } catch (certErr) {
+        console.warn(`[progressRollup] Auto-certificate issuance skipped:`, certErr?.message || certErr);
+      }
+    }
   }
 
   const result = {

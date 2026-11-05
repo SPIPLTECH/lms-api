@@ -16,6 +16,7 @@ const {
 } = require("./src/socket");
 const { startSessionCleanupJob } = require("./src/jobs/sessionCleanup.job");
 const { startProctoringJobs, stopProctoringJobs } = require("./src/jobs/proctoringSweep.job");
+const { startEnrollmentExpirationJob, stopEnrollmentExpirationJob } = require("./src/jobs/enrollmentExpiration.job");
 const { createShutdown } = require("./src/utils/gracefulShutdown");
 const prisma = require("./src/config/database");
 
@@ -48,6 +49,7 @@ initializeSocket(server);
 // expire them too; this keeps the tables honest and closes stale sockets).
 startSessionCleanupJob();
 startProctoringJobs();
+startEnrollmentExpirationJob();
 
 // The 12 AI agent modules' bootstrap() calls (student-state, assessment,
 // recommendation, motivation, teacher-insights, analytics, career,
@@ -86,6 +88,7 @@ const shutdown = createShutdown({
     server,
     steps: [
         ["disconnect sockets", async () => getIO().disconnectSockets(true)],
+        ["stop enrollment expiration job", () => stopEnrollmentExpirationJob()],
         ["save proctoring state and stop the AI", () => stopProctoringJobs()],
         ["close the database connection", () => prisma.$disconnect()],
     ],

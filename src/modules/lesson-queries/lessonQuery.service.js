@@ -169,11 +169,16 @@ const createQuery = async (userId, data) => {
   }
 
   const enrollment = await prisma.enrollment.findFirst({
-    where: { studentId: student.id, courseId: finalCourseId }
+    where: { studentId: student.id, courseId: finalCourseId },
+    select: { id: true, expiresAt: true }
   });
 
   if (!enrollment) {
     throw new ApiError(403, "Forbidden: you must be enrolled in this course to ask a question");
+  }
+
+  if (enrollment.expiresAt && new Date(enrollment.expiresAt).getTime() <= Date.now()) {
+    throw new ApiError(403, "Your course access has expired. Please contact support or re-enroll.", "ENROLLMENT_EXPIRED");
   }
 
   // Backwards compatibility: if lessonId is still null, look for a lesson in
