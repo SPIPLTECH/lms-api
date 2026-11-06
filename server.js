@@ -12,10 +12,15 @@ const os = require("os");
 const app = require("./src/app");
 const {
     initializeSocket,
+    getIO,
 } = require("./src/socket");
 const { startSessionCleanupJob } = require("./src/jobs/sessionCleanup.job");
 const { startLearningHealthJob } = require("./src/jobs/learningHealth.job");
 const { startAnalyticsJob } = require("./src/jobs/analytics.job");
+const { startProctoringJobs, stopProctoringJobs } = require("./src/jobs/proctoringSweep.job");
+const { startEnrollmentExpirationJob, stopEnrollmentExpirationJob } = require("./src/jobs/enrollmentExpiration.job");
+const { createShutdown } = require("./src/utils/gracefulShutdown");
+const prisma = require("./src/config/database");
 
 
 const PORT = process.env.PORT || 5000;
@@ -45,6 +50,8 @@ initializeSocket(server);
 // Expire stale sessions and playback leases on a schedule (request paths
 // expire them too; this keeps the tables honest and closes stale sockets).
 startSessionCleanupJob();
+startProctoringJobs();
+startEnrollmentExpirationJob();
 
 // Learning Health agent (adaptive Phase 1): nightly recompute so inactivity
 // counts for learners who have gone quiet (they trigger no write-path hook).
@@ -87,3 +94,17 @@ server.listen(PORT, HOST, () => {
     // over from before a restart (EVALUATION_WORKER=off disables it here).
     require("./src/modules/assignment-evaluation/evaluationQueue").startWorker();
 });
+
+// Render sends SIGTERM on every deploy and restart, Docker on `docker stop`, and Ctrl+C is
+// SIGINT. Save what is still in memory before exiting; see src/utils/gracefulShutdown.js.
+const shutdown = createShutdown({
+    server,
+    steps: [
+        ["disconnect sockets", async () => getIO().disconnectSockets(true)],
+        ["stop enrollment expiration job", () => stopEnrollmentExpirationJob()],
+        ["save proctoring state and stop the AI", () => stopProctoringJobs()],
+        ["close the database connection", () => prisma.$disconnect()],
+    ],
+});
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

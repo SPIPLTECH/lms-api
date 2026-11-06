@@ -10,6 +10,8 @@ const progressService = require("../progress/progress.service");
 const { AUDIT_EVENTS, recordAuditEvent, recordAuditEvents } = require("../audit/audit.service");
 const { expireLeasesWhere, leaseExpiredEvent } = require("../sessions/session.service");
 const { requiresPlaybackLease } = require("../../config/accessPolicy");
+const { isProctoringAvailable } = require("../../config/proctoring");
+const { isExamInProgress } = require("../proctoring/attemptStanding");
 const { verifyMediaToken } = require("./mediaToken");
 const { sourceOf, classifySource, buildMediaDescriptor, sendLocalFile, streamBlob } = require("./playbackMedia");
 
@@ -147,6 +149,10 @@ async function startPlayback(user, contentId) {
   if (requiresPlaybackLease(user.role) && (await isPlaybackHeldElsewhere(user))) {
     await recordAuditEvent({ ...audit, eventType: AUDIT_EVENTS.PLAYBACK_CONFLICT, reasonCode: "ACTIVE_ELSEWHERE" });
     throw authError("PLAYBACK_ACTIVE_ON_ANOTHER_DEVICE");
+  }
+
+  if (requiresPlaybackLease(user.role) && isProctoringAvailable() && (await isExamInProgress(user.id))) {
+    throw authError("PROCTORED_EXAM_IN_PROGRESS");
   }
 
   await assertMayPlay(user, content, profile);

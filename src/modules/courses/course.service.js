@@ -669,12 +669,21 @@ const createCourse = async (data, userId) => {
 };
 
 const updateCourse = async (courseId, data) => {
-  return await prisma.course.update({
+  const updatedCourse = await prisma.course.update({
     where: {
       id: courseId
     },
     data
   });
+
+  // When course accessDurationDays is updated (or cleared to null), sync all
+  // enrollments for this course so students immediately see their new expiration.
+  if (data.accessDurationDays !== undefined) {
+    const { syncEnrollmentExpirationsForCourse } = require("../enrollments/enrollment.service");
+    await syncEnrollmentExpirationsForCourse(courseId, data.accessDurationDays);
+  }
+
+  return updatedCourse;
 };
 /**
  * Validates whether a course is ready to be published.
@@ -803,6 +812,10 @@ const validateCourseForPublish = async (courseId) => {
   };
 };
 
+/** Publishing and unpublishing: an ADMIN, or the INSTRUCTOR who owns the course. Archiving stays ADMIN-only. */
+const mayChangePublication = (course, userId, userRole) =>
+  userRole === "ADMIN" || (userRole === "INSTRUCTOR" && course.creatorId === userId);
+
 /**
  * Publishes a course (DRAFT -> PUBLISHED).
  */
@@ -818,8 +831,8 @@ const publishCourse = async (courseId, userId, userRole) => {
     throw error;
   }
 
-  if (userRole !== "ADMIN" && !(userRole === "INSTRUCTOR" && course.creatorId === userId)) {
-    throw new ApiError(403, "Forbidden: Only an administrator or the course's instructor can publish it.");
+  if (!mayChangePublication(course, userId, userRole)) {
+    throw new ApiError(403, "Forbidden: Only the course's instructor or an administrator can publish it.");
   }
 
   // Reported, not enforced. Most courses already published predate this
@@ -922,8 +935,8 @@ const unpublishCourse = async (courseId, userId, userRole) => {
     throw new ApiError(404, "Course not found");
   }
 
-  if (userRole !== "ADMIN" && !(userRole === "INSTRUCTOR" && course.creatorId === userId)) {
-    throw new ApiError(403, "Forbidden: Only an administrator or the course's instructor can unpublish it.");
+  if (!mayChangePublication(course, userId, userRole)) {
+    throw new ApiError(403, "Forbidden: Only the course's instructor or an administrator can unpublish it.");
   }
 
   const updatedCourse = await prisma.course.update({

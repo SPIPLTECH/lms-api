@@ -12,6 +12,10 @@
  *                     quiz stays "not passed"; they just cannot retake it)
  *   QUIZ  · SELF_TEST any attempt (practice: unlimited and untimed, so
  *                     having done it is what counts)
+ *   QUIZ  · proctored as FINAL, with three differences that need a person: an
+ *                     exam ended by proctoring holds it until the instructor
+ *                     decides; an upheld ending completes it; an approved
+ *                     retake adds an attempt. A percentage alone never passes.
  *   ASSIGNMENT        a submission whose status is Submitted or Graded
  *
  * QUALIFYING quizzes are never sequence items (they are the test that lets a
@@ -37,8 +41,11 @@ function quizCompletionRequirement(quizTag) {
  *   QuizSubmission row (the latest attempt; the only record for attempts that
  *   predate the QuizAttempt log)
  * @param {number} passingScore
+ * @param {{proctored?: boolean, hold?: boolean, forceComplete?: boolean, extraAttempts?: number}} [proctoring]
+ *   a proctored quiz's standing. Only attempts marked as passed count there:
+ *   a terminated attempt can have a high percentage and must never pass on it.
  */
-function summarizeQuizAttempts(attempts = [], latestSubmission = null, passingScore = 0) {
+function summarizeQuizAttempts(attempts = [], latestSubmission = null, passingScore = 0, proctoring = {}) {
   const attempted = attempts.length > 0 || Boolean(latestSubmission);
   // Counted the way submit counts: a submission from before the attempt log
   // existed is the student's first attempt.
@@ -46,8 +53,15 @@ function summarizeQuizAttempts(attempts = [], latestSubmission = null, passingSc
   const passed =
     attempts.some((attempt) => attempt.passed === true) ||
     latestSubmission?.passed === true ||
-    (typeof latestSubmission?.percentage === "number" && latestSubmission.percentage >= (passingScore || 0));
-  return { attempted, passed, attemptsUsed };
+    (!proctoring.proctored && typeof latestSubmission?.percentage === "number" && latestSubmission.percentage >= (passingScore || 0));
+  return {
+    attempted,
+    passed,
+    attemptsUsed,
+    ...(proctoring.hold && { hold: true }),
+    ...(proctoring.forceComplete && { forceComplete: true }),
+    ...(proctoring.extraAttempts && { extraAttempts: proctoring.extraAttempts }),
+  };
 }
 
 /**
@@ -57,11 +71,14 @@ function summarizeQuizAttempts(attempts = [], latestSubmission = null, passingSc
  * with what submit would accept. Without it a quiz needing a pass is complete
  * only once passed.
  */
-function isQuizComplete(quizTag, { attempted, passed, attemptsUsed = 0 }, maxAttempts) {
+function isQuizComplete(quizTag, { attempted, passed, attemptsUsed = 0, hold = false, forceComplete = false, extraAttempts = 0 }, maxAttempts) {
   if (quizCompletionRequirement(quizTag) === QUIZ_COMPLETION.ATTEMPT) return Boolean(attempted);
   if (passed) return true;
+  if (hold) return false;
+  if (forceComplete) return true;
   if (maxAttempts === undefined || !attempted) return false;
-  return !buildAttemptAllowance(effectiveMaxAttempts({ quizTag, attempts: maxAttempts }), attemptsUsed).canAttempt;
+  const allowed = effectiveMaxAttempts({ quizTag, attempts: maxAttempts });
+  return !buildAttemptAllowance(allowed > 0 ? allowed + extraAttempts : allowed, attemptsUsed).canAttempt;
 }
 
 /** Whether an assignment submission completes its assignment. */

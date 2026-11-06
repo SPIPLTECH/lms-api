@@ -1,5 +1,9 @@
 const prisma = require("../../config/database");
 const { computeCourseProgressForStudents } = require("../../utils/progressRollup");
+const {
+  isEnrollmentExpired,
+  getRemainingAccessDays,
+} = require("../../utils/enrollmentExpiration");
 
 // Thresholds behind each Student Directory status (see classifyStudent).
 const STATUS_RULES = { topPerformerAt: 80, failingFinalBelow: 50, behindClassBy: 15 };
@@ -149,6 +153,7 @@ const getStudents = async (user) => {
             select: {
               id: true,
               title: true,
+              accessDurationDays: true,
             },
           },
         },
@@ -257,14 +262,25 @@ const getStudents = async (user) => {
     let progressSum = 0;
     let assignmentsTotal = 0;
     let assignmentsDone = 0;
+    const now = new Date();
 
     for (const enrollment of enrollments) {
       const key = `${student.id}:${enrollment.courseId}`;
       const stats = standings.get(key);
       const progress = progressOf.get(key) ?? enrollment.progressPercent ?? 0;
+      const isExpired = isEnrollmentExpired(enrollment, now);
+      const remainingDays = getRemainingAccessDays(enrollment.expiresAt, now);
 
       if (!stats) {
-        courseProgress[enrollment.courseId] = { progress, status: "Not Started" };
+        courseProgress[enrollment.courseId] = {
+          progress,
+          status: "Not Started",
+          enrolledAt: enrollment.enrolledAt,
+          expiresAt: enrollment.expiresAt,
+          isExpired,
+          remainingDays,
+          accessDurationDays: enrollment.course?.accessDurationDays ?? null,
+        };
         statuses.push("Not Started");
         progressSum += progress;
         continue;
@@ -280,7 +296,15 @@ const getStudents = async (user) => {
         classmates: classAverage.count,
       });
 
-      courseProgress[enrollment.courseId] = { progress, status };
+      courseProgress[enrollment.courseId] = {
+        progress,
+        status,
+        enrolledAt: enrollment.enrolledAt,
+        expiresAt: enrollment.expiresAt,
+        isExpired,
+        remainingDays,
+        accessDurationDays: enrollment.course?.accessDurationDays ?? null,
+      };
       statuses.push(status);
       progressSum += progress;
 
@@ -319,7 +343,22 @@ const getStudents = async (user) => {
       email: student.user.email,
       role: student.user.role,
       course: enrollments[0]?.course?.title || "General Course",
-      courses: enrollments.map((e) => ({ id: e.courseId, title: e.course?.title || "Course" })),
+      enrolledAt: enrollments[0]?.enrolledAt || null,
+      expiresAt: enrollments[0]?.expiresAt || null,
+      isExpired: enrollments[0] ? isEnrollmentExpired(enrollments[0], now) : false,
+      remainingDays: enrollments[0] ? getRemainingAccessDays(enrollments[0].expiresAt, now) : null,
+      accessDurationDays: enrollments[0]?.course?.accessDurationDays ?? null,
+      courses: enrollments.map((e) => ({
+        id: e.courseId,
+        title: e.course?.title || "Course",
+        completed: !!e.completed,
+        progressPercent: e.progressPercent || 0,
+        enrolledAt: e.enrolledAt,
+        expiresAt: e.expiresAt,
+        isExpired: isEnrollmentExpired(e, now),
+        remainingDays: getRemainingAccessDays(e.expiresAt, now),
+        accessDurationDays: e.course?.accessDurationDays ?? null,
+      })),
       courseIds: enrollments.map((e) => e.courseId),
       // Across the instructor's courses: average progress, most urgent status.
       progress: enrollments.length ? Math.round(progressSum / enrollments.length) : 0,
@@ -340,8 +379,17 @@ const getStudents = async (user) => {
         .map((c) => ({
           id: c.id,
           title: c.course?.title || "Certificate of Completion",
+          certificateTitle: c.course?.certificateTitle || "Certificate of Completion",
+          courseId: c.courseId,
           date: formatDate(c.issuedAt),
           code: c.certificateNo,
+          courseMemo: c.courseMemo || c.course?.courseMemo || null,
+          grade: c.grade,
+          score: c.score,
+          performanceDescription: c.performanceDescription,
+          instructorRemarks: c.instructorRemarks,
+          brandingName: c.brandingName,
+          brandingPoweredBy: c.brandingPoweredBy,
         })),
     };
   });
@@ -363,16 +411,38 @@ const STUDENT_USER_SELECT = {
 };
 
 const getStudentById = async (studentId) => {
-  return await prisma.studentProfile.findUnique({
+  const profile = await prisma.studentProfile.findUnique({
     where: {
       id: studentId
     },
     include: {
       user: { select: STUDENT_USER_SELECT },
-      enrollments: true,
+      enrollments: {
+        include: {
+          course: {
+            select: {
+              id: true,
+              title: true,
+              accessDurationDays: true,
+            },
+          },
+        },
+      },
       certificates: true
     }
   });
+
+  if (!profile) return null;
+
+  const now = new Date();
+  return {
+    ...profile,
+    enrollments: (profile.enrollments || []).map((e) => ({
+      ...e,
+      isExpired: isEnrollmentExpired(e, now),
+      remainingDays: getRemainingAccessDays(e.expiresAt, now),
+    })),
+  };
 };
 
 const updateStudent = async (studentId, data) => {

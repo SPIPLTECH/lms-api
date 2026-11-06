@@ -27,7 +27,7 @@ const verifyCertificateAccess = async (req, res, next) => {
       return next(new ApiError(401, "Authentication required"));
     }
 
-    const { certificateId } = req.params;
+    const certificateId = req.params.certificateId || req.params.id;
 
     if (!certificateId) {
       return next(new ApiError(400, "certificateId is required"));
@@ -67,7 +67,7 @@ const verifyCertificateAccess = async (req, res, next) => {
  * never issue, edit, or delete one.
  */
 const verifyCertificateManage = buildOwnershipCheck({
-  getResourceId: (req) => req.params.certificateId,
+  getResourceId: (req) => req.params.certificateId || req.params.id,
   findResource: findCertificateWithOwners,
   getCourseCreatorId: (certificate) => certificate.course?.creatorId,
   notFoundMessage: "Certificate not found",

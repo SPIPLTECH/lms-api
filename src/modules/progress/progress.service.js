@@ -12,6 +12,7 @@ const {
   resolveCourseId
 } = require('../../utils/helpers/courseBreadcrumb.helper');
 const { createOpenStepsCache } = require('../../utils/openStepsCache');
+const { authError } = require('../../utils/authErrors');
 
 const forbidden = (message) => Object.assign(new Error(message), { statusCode: 403 });
 
@@ -838,13 +839,17 @@ async function assertCourseProgressAccess(requestingUser, studentId, courseId) {
 
   const enrollment = await prisma.enrollment.findUnique({
     where: { studentId_courseId: { studentId, courseId } },
-    select: { id: true }
+    select: { id: true, expiresAt: true }
   });
 
   if (!enrollment) {
     const error = new Error('Forbidden: you are not enrolled in this course');
     error.statusCode = 403;
     throw error;
+  }
+
+  if (enrollment.expiresAt && new Date(enrollment.expiresAt).getTime() <= Date.now()) {
+    throw authError('ENROLLMENT_EXPIRED');
   }
 }
 

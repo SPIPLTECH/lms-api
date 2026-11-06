@@ -25,6 +25,7 @@ const quizRoutes = require("./modules/quizzes/quiz.routes");
 const questionRoutes = require("./modules/questions/question.routes");
 const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
 const certificateRoutes = require("./modules/certificates/certificate.routes");
+const feedbackRoutes = require("./modules/feedback/feedback.routes");
 const adminRoutes = require("./modules/admin/admin.route");
 const stickyNoteRoutes = require("./modules/sticky-note/sticky-note.routes");
 const noteRoutes = require("./modules/notes/note.routes");
@@ -47,7 +48,9 @@ const protectVideoSources = require("./middleware/mediaProtection.middleware");
 const stripResponseSecrets = require("./middleware/responseSecrets.middleware");
 const uploadsHandler = require("./middleware/uploads.middleware");
 const { redactLoggedUrl } = require("./utils/logRedaction");
+const { defaultHealthChecks } = require("./utils/healthCheck");
 const evaluatorRoutes = require("./modules/evaluators/evaluator.routes");
+const proctoringRoutes = require("./modules/proctoring/proctoring.routes");
 const app = express();
 app.disable('etag');
 // Render terminates TLS at its proxy and forwards with X-Forwarded-For. Trust
@@ -117,7 +120,8 @@ app.use(
 // The request log must not record live signed media URLs: the token in
 // /playback/media/<token> is a bearer credential while its lease is active.
 morgan.token("url", (req) => redactLoggedUrl(req.originalUrl || req.url));
-app.use(morgan("dev"));
+// One line per exam frame would be most of the log, and most of its cost, during an exam.
+app.use(morgan("dev", { skip: (req) => (req.originalUrl || "").startsWith("/proctoring/monitor/") }));
 
 const courseImportLargeJsonRoutes = /^\/course-import\/(?:apply|jobs\/[^/]+)(?:\/|$)/i;
 const standardJsonParser = express.json({
@@ -167,6 +171,17 @@ app.get("/", (req, res) => {
   });
 });
 
+// For the container platform: /healthz is liveness only; /readyz adds the database and,
+// while proctoring is on, exam monitoring. See src/utils/healthCheck.js.
+app.get("/healthz", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
+app.get("/readyz", async (req, res) => {
+  const result = await defaultHealthChecks().readiness();
+  res.status(result.ready ? 200 : 503).json(result);
+});
+
 /*
 |--------------------------------------------------------------------------
 | Routes
@@ -188,6 +203,7 @@ app.use("/quizzes", quizRoutes);
 app.use("/questions", questionRoutes);
 app.use("/dashboard", dashboardRoutes);
 app.use("/certificates", certificateRoutes);
+app.use("/feedback", feedbackRoutes);
 app.use("/admin", adminRoutes);
 app.use("/sticky-notes", stickyNoteRoutes);
 app.use("/notifications", notificationRoutes);
@@ -214,6 +230,7 @@ app.use("/sessions", sessionRoutes);
 app.use("/playback", playbackRoutes);
 // Temporary evaluator accounts — registration, access status, feedback check.
 app.use("/evaluators", evaluatorRoutes);
+app.use("/proctoring", proctoringRoutes);
 app.use(
   "/learner-model",
   require("./modules/learner-model/learnerModel.routes")

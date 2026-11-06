@@ -33,10 +33,23 @@ const findEnrollment = async (userId, courseId) => {
   const studentId = await getStudentProfileId(userId);
   if (!studentId) return null;
 
-  return prisma.enrollment.findUnique({
+  const enrollment = await prisma.enrollment.findUnique({
     where: { studentId_courseId: { studentId, courseId } },
-    select: { id: true, studentId: true, courseId: true, progressPercent: true, completed: true },
+    select: {
+      id: true,
+      studentId: true,
+      courseId: true,
+      progressPercent: true,
+      completed: true,
+      expiresAt: true
+    },
   });
+
+  if (enrollment && enrollment.expiresAt && new Date(enrollment.expiresAt).getTime() <= Date.now()) {
+    return null;
+  }
+
+  return enrollment;
 };
 
 module.exports = { findEnrollment, getStudentProfileId };

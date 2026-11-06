@@ -87,7 +87,41 @@ const playbackStartRateLimiter = rateLimit({
   message: { success: false, message: "Too many playback requests, please try again shortly." }
 });
 
+// Proctored exam routes. Budgets allow for a long exam with frequent autosaves;
+// a student who hits one sees a retry, and saved answers are not lost.
+const proctoringAttemptRateLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: perUser("proctoring-attempt"),
+  message: { success: false, message: "Too many exam requests, please try again shortly." }
+});
+
+const proctoringAnswerRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 240,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: perUser("proctoring-answer"),
+  message: { success: false, message: "Too many answers saved at once, please try again shortly." }
+});
+
+/** Per attempt, per minute, after monitorAuth has identified the attempt from its token. */
+const monitorRateLimiter = (name, max) =>
+  rateLimit({
+    windowMs: 60 * 1000,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `monitor-${name}:${req.monitor.id}`,
+    message: { success: false, message: "Too many monitoring requests, please try again shortly." }
+  });
+
 module.exports = {
+  monitorRateLimiter,
+  proctoringAttemptRateLimiter,
+  proctoringAnswerRateLimiter,
   refreshRateLimiter,
   sessionStatusRateLimiter,
   playbackStartRateLimiter,

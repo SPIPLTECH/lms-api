@@ -10,6 +10,7 @@ const {
   isQuizComplete,
   isAssignmentSubmissionComplete
 } = require('./itemCompletion');
+const { wasEverProctored } = require('../modules/proctoring/attemptStanding');
 
 /**
  * Authoritative bottom-up progress roll-up engine.
@@ -106,6 +107,8 @@ const CONTENT_SELECT = {
       timeLimit: true,
       attempts: true,
       isPublished: true,
+      proctoringEnabled: true,
+      proctoringSetAt: true,
       _count: { select: { questions: true, quizQuestions: true } }
     }
   },
@@ -193,7 +196,7 @@ async function loadPublishedHierarchy(client, courseId) {
   const published = (level) => ({ where: { isPublished: true, ...IN_COURSE[level](courseId) }, orderBy: ORDERED });
 
   const [course, modules, lessons, topics, subTopics, concepts, contents] = await Promise.all([
-    client.course.findUnique({ where: { id: courseId }, select: { id: true, title: true, status: true, language: true, sequentialLearning: true } }),
+    client.course.findUnique({ where: { id: courseId }, select: { id: true, title: true, status: true, language: true, sequentialLearning: true, certificatesEnabled: true, courseMemo: true, certificateTitle: true, certificateTemplate: true } }),
     client.module.findMany({ ...published('module'), select: CONTAINER_SELECT }),
     client.lesson.findMany({ ...published('lesson'), select: { ...CONTAINER_SELECT, moduleId: true } }),
     // description: shown as the Topic's "About" in the player's topic picker (board-paper courses).
@@ -309,6 +312,27 @@ function collectCourseItems(course) {
 }
 
 /**
+ * A proctored quiz's standing for the completion rule, per quiz: an ended exam holds it until
+ * a decision, an upheld ending completes it, and each approved retake adds an attempt.
+ */
+function buildProctoredStandings(attempts = [], grants = []) {
+  const standings = new Map();
+  const entry = (quizId) => {
+    if (!standings.has(quizId)) standings.set(quizId, { proctored: true, hold: false, forceComplete: false, extraAttempts: 0 });
+    return standings.get(quizId);
+  };
+  const granted = new Set(grants.map((grant) => grant.sourceAttemptId));
+  for (const grant of grants) entry(grant.quizId).extraAttempts += 1;
+  for (const attempt of attempts) {
+    const standing = entry(attempt.quizId);
+    if (attempt.status !== "TERMINATED" || granted.has(attempt.id)) continue;
+    if (attempt.decision === "UPHOLD") standing.forceComplete = true;
+    else standing.hold = true;
+  }
+  return standings;
+}
+
+/**
  * The student's ground truth for a course's items, plus their existing
  * container rows (to preserve completedAt/visitedAt). Independent reads, one
  * parallel batch — on a remote database the round trips, not the queries, are
@@ -319,6 +343,8 @@ async function readStudentRows(client, studentId, items) {
   const contentIds = items.allContents.map((c) => c.id);
   const quizIdList = Array.from(items.quizIds);
   const assignmentIdList = Array.from(items.assignmentIds);
+  // Only a course with a quiz that is or was proctored reads these, so any other course runs no new query.
+  const proctoredQuizIds = items.allContents.filter((content) => wasEverProctored(content.quiz)).map((content) => content.quizId);
 
   const [
     cpRecords,
@@ -329,7 +355,9 @@ async function readStudentRows(client, studentId, items) {
     subTopicProgresses,
     topicProgresses,
     lessonProgresses,
-    moduleProgresses
+    moduleProgresses,
+    proctoredAttemptRecords,
+    retakeGrantRecords
   ] = await Promise.all([
     contentIds.length > 0
       ? client.contentProgress.findMany({
@@ -384,6 +412,18 @@ async function readStudentRows(client, studentId, items) {
           where: { studentId, moduleId: { in: Array.from(items.allModuleIds) } },
           select: { studentId: true, moduleId: true, completed: true, completedAt: true, visited: true, visitedAt: true }
         })
+      : [],
+    proctoredQuizIds.length > 0
+      ? client.proctoredAttempt.findMany({
+          where: { studentId, quizId: { in: proctoredQuizIds }, status: "TERMINATED" },
+          select: { id: true, studentId: true, quizId: true, status: true, decision: true }
+        })
+      : [],
+    proctoredQuizIds.length > 0
+      ? client.proctoringRetakeGrant.findMany({
+          where: { studentId, quizId: { in: proctoredQuizIds } },
+          select: { studentId: true, quizId: true, sourceAttemptId: true }
+        })
       : []
   ]);
 
@@ -396,7 +436,9 @@ async function readStudentRows(client, studentId, items) {
     subTopicProgresses,
     topicProgresses,
     lessonProgresses,
-    moduleProgresses
+    moduleProgresses,
+    proctoredAttemptRecords,
+    retakeGrantRecords
   };
 }
 
@@ -455,7 +497,9 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     subTopicProgresses: existingSubTopicProgresses,
     topicProgresses: existingTopicProgresses,
     lessonProgresses: existingLessonProgresses,
-    moduleProgresses: existingModuleProgresses
+    moduleProgresses: existingModuleProgresses,
+    proctoredAttemptRecords,
+    retakeGrantRecords
   } = rows;
   const { qualifiedTopicIds, qualifiedLessonIds } = qualifications;
 
@@ -466,6 +510,7 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     attemptsByQuiz.get(attempt.quizId).push(attempt);
   }
   const submissionByQuiz = new Map(submissionRecords.map((s) => [s.quizId, s]));
+  const proctoredStandings = buildProctoredStandings(proctoredAttemptRecords, retakeGrantRecords);
   const assignmentSubmissionMap = new Map(assignmentSubmissionRecords.map((s) => [s.assignmentId, s]));
 
   // A. Every item's state, from the ONE completion rule. `domain*` is what the
@@ -481,7 +526,13 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
     if (content.type === 'QUIZ') {
       const attempts = attemptsByQuiz.get(content.quizId) || [];
       const latest = submissionByQuiz.get(content.quizId) || null;
-      const summary = summarizeQuizAttempts(attempts, latest, content.quiz.passingScore);
+      const summary = summarizeQuizAttempts(
+        attempts,
+        latest,
+        content.quiz.passingScore,
+        // Switched off, only the students with proctored attempts keep a standing.
+        content.quiz.proctoringEnabled ? proctoredStandings.get(content.quizId) ?? { proctored: true } : proctoredStandings.get(content.quizId)
+      );
       completed = isQuizComplete(content.quiz.quizTag, summary, content.quiz.attempts);
       activity = summary.attempted;
       if (completed) {
@@ -952,6 +1003,59 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
         lastAccessedAt: now
       }
     });
+
+    if (isCourseCompleted && course?.certificatesEnabled) {
+      try {
+        const existingCert = await client.certificate.findUnique({
+          where: { studentId_courseId: { studentId, courseId } }
+        });
+        const { computeCourseGradeForStudent } = require("./courseGrading");
+        if (!existingCert) {
+          const gradingResult = await computeCourseGradeForStudent(client, studentId, courseId);
+          const certificateNo = "CR-" + Math.random().toString(36).substring(2, 8).toUpperCase();
+          const { normalizeTemplateId } = require("./certificatePdf");
+          const tConfig = course.certificateTemplate || {};
+          const serializedRemarks = JSON.stringify({
+            __snapshot: true,
+            templateId: normalizeTemplateId(tConfig.templateId || tConfig.style || "CLASSIC_GOLD_V1"),
+            accentColor: tConfig.accentColor || null,
+            signatoryName: tConfig.signatoryName || null,
+            signatoryTitle: tConfig.signatoryTitle || null,
+            remarks: null,
+          });
+
+          await client.certificate.create({
+            data: {
+              certificateNo,
+              courseId,
+              studentId,
+              issuedAt: courseCompletedAt || now,
+              grade: gradingResult.grade,
+              score: gradingResult.score,
+              performanceDescription: gradingResult.performanceDescription,
+              courseMemo: course.courseMemo || null,
+              instructorRemarks: serializedRemarks,
+              brandingName: "Course Ranger",
+              brandingPoweredBy: "Course Powered By SPIPL"
+            }
+          });
+        } else if (existingCert.grade === null && existingCert.score === null) {
+          // Safely backfill missing grade & score on previously auto-issued certificates
+          const gradingResult = await computeCourseGradeForStudent(client, studentId, courseId);
+          await client.certificate.update({
+            where: { id: existingCert.id },
+            data: {
+              grade: gradingResult.grade,
+              score: gradingResult.score,
+              performanceDescription: gradingResult.performanceDescription,
+              courseMemo: existingCert.courseMemo || course.courseMemo || null,
+            }
+          });
+        }
+      } catch (certErr) {
+        console.warn(`[progressRollup] Auto-certificate issuance skipped:`, certErr?.message || certErr);
+      }
+    }
   }
 
   const result = {

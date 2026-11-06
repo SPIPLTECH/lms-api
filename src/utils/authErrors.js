@@ -31,6 +31,7 @@ const AUTH_ERRORS = {
     message: "This account is already watching on another device. Stop playback on that device to continue watching here.",
   },
   PLAYBACK_LEASE_LOST: { status: 409, message: "Playback permission expired. Pause and try again." },
+  PROCTORED_EXAM_IN_PROGRESS: { status: 409, message: "You have a proctored exam in progress. Finish it before watching videos." },
   // A STUDENT device asked for course content while another device of the
   // same account holds the playback lease (middleware/contentAccess.middleware.js).
   CONTENT_ACTIVE_ON_ANOTHER_DEVICE: {
@@ -38,6 +39,10 @@ const AUTH_ERRORS = {
     message: "This account is currently active on another device. Stop playback on that device to access course content here.",
   },
   CONTENT_ACCESS_DENIED: { status: 403, message: "You do not have access to this content." },
+  ENROLLMENT_EXPIRED: {
+    status: 403,
+    message: "Your course access has expired. Please contact support or re-enroll.",
+  },
   CONTENT_NOT_PLAYABLE: { status: 400, message: "This item is not a video." },
   MEDIA_UNAVAILABLE: { status: 404, message: "This video is not available." },
   MEDIA_URL_INVALID: { status: 403, message: "This video link has expired. Reload the lesson to keep watching." },

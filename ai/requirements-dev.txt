@@ -1,0 +1,4 @@
+# Test-only dependencies (not needed to run the service).
+-r requirements.txt
+pytest==9.1.1             # MIT
+httpx==0.28.1             # BSD-3-Clause (FastAPI TestClient); pulls certifi (MPL-2.0, unmodified)

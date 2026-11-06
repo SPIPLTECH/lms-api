@@ -52,3 +52,11 @@ test/
 
 # OCR language model downloaded by assignment auto-evaluation on first use.
 .cache/
+
+# Proctoring AI: set up by npm run ai:setup, never committed.
+ai/.venv/
+ai/.pytest_cache/
+ai/models/*.tflite
+ai/models/*.onnx
+ai/models/*.part
+__pycache__/

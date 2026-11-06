@@ -18,6 +18,10 @@ const { QUALIFYING_TAG } = require("../../utils/qualification");
 // student is never told a limit that submit would not enforce.
 const { effectiveMaxAttempts, buildAttemptAllowance } = require("../../utils/attemptAllowance");
 const { choiceMatches } = require("../../utils/choiceAnswer");
+const quizLock = require("../proctoring/quizLock.service");
+const { hasOptedOut, proctoredResultLabel, resultStanding, retakeGrantCount, wasEverProctored, withRetakes } = require("../proctoring/attemptStanding");
+const ApiError = require("../../utils/ApiError");
+const { authError } = require("../../utils/authErrors");
 const { buildQuizWeakAreas, getCourseTestReview, notifyTestReviewUnlocked } = require("./testReview.service");
 
 
@@ -412,7 +416,7 @@ const assertStudentCourseAccess = async (studentId, courseId) => {
     }),
     prisma.enrollment.findUnique({
       where: { studentId_courseId: { studentId, courseId } },
-      select: { id: true },
+      select: { id: true, expiresAt: true },
     }),
   ]);
 
@@ -421,6 +425,9 @@ const assertStudentCourseAccess = async (studentId, courseId) => {
   }
   if (!enrollment) {
     throw makeQuizHttpError(403, "Forbidden: you are not enrolled in this course");
+  }
+  if (enrollment.expiresAt && new Date(enrollment.expiresAt).getTime() <= Date.now()) {
+    throw authError("ENROLLMENT_EXPIRED");
   }
   if (course.status !== "PUBLISHED") {
     throw makeQuizHttpError(403, "Forbidden: this course is not currently available");
@@ -462,11 +469,15 @@ const assertStudentQuizAccess = async (studentId, quizId) => {
 
   const enrollment = await prisma.enrollment.findUnique({
     where: { studentId_courseId: { studentId, courseId: quiz.courseId } },
-    select: { id: true },
+    select: { id: true, expiresAt: true },
   });
 
   if (!enrollment) {
     throw makeQuizHttpError(403, "Forbidden: you are not enrolled in this course");
+  }
+
+  if (enrollment.expiresAt && new Date(enrollment.expiresAt).getTime() <= Date.now()) {
+    throw authError("ENROLLMENT_EXPIRED");
   }
 
   if (
@@ -530,7 +541,12 @@ const getQuizzes = async (
     where.status = { not: "ARCHIVED" };
     where.course = {
       status: "PUBLISHED",
-      enrollments: { some: { studentId } },
+      enrollments: {
+        some: {
+          studentId,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
+      },
     };
   }
 
@@ -588,7 +604,9 @@ const quizPlace = (quiz) => {
 const getQuizById = async (
   quizId,
   role,
-  studentId = null
+  studentId = null,
+  // Set only by the proctored attempt service, once it has checked the attempt.
+  { proctoredExam = false } = {}
 ) => {
   const quiz = await prisma.quiz.findUnique({
     where: {
@@ -627,8 +645,13 @@ const getQuizById = async (
   // Read before the stripping below, because which attempt they are on is
   // what decides whether hints may be sent at all.
   const attemptsUsed = studentId ? await countAttemptsUsed(studentId, quizId) : 0;
+  // A student who chose to take this proctored quiz without proctoring sees it as an ordinary
+  // quiz, with the same allowance the exam route gives (approved retakes included).
+  const proctoringDeclined =
+    role === "STUDENT" && quiz.proctoringEnabled && !proctoredExam && (await hasOptedOut(studentId, quizId));
+  const extraAttempts = proctoringDeclined ? await retakeGrantCount(studentId, quizId) : 0;
   const attemptStatus = studentId
-    ? buildAttemptAllowance(effectiveMaxAttempts(quiz), attemptsUsed)
+    ? buildAttemptAllowance(withRetakes(effectiveMaxAttempts(quiz), extraAttempts), attemptsUsed)
     : undefined;
 
   // Hints are a qualifying-test affordance only, and only from the second
@@ -689,7 +712,11 @@ const getQuizById = async (
 
   return {
     ...(isStudentOrGuest ? quizFields : quiz),
-    questions: allQuestions,
+    // Only for a proctored quiz, so other quizzes run no extra query.
+    ...(!isStudentOrGuest && quiz.proctoringEnabled && { proctoringLocked: await quizLock.isQuizLocked(quizId) }),
+    // A proctored quiz's questions reach a student only through a valid attempt, or once they declined proctoring.
+    questions: isStudentOrGuest && quiz.proctoringEnabled && !proctoredExam && !proctoringDeclined ? [] : allQuestions,
+    ...(proctoringDeclined && { proctoringDeclined: true }),
     ...(isStudentOrGuest && { place: quizPlace(quiz) }),
     // Tells the attempt UI the answer key above is there to be checked
     // against, so it offers "Check Answer" — decided here, like hints.
@@ -911,10 +938,11 @@ const createQuiz = async (
 ) => {
   await validateQuizScope(data);
   assertQualifyingTargetPresent(data.quizTag, data);
+  const proctoringFields = quizLock.fieldsForCreate(data, userId);
 
   // `order` is the quiz's position in the learning sequence — its Content
   // row's order. Quiz.order is no longer written.
-  const { questions, order: requestedOrder = null, inSequence, ...quizData } = data;
+  const { questions, order: requestedOrder = null, inSequence, proctoringEnabled, ...quizData } = data;
 
   // The Quiz and its Content row are written in one transaction: a sequence
   // quiz can never exist without its place in the course, nor the place
@@ -929,11 +957,16 @@ const createQuiz = async (
         topicId: quizData.topicId || null,
         subTopicId: quizData.subTopicId || null,
         conceptId: quizData.conceptId || null,
+        ...proctoringFields,
       }
     });
 
     if (isSequenceQuiz(createdQuiz, { inSequence })) {
       await placeQuizInSequence(createdQuiz, requestedOrder, tx);
+    }
+
+    if (proctoringFields.proctoringEnabled) {
+      await quizLock.recordSettingChange(tx, { userId, quizId: createdQuiz.id, enabled: true });
     }
 
     return createdQuiz;
@@ -1027,7 +1060,7 @@ const updateQuiz = async (
 
   // `order` moves the quiz within the learning sequence (its Content row);
   // Quiz.order is no longer written.
-  const { questions, order: requestedOrder, ...quizData } = data;
+  const { questions, order: requestedOrder, proctoringEnabled, ...quizData } = data;
 
   // The tag may be changing in this very request, or may not be in the
   // payload at all -- either way the row's resulting tag is what governs
@@ -1047,11 +1080,23 @@ const updateQuiz = async (
   // retagging a QUALIFYING quiz to FINAL/SELF_TEST puts it back in, at the end
   // of its parent; a new title is the title its Content row shows.
   const updatedQuiz = await prisma.$transaction(async (tx) => {
+    // Runs before the tag's rules can quietly clear a time limit. No query at all
+    // for a quiz that is not proctored and is not being ticked.
+    const proctoringFields = await quizLock.resolveUpdate(tx, existing, {
+      proctoringEnabled,
+      quizData,
+      questionsSent: Array.isArray(questions),
+      userId,
+    });
+
     const row = await tx.quiz.update({
       where: {
         id: quizId
       },
-      data: applyTagAttemptRule(effectiveTag, applyTagTimerRule(effectiveTag, quizData), existing.attempts)
+      data: {
+        ...applyTagAttemptRule(effectiveTag, applyTagTimerRule(effectiveTag, quizData), existing.attempts),
+        ...proctoringFields,
+      }
     });
 
     const wrapper = await tx.content.findUnique({ where: { quizId } });
@@ -1364,7 +1409,10 @@ const submitQuiz = async (
   quizId,
   answers = [],
   timeTakenSeconds = null,
-  questionStates = []
+  questionStates = [],
+  // Set only by the proctored attempt service when it closes an attempt:
+  // { forceFailed, onTransactionStart(tx), onAttemptCreated(tx, attempt) }.
+  proctored = null
 ) => {
   const quiz = await prisma.quiz.findUnique({
     where: { id: quizId },
@@ -1377,16 +1425,28 @@ const submitQuiz = async (
     throw error;
   }
 
-  if (quiz.isPublished === false || quiz.status === "ARCHIVED") {
-    throw makeQuizHttpError(403, "This quiz is not available.");
+  // Taken without proctoring by this student's choice: an ordinary submit, with the exam route's allowance.
+  const proctoringDeclined = quiz.proctoringEnabled && !proctored && (await hasOptedOut(studentId, quizId));
+  const extraAttempts = proctoringDeclined ? await retakeGrantCount(studentId, quizId) : 0;
+  if (quiz.proctoringEnabled && !proctored && !proctoringDeclined) {
+    throw new ApiError(409, "This quiz is proctored and can only be taken through its exam page.", "PROCTORED_QUIZ_USE_SECURE_ROUTE");
   }
 
-  // A quiz in the learning sequence can only be submitted once the student
-  // has reached it — the same gate the player and every other item use.
-  // Required lazily: progress.service sits above this module.
-  await require("../progress/progress.service").assertSequenceItemAccessible(studentId, { quizId });
+  // Access and the attempt limit were checked when a proctored attempt began. An
+  // attempt already under way must always be able to close, whatever changed since.
+  if (!proctored) {
+    if (quiz.isPublished === false || quiz.status === "ARCHIVED") {
+      throw makeQuizHttpError(403, "This quiz is not available.");
+    }
+
+    // A quiz in the learning sequence can only be submitted once the student
+    // has reached it — the same gate the player and every other item use.
+    // Required lazily: progress.service sits above this module.
+    await require("../progress/progress.service").assertSequenceItemAccessible(studentId, { quizId });
+  }
 
   const result = calculateSubmissionResult(quiz, answers);
+  if (proctored?.forceFailed) result.passed = false;
   // One record per question, graded server-side, with the attempt UI's visit
   // and skip history merged in. Everything the attempt reports about itself
   // is folded from these — see summarizeQuestionAttempts.
@@ -1407,6 +1467,8 @@ const submitQuiz = async (
   let attempt;
   try {
     ({ submission, attempt } = await prisma.$transaction(async (tx) => {
+      if (proctored) await proctored.onTransactionStart(tx);
+
       const lastLogged = await tx.quizAttempt.findFirst({
         where: { studentId, quizId },
         orderBy: { attemptNumber: "desc" },
@@ -1425,12 +1487,17 @@ const submitQuiz = async (
         attemptsUsed = 1;
       }
 
-      if (!buildAttemptAllowance(effectiveMaxAttempts(quiz), attemptsUsed).canAttempt) {
+      if (!proctored && !buildAttemptAllowance(withRetakes(effectiveMaxAttempts(quiz), extraAttempts), attemptsUsed).canAttempt) {
         const error = new Error(
           `You have used all ${quiz.attempts} attempt${quiz.attempts === 1 ? "" : "s"} allowed for this quiz.`
         );
         error.statusCode = 403;
         throw error;
+      }
+
+      // An approved retake is used by this attempt, as beginning a proctored exam would use it.
+      if (proctoringDeclined) {
+        await tx.proctoringRetakeGrant.updateMany({ where: { quizId, studentId, usedAt: null }, data: { usedAt: new Date() } });
       }
 
       const createdAttempt = await tx.quizAttempt.create({
@@ -1491,6 +1558,8 @@ const submitQuiz = async (
           submittedAt: createdAttempt.submittedAt
         }
       });
+
+      if (proctored) await proctored.onAttemptCreated(tx, createdAttempt);
 
       return { submission: latest, attempt: createdAttempt };
     }, { timeout: 15000 }));
@@ -1794,15 +1863,26 @@ const getQuizResult = async (studentId, quizId, attemptId = null) => {
 
   if (!selected) return null;
 
-  const allowance = buildAttemptAllowance(quiz ? effectiveMaxAttempts(quiz) : 0, history.length);
+  // Also after proctoring is switched off: a past exam under review or ended stays held.
+  const proctoring = wasEverProctored(quiz) ? await resultStanding(studentId, quizId) : null;
+  // Only after the exam: the previous attempt's marks must not be open beside it.
+  if (proctoring?.examInProgress) {
+    throw new ApiError(409, "Finish your proctored exam before viewing results for this quiz.", "PROCTORED_EXAM_IN_PROGRESS");
+  }
+
+  // On a proctored quiz approved retakes add attempts, so a key is not shown while one is left.
+  const extraAttempts = proctoring ? await retakeGrantCount(studentId, quizId) : 0;
+  const allowance = buildAttemptAllowance(quiz ? withRetakes(effectiveMaxAttempts(quiz), extraAttempts) : 0, history.length);
   // Decided against the student's standing across the WHOLE quiz, not the one
   // attempt being viewed: opening attempt 1 while attempt 2 is still to come
   // must not reveal what attempt 2 is about to ask.
   const revealAnswerKey = mayRevealAnswerKey({
     quiz,
-    passed: history.some((a) => a.passed === true),
+    // On a proctored quiz a pass can still be reviewed or retaken, so it reveals nothing,
+    // unless this student took it without proctoring.
+    passed: (!quiz?.proctoringEnabled || (await hasOptedOut(studentId, quizId))) && history.some((a) => a.passed === true),
     canAttempt: allowance.canAttempt
-  });
+  }) && !proctoring?.holdAnswerKey;
 
   const questions = (quiz?.quizQuestions || []).map((qq) => {
     const question = {
@@ -1872,6 +1952,8 @@ const getQuizResult = async (studentId, quizId, attemptId = null) => {
     // test the student can still retake. The review UI reads this instead of
     // inferring it, so it never renders an answer column that isn't there.
     answerKeyRevealed: revealAnswerKey,
+    // Only on a proctored quiz: how this attempt ended, for the result screen to say so.
+    ...(proctoring && { proctoring: await proctoredResultLabel(selected.id) }),
     attempts: history.map(toAttemptSummary),
     ...allowance,
     // The raw junction relation carries the UNSANITIZED question, so it would
@@ -1997,10 +2079,13 @@ const generateSelfAssessmentQuiz = async (courseId, questionCount = 5) => {
         courseId,
         isPublished: true,
         status: { not: "ARCHIVED" },
+        proctoringEnabled: false,
       },
       question: {
         status: "ACTIVE",
         isPublished: true,
+        // A question shared with a proctored quiz would expose that exam.
+        quizQuestions: { none: { quiz: { proctoringEnabled: true } } },
       },
     },
     select: { questionId: true },

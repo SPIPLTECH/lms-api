@@ -1,5 +1,6 @@
 const quizService = require("./quiz.service");
 const quizImportService = require("./services/quizImport.service");
+const { sendAuthError } = require("../../utils/authErrors");
 const testReviewService = require("./testReview.service");
 
 const getQuizzes = async (req, res, next) => {
@@ -171,13 +172,16 @@ const getQuizResult = async (req, res, next) => {
       where: {
         studentId_courseId: { studentId: student.id, courseId: targetQuiz.courseId },
       },
-      select: { id: true },
+      select: { id: true, expiresAt: true },
     });
     if (!enrollment) {
       return res.status(403).json({
         success: false,
         message: "Forbidden: you are not enrolled in this course",
       });
+    }
+    if (enrollment.expiresAt && new Date(enrollment.expiresAt).getTime() <= Date.now()) {
+      return sendAuthError(req, res, "ENROLLMENT_EXPIRED");
     }
 
     // ?attempt=<id> opens one specific earlier attempt; without it, the latest.

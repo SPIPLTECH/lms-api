@@ -1,6 +1,7 @@
 const questionService = require("./question.service");
 const questionRepositoryService = require("./services/questionRepository.service");
 const importService = require("./question.import.service");
+const quizLock = require("../proctoring/quizLock.service");
 
 /** Creating a "single question" is repository-only unless a quizId was supplied — mirrors how bulkCreateQuestions/importQuestions already attach their inserted questions via the QuizQuestion join table, which this path was missing entirely. */
 const attachIfQuizProvided = async (question, quizId) => {
@@ -59,6 +60,9 @@ const getQuestionsByQuizId = async (req, res, next) => {
 const createQuestion = async (req, res, next) => {
   try {
     const userId = req.user ? req.user.id : null;
+
+    // Checked first, so a refused attach does not leave a stray question behind.
+    await quizLock.assertQuizQuestionsUnlocked(req.body.quizId);
 
     // Repository creation
     const question = await questionRepositoryService.createQuestion(req.body, userId, req.user || null);

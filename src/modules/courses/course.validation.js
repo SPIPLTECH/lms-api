@@ -5,10 +5,15 @@ const courseExtraFields = {
   language: Joi.string().max(50).optional().allow(null, ""),
   tags: Joi.array().items(Joi.string().max(50)).optional(),
   certificatesEnabled: Joi.boolean().optional(),
+  certificateTitle: Joi.string().max(255).optional().allow(null, ""),
+  certificateDescription: Joi.string().max(1000).optional().allow(null, ""),
+  courseMemo: Joi.string().max(4000).optional().allow(null, ""),
+  certificateTemplate: Joi.object().optional().allow(null),
   discussionEnabled: Joi.boolean().optional(),
   sequentialLearning: Joi.boolean().optional(),
 
-  estimatedLearningHours: Joi.number().min(0).max(10000).optional().allow(null)
+  estimatedLearningHours: Joi.number().min(0).max(10000).optional().allow(null),
+  accessDurationDays: Joi.number().integer().min(1).max(3650).optional().allow(null)
 };
 
 const createCourseSchema = Joi.object({

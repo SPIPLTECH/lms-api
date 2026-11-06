@@ -4,9 +4,9 @@ const assert = require("node:assert");
 const courseService = require("../src/modules/courses/course.service");
 const prisma = require("../src/config/database");
 
-// validateCourseForPublish reports completeness warnings when a course is
-// published. Per CLAUDE.md, publish/unpublish are open to ADMIN and the owning
-// INSTRUCTOR; generic status changes (archive) stay ADMIN-only.
+// validateCourseForPublish reports completeness warnings when an ADMIN publishes
+// a course. An ADMIN or the course's own INSTRUCTOR may publish and unpublish it;
+// other status changes (archive, the admin status menu) are ADMIN-only.
 
 function stubCourse({ modules = [], status = "DRAFT" } = {}) {
   return async (args) => {
@@ -79,18 +79,17 @@ test("publishCourse returns no warnings for a complete course published by ADMIN
   assert.deepStrictEqual(result.publishWarnings, []);
 });
 
-test("the owning INSTRUCTOR can publish and unpublish their course", async (t) => {
+test("the course's own INSTRUCTOR can publish and unpublish it", async (t) => {
   stubWrites(t);
   prisma.course.findUnique = stubCourse({ modules: [] });
 
   const published = await courseService.publishCourse("course-1", "instructor-1", "INSTRUCTOR");
-  assert.ok(Array.isArray(published.publishWarnings));
-
-  prisma.course.findUnique = stubCourse({ modules: [], status: "PUBLISHED" });
-  await courseService.unpublishCourse("course-1", "instructor-1", "INSTRUCTOR");
+  assert.ok(Array.isArray(published.publishWarnings), "the owner gets the same completeness warnings");
+  const unpublished = await courseService.unpublishCourse("course-1", "instructor-1", "INSTRUCTOR");
+  assert.strictEqual(unpublished.status, "DRAFT");
 });
 
-test("publishCourse and unpublishCourse reject a non-owner INSTRUCTOR and a STUDENT with 403", async (t) => {
+test("another INSTRUCTOR and a STUDENT cannot publish or unpublish a course", async (t) => {
   stubWrites(t);
   prisma.course.findUnique = stubCourse({ modules: [] });
 
@@ -106,9 +105,9 @@ test("publishCourse and unpublishCourse reject a non-owner INSTRUCTOR and a STUD
   }
 });
 
-test("archiving stays ADMIN-only: INSTRUCTOR (even course owner) and STUDENT get 403", async (t) => {
+test("archiving stays ADMIN-only, even for the course's own INSTRUCTOR", async (t) => {
   stubWrites(t);
-  prisma.course.findUnique = stubCourse({ modules: [] });
+  prisma.course.findUnique = stubCourse({ modules: [], status: "PUBLISHED" });
 
   for (const role of ["INSTRUCTOR", "STUDENT"]) {
     await assert.rejects(
