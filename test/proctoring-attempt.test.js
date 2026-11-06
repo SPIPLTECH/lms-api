@@ -680,4 +680,106 @@ describe("proctored exam state", { skip: HAS_TEST_DB ? false : "TEST_DATABASE_UR
       assert.strictEqual((await begin(quiz, later)).status, 201);
     });
   });
+
+  describe("choosing to take it without proctoring", () => {
+    const optOut = (quiz, student) => call("POST", `/proctoring/quizzes/${quiz.id}/opt-out`, student);
+    const status = async (quiz, student) => (await call("GET", `/proctoring/quizzes/${quiz.id}/status`, student)).data;
+
+    test("the student is asked first", async () => {
+      const quiz = await h.makeQuiz(course, { proctoringEnabled: true });
+      const student = await newStudent();
+      const before = await status(quiz, student);
+      assert.strictEqual(before.canOptOut, true);
+      assert.strictEqual(before.optedOut, false);
+    });
+
+    test("declining makes it an ordinary quiz for that student only, and is recorded once", async () => {
+      const quiz = await h.makeQuiz(course, { proctoringEnabled: true, attempts: 2 });
+      const student = await newStudent();
+      const other = await newStudent();
+      const res = await optOut(quiz, student);
+      assert.strictEqual(res.status, 200, res.text);
+      assert.strictEqual(res.data.optedOut, true);
+      assert.strictEqual((await optOut(quiz, student)).status, 200, "asking twice changes nothing");
+      assert.strictEqual(await prisma.proctoringOptOut.count({ where: { quizId: quiz.id } }), 1);
+      assert.ok(await prisma.auditEvent.findFirst({ where: { userId: student.id, eventType: "PROCTORING_OPTED_OUT" } }));
+
+      const read = await call("GET", `/quizzes/${quiz.id}`, student);
+      assert.strictEqual(read.data.questions.length, 1);
+      assert.strictEqual(read.data.proctoringDeclined, true);
+      assert.deepStrictEqual((await call("GET", `/quizzes/${quiz.id}`, other)).data.questions, [], "another student still gets no questions");
+
+      const submitted = await call("POST", `/quizzes/${quiz.id}/submit`, student, { answers: [{ questionId: questionId(quiz), answer: "right" }] });
+      assert.strictEqual(submitted.status < 300, true, submitted.text);
+      const attempt = await prisma.quizAttempt.findFirst({ where: { quizId: quiz.id, studentId: student.studentId } });
+      assert.strictEqual(attempt.passed, true);
+      assert.strictEqual(await prisma.proctoredAttempt.count({ where: { quizId: quiz.id } }), 0);
+
+      const after = await status(quiz, student);
+      assert.strictEqual(after.optedOut, true);
+      assert.strictEqual(after.canOptOut, false);
+      assert.strictEqual(after.canStart, false);
+      assert.strictEqual(after.reason, "PROCTORING_DECLINED");
+      const proctored = await begin(quiz, student);
+      assert.strictEqual(proctored.status, 403);
+      assert.strictEqual(proctored.json.code, "PROCTORING_DECLINED");
+    });
+
+    test("after an earlier proctored exam the student is asked again", async () => {
+      const quiz = await h.makeQuiz(course, { proctoringEnabled: true, attempts: 3 });
+      const student = await newStudent();
+      const attemptId = await startedExam(quiz, student);
+      await call("POST", `/proctoring/attempts/${attemptId}/submit`, student);
+      assert.strictEqual((await status(quiz, student)).canOptOut, true);
+      assert.strictEqual((await optOut(quiz, student)).status, 200);
+      const read = await call("GET", `/quizzes/${quiz.id}`, student);
+      assert.strictEqual(read.data.questions.length, 1);
+      assert.strictEqual(read.data.attemptStatus.attemptsRemaining, 2, "the proctored attempt still counts");
+    });
+
+    test("a readiness check gives way to the choice and uses no attempt; a running exam does not", async () => {
+      const quiz = await h.makeQuiz(course, { proctoringEnabled: true, attempts: 3 });
+      const student = await newStudent();
+      const created = await begin(quiz, student);
+      assert.strictEqual(created.status, 201, created.text);
+      assert.strictEqual((await status(quiz, student)).canOptOut, true, "still offered before the exam starts");
+      assert.strictEqual((await optOut(quiz, student)).status, 200);
+      assert.strictEqual((await prisma.proctoredAttempt.findUnique({ where: { id: created.data.attemptId } })).status, "ABANDONED");
+      assert.strictEqual(await prisma.quizAttempt.count({ where: { quizId: quiz.id } }), 0);
+
+      const other = await newStudent();
+      await startedExam(quiz, other);
+      assert.strictEqual((await status(quiz, other)).canOptOut, false, "not offered once the exam has started");
+      const res = await optOut(quiz, other);
+      assert.strictEqual(res.status, 409);
+      assert.strictEqual(res.json.code, "EXAM_IN_PROGRESS");
+      assert.strictEqual(await prisma.proctoringOptOut.count({ where: { quizId: quiz.id, studentId: other.studentId } }), 0);
+    });
+
+    test("an exam ended by proctoring needs retake approval first; the retake then counts on either route", async () => {
+      const { finalizeAttempt } = require("../src/modules/proctoring/attempt.service");
+      const quiz = await h.makeQuiz(course, { proctoringEnabled: true, attempts: 1 });
+      const student = await newStudent();
+      const attemptId = await startedExam(quiz, student);
+      await finalizeAttempt(attemptId, { endReason: "TERMINATED", rule: "CONFIRMED_PROHIBITED_OBJECT", terminationReason: "Phone" });
+      assert.strictEqual((await status(quiz, student)).canOptOut, false);
+      const refused = await optOut(quiz, student);
+      assert.strictEqual(refused.status, 403);
+      assert.strictEqual(refused.json.code, "RETAKE_APPROVAL_REQUIRED");
+      const blocked = await call("POST", `/quizzes/${quiz.id}/submit`, student, { answers: [] });
+      assert.strictEqual(blocked.json.code, "PROCTORED_QUIZ_USE_SECURE_ROUTE");
+
+      await prisma.proctoringRetakeGrant.create({ data: { quizId: quiz.id, studentId: student.studentId, sourceAttemptId: attemptId, grantedById: owner.id } });
+      assert.strictEqual((await status(quiz, student)).canOptOut, true);
+      assert.strictEqual((await optOut(quiz, student)).status, 200);
+      const read = await call("GET", `/quizzes/${quiz.id}`, student);
+      assert.strictEqual(read.data.attemptStatus.attemptsRemaining, 1, "1 allowed + 1 approved retake - 1 used");
+      const submitted = await call("POST", `/quizzes/${quiz.id}/submit`, student, { answers: [{ questionId: questionId(quiz), answer: "right" }] });
+      assert.ok(submitted.status < 300, submitted.text);
+      const grant = await prisma.proctoringRetakeGrant.findUnique({ where: { sourceAttemptId: attemptId } });
+      assert.ok(grant.usedAt, "the approved retake is used");
+      const again = await call("POST", `/quizzes/${quiz.id}/submit`, student, { answers: [] });
+      assert.strictEqual(again.status, 403, "no attempt left after the retake");
+    });
+  });
 });

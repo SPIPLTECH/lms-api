@@ -148,6 +148,7 @@ model StudentProfile {
   quizProgresses        QuizProgress[]
   assignmentProgresses  AssignmentProgress[]
   proctoredAttempts     ProctoredAttempt[]
+  proctoringOptOuts     ProctoringOptOut[]
   user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -670,6 +671,7 @@ model Quiz {
   proctoringSetById String?
   proctoringSetAt   DateTime?
   proctoredAttempts ProctoredAttempt[]
+  proctoringOptOuts ProctoringOptOut[]
 
   @@index([moduleId])
   @@index([topicId])
@@ -1818,6 +1820,21 @@ model ProctoringConsent {
   acceptedAt       DateTime @default(now())
 
   @@index([userId, quizId])
+}
+
+/// A student's choice to take a proctored quiz without proctoring (scripts/proctoring/002_proctoring_opt_out.up.sql).
+/// Final for that quiz: the quiz is then an ordinary quiz for this student.
+model ProctoringOptOut {
+  id        String   @id @default(cuid())
+  quizId    String
+  studentId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  quiz    Quiz           @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, quizId])
 }
 
 model ProctoringEvent {

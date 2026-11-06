@@ -18,7 +18,7 @@ const { QUALIFYING_TAG } = require("../../utils/qualification");
 const { effectiveMaxAttempts, buildAttemptAllowance } = require("../../utils/attemptAllowance");
 const { choiceMatches } = require("../../utils/choiceAnswer");
 const quizLock = require("../proctoring/quizLock.service");
-const { proctoredResultLabel, resultStanding, wasEverProctored } = require("../proctoring/attemptStanding");
+const { hasOptedOut, proctoredResultLabel, resultStanding, retakeGrantCount, wasEverProctored, withRetakes } = require("../proctoring/attemptStanding");
 const ApiError = require("../../utils/ApiError");
 const { authError } = require("../../utils/authErrors");
 const { buildQuizWeakAreas, getCourseTestReview, notifyTestReviewUnlocked } = require("./testReview.service");
@@ -644,8 +644,13 @@ const getQuizById = async (
   // Read before the stripping below, because which attempt they are on is
   // what decides whether hints may be sent at all.
   const attemptsUsed = studentId ? await countAttemptsUsed(studentId, quizId) : 0;
+  // A student who chose to take this proctored quiz without proctoring sees it as an ordinary
+  // quiz, with the same allowance the exam route gives (approved retakes included).
+  const proctoringDeclined =
+    role === "STUDENT" && quiz.proctoringEnabled && !proctoredExam && (await hasOptedOut(studentId, quizId));
+  const extraAttempts = proctoringDeclined ? await retakeGrantCount(studentId, quizId) : 0;
   const attemptStatus = studentId
-    ? buildAttemptAllowance(effectiveMaxAttempts(quiz), attemptsUsed)
+    ? buildAttemptAllowance(withRetakes(effectiveMaxAttempts(quiz), extraAttempts), attemptsUsed)
     : undefined;
 
   // Hints are a qualifying-test affordance only, and only from the second
@@ -708,8 +713,9 @@ const getQuizById = async (
     ...(isStudentOrGuest ? quizFields : quiz),
     // Only for a proctored quiz, so other quizzes run no extra query.
     ...(!isStudentOrGuest && quiz.proctoringEnabled && { proctoringLocked: await quizLock.isQuizLocked(quizId) }),
-    // A proctored quiz's questions reach a student only through a valid attempt.
-    questions: isStudentOrGuest && quiz.proctoringEnabled && !proctoredExam ? [] : allQuestions,
+    // A proctored quiz's questions reach a student only through a valid attempt, or once they declined proctoring.
+    questions: isStudentOrGuest && quiz.proctoringEnabled && !proctoredExam && !proctoringDeclined ? [] : allQuestions,
+    ...(proctoringDeclined && { proctoringDeclined: true }),
     ...(isStudentOrGuest && { place: quizPlace(quiz) }),
     // Tells the attempt UI the answer key above is there to be checked
     // against, so it offers "Check Answer" — decided here, like hints.
@@ -1418,7 +1424,10 @@ const submitQuiz = async (
     throw error;
   }
 
-  if (quiz.proctoringEnabled && !proctored) {
+  // Taken without proctoring by this student's choice: an ordinary submit, with the exam route's allowance.
+  const proctoringDeclined = quiz.proctoringEnabled && !proctored && (await hasOptedOut(studentId, quizId));
+  const extraAttempts = proctoringDeclined ? await retakeGrantCount(studentId, quizId) : 0;
+  if (quiz.proctoringEnabled && !proctored && !proctoringDeclined) {
     throw new ApiError(409, "This quiz is proctored and can only be taken through its exam page.", "PROCTORED_QUIZ_USE_SECURE_ROUTE");
   }
 
@@ -1477,12 +1486,17 @@ const submitQuiz = async (
         attemptsUsed = 1;
       }
 
-      if (!proctored && !buildAttemptAllowance(effectiveMaxAttempts(quiz), attemptsUsed).canAttempt) {
+      if (!proctored && !buildAttemptAllowance(withRetakes(effectiveMaxAttempts(quiz), extraAttempts), attemptsUsed).canAttempt) {
         const error = new Error(
           `You have used all ${quiz.attempts} attempt${quiz.attempts === 1 ? "" : "s"} allowed for this quiz.`
         );
         error.statusCode = 403;
         throw error;
+      }
+
+      // An approved retake is used by this attempt, as beginning a proctored exam would use it.
+      if (proctoringDeclined) {
+        await tx.proctoringRetakeGrant.updateMany({ where: { quizId, studentId, usedAt: null }, data: { usedAt: new Date() } });
       }
 
       const createdAttempt = await tx.quizAttempt.create({
@@ -1852,14 +1866,17 @@ const getQuizResult = async (studentId, quizId, attemptId = null) => {
     throw new ApiError(409, "Finish your proctored exam before viewing results for this quiz.", "PROCTORED_EXAM_IN_PROGRESS");
   }
 
-  const allowance = buildAttemptAllowance(quiz ? effectiveMaxAttempts(quiz) : 0, history.length);
+  // On a proctored quiz approved retakes add attempts, so a key is not shown while one is left.
+  const extraAttempts = proctoring ? await retakeGrantCount(studentId, quizId) : 0;
+  const allowance = buildAttemptAllowance(quiz ? withRetakes(effectiveMaxAttempts(quiz), extraAttempts) : 0, history.length);
   // Decided against the student's standing across the WHOLE quiz, not the one
   // attempt being viewed: opening attempt 1 while attempt 2 is still to come
   // must not reveal what attempt 2 is about to ask.
   const revealAnswerKey = mayRevealAnswerKey({
     quiz,
-    // On a proctored quiz a pass can still be reviewed or retaken, so it reveals nothing.
-    passed: !quiz?.proctoringEnabled && history.some((a) => a.passed === true),
+    // On a proctored quiz a pass can still be reviewed or retaken, so it reveals nothing,
+    // unless this student took it without proctoring.
+    passed: (!quiz?.proctoringEnabled || (await hasOptedOut(studentId, quizId))) && history.some((a) => a.passed === true),
     canAttempt: allowance.canAttempt
   }) && !proctoring?.holdAnswerKey;
 

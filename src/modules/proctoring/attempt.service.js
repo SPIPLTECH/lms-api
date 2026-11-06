@@ -9,7 +9,7 @@ const { AUDIT_EVENTS, recordAuditEvent } = require("../audit/audit.service");
 const { isPlaybackHeldElsewhere } = require("../playback/playback.service");
 const { expireLeasesWhere } = require("../sessions/session.service");
 const quizService = require("../quizzes/quiz.service");
-const { APPEAL_WINDOW_MS, OPEN_STATUSES, canStillAppeal, studentOutcome } = require("./attemptStanding");
+const { APPEAL_WINDOW_MS, OPEN_STATUSES, canStillAppeal, hasOptedOut, studentOutcome, withRetakes } = require("./attemptStanding");
 const { DEFAULT_POLICY } = require("./rules");
 const { isAiHealthy } = require("./ai/health");
 const { assertAllowedBrowser, isAllowedBrowser } = require("./browserPolicy");
@@ -83,21 +83,23 @@ const findOpenAttempt = (quizId, userId) =>
  * everything, whatever allowance remains.
  */
 async function startStanding(quiz, studentId) {
-  const [used, terminated, grants] = await Promise.all([
+  const [used, terminated, grants, optedOut] = await Promise.all([
     prisma.quizAttempt.count({ where: { studentId, quizId: quiz.id } }),
     prisma.proctoredAttempt.findMany({ where: { studentId, quizId: quiz.id, status: "TERMINATED" }, select: { id: true } }),
     prisma.proctoringRetakeGrant.findMany({ where: { studentId, quizId: quiz.id }, select: { sourceAttemptId: true } }),
+    hasOptedOut(studentId, quiz.id),
   ]);
-  const max = effectiveMaxAttempts(quiz);
-  const allowance = buildAttemptAllowance(max > 0 ? max + grants.length : 0, used);
+  const allowance = buildAttemptAllowance(withRetakes(effectiveMaxAttempts(quiz), grants.length), used);
+  if (optedOut) return { allowance, refusal: "PROCTORING_DECLINED", optedOut };
   const granted = new Set(grants.map((grant) => grant.sourceAttemptId));
   if (terminated.some((attempt) => !granted.has(attempt.id))) {
-    return { allowance, refusal: "RETAKE_APPROVAL_REQUIRED" };
+    return { allowance, refusal: "RETAKE_APPROVAL_REQUIRED", optedOut };
   }
-  return { allowance, refusal: allowance.canAttempt ? null : "NO_ATTEMPTS_LEFT" };
+  return { allowance, refusal: allowance.canAttempt ? null : "NO_ATTEMPTS_LEFT", optedOut };
 }
 
 const REFUSALS = {
+  PROCTORING_DECLINED: "You chose to take this quiz without proctoring.",
   RETAKE_APPROVAL_REQUIRED: "This exam was ended by proctoring. Your instructor must approve a retake before you can start again.",
   NO_ATTEMPTS_LEFT: "You have used all the attempts allowed for this quiz.",
 };
@@ -165,7 +167,8 @@ async function getStatus(user, quizId, headers) {
   ]);
   const identityMatching = isIdentityMatchingEnabled();
   const { wordingVersion, text } = consentWording(identityMatching);
-  const reason = !(await isMonitoringAvailable()) ? "PROCTORING_UNAVAILABLE" : standing.refusal;
+  // Declining needs no monitoring, so it is offered, and reported, even while monitoring is down.
+  const reason = standing.optedOut ? standing.refusal : !(await isMonitoringAvailable()) ? "PROCTORING_UNAVAILABLE" : standing.refusal;
   return {
     quizId,
     courseId: quiz.courseId,
@@ -177,12 +180,53 @@ async function getStatus(user, quizId, headers) {
     ...standing.allowance,
     canStart: !open && !reason,
     reason: open ? null : reason,
+    // The student is asked before each attempt: with proctoring, or the same quiz without it.
+    // Asked whenever an attempt may begin, also after earlier proctored exams. An exam ended by
+    // proctoring still needs the instructor's retake approval first, on either route.
+    optedOut: standing.optedOut,
+    // A readiness check that has not started yet still gives way to it.
+    canOptOut: (!open || open.status === "PREPARING") && !standing.optedOut && !standing.refusal,
     deviceAllowed: isAllowedBrowser(headers),
     identityMatching,
     consent: { wordingVersion, text },
     attempt: open ? toView(open, user) : null,
     lastAttempt: last,
   };
+}
+
+/**
+ * POST /quizzes/:quizId/opt-out. The student takes this quiz without proctoring: it is an
+ * ordinary quiz for them from now on. Final for the quiz. Allowed whenever an attempt may begin,
+ * also after earlier proctored exams; never during one, and an exam ended by proctoring still
+ * needs the instructor's retake approval first.
+ */
+async function optOut(user, quizId) {
+  const studentId = await studentIdOf(user);
+  const quiz = await loadProctoredQuiz(studentId, quizId);
+  if (await hasOptedOut(studentId, quizId)) return { quizId, optedOut: true };
+
+  const open = await findOpenAttempt(quizId, user.id);
+  if (open?.status === "IN_PROGRESS") {
+    throw new ApiError(409, "Finish the exam you have in progress first.", "EXAM_IN_PROGRESS");
+  }
+  // A readiness check that never started uses no attempt: it gives way to the choice.
+  if (open) await abandonReadinessChecks([open.id]);
+
+  const { refusal } = await startStanding(quiz, studentId);
+  if (refusal) throw new ApiError(403, REFUSALS[refusal], refusal);
+
+  return prisma.$transaction(async (tx) => {
+    await tx.proctoringOptOut.upsert({
+      where: { studentId_quizId: { studentId, quizId } },
+      create: { quizId, studentId, userId: user.id },
+      update: {},
+    });
+    await recordAuditEvent(
+      { userId: user.id, sessionId: user.sessionId, deviceId: user.deviceId, eventType: AUDIT_EVENTS.PROCTORING_OPTED_OUT, metadata: { quizId, courseId: quiz.courseId } },
+      { client: tx }
+    );
+    return { quizId, optedOut: true };
+  });
 }
 
 /** Moves an open attempt to this device and issues a new token, which stops the previous one. */
@@ -248,6 +292,7 @@ async function createAttempt(user, quizId, { consent } = {}, headers = {}) {
       // Shared, so students starting together do not queue behind each other, while
       // an instructor's edit (which locks the row) waits and then sees the attempt.
       await tx.$queryRaw`SELECT "id" FROM "Quiz" WHERE "id" = ${quizId} FOR SHARE`;
+      if (await hasOptedOut(studentId, quizId, tx)) throw new ApiError(403, REFUSALS.PROCTORING_DECLINED, "PROCTORING_DECLINED");
       const created = await tx.proctoredAttempt.create({
         data: {
           quizId,
@@ -650,6 +695,7 @@ module.exports = {
   getAttemptResult,
   getStatus,
   isMonitoringAvailable,
+  optOut,
   resumeAttempt,
   saveAnswer,
   startAttempt,

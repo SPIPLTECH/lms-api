@@ -27,6 +27,7 @@ const student = [verifyToken, checkRole(["STUDENT"])];
 
 router.get("/quizzes/:quizId/status", student, proctoringAttemptRateLimiter, controller.getStatus);
 router.post("/quizzes/:quizId/attempts", student, proctoringAttemptRateLimiter, validate(createAttemptSchema), controller.createAttempt);
+router.post("/quizzes/:quizId/opt-out", student, proctoringAttemptRateLimiter, controller.optOut);
 router.get("/attempts/:attemptId", student, proctoringAttemptRateLimiter, controller.getAttempt);
 router.post("/attempts/:attemptId/resume", student, proctoringAttemptRateLimiter, controller.resumeAttempt);
 router.post("/attempts/:attemptId/start", student, proctoringAttemptRateLimiter, validate(startAttemptSchema), controller.startAttempt);

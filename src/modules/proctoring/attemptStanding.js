@@ -38,6 +38,24 @@ async function proctoredResultLabel(quizAttemptId) {
   return attempt ? { attemptId: attempt.id, outcome: studentOutcome(attempt) } : null;
 }
 
+/**
+ * Whether this student chose to take this proctored quiz without proctoring. Final for the
+ * quiz: it is then an ordinary quiz for them (questions, submit and results as usual).
+ */
+const hasOptedOut = async (studentId, quizId, client = prisma) =>
+  Boolean(
+    studentId &&
+      quizId &&
+      (await client.proctoringOptOut.findUnique({ where: { studentId_quizId: { studentId, quizId } }, select: { id: true } }))
+  );
+
+/** Approved retakes on a proctored quiz, used or not. Each adds one attempt, on either route. */
+const retakeGrantCount = (studentId, quizId, client = prisma) =>
+  studentId && quizId ? client.proctoringRetakeGrant.count({ where: { studentId, quizId } }) : 0;
+
+/** An attempt limit raised by approved retakes. 0 means unlimited and stays unlimited. */
+const withRetakes = (maxAttempts, grants) => (maxAttempts > 0 ? maxAttempts + grants : 0);
+
 const isExamInProgress = async (userId) =>
   Boolean(await prisma.proctoredAttempt.findFirst({ where: { userId, status: "IN_PROGRESS" }, select: { id: true } }));
 
@@ -63,4 +81,4 @@ async function resultStanding(studentId, quizId, now = new Date()) {
   };
 }
 
-module.exports = { OPEN_STATUSES, APPEAL_WINDOW_MS, canStillAppeal, isExamInProgress, proctoredResultLabel, resultStanding, studentOutcome, wasEverProctored };
+module.exports = { OPEN_STATUSES, APPEAL_WINDOW_MS, canStillAppeal, hasOptedOut, isExamInProgress, proctoredResultLabel, resultStanding, retakeGrantCount, studentOutcome, wasEverProctored, withRetakes };

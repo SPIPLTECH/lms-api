@@ -52,6 +52,7 @@ async function evidenceFile(req, res, next) {
 module.exports = {
   getStatus: respond((req) => attempts.getStatus(req.user, req.params.quizId, req.headers)),
   createAttempt: respond((req) => attempts.createAttempt(req.user, req.params.quizId, req.body, req.headers), 201),
+  optOut: respond((req) => attempts.optOut(req.user, req.params.quizId)),
   resumeAttempt: respond((req) => attempts.resumeAttempt(req.user, req.params.attemptId, req.headers)),
   startAttempt: respond((req) => attempts.startAttempt(req.user, req.params.attemptId, req.body)),
   getAttempt: respond((req) => attempts.getAttempt(req.user, req.params.attemptId)),
