@@ -5,8 +5,8 @@ const { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } = re
 
 /**
  * Where kept proctoring images live, behind one interface: put, get, delete. Drivers: "r2"
- * (a private bucket of its own, separate from the LMS bucket, NOT tested against real R2)
- * and "local" (development). Every object is encrypted here with AES-256-GCM before it
+ * (a private bucket: its own, or the LMS's private bucket by default; NOT tested against
+ * real R2) and "local" (development). Every object is encrypted here with AES-256-GCM before it
  * leaves the process, so neither driver ever holds a readable image.
  *
  * Format: "PGE1" | key id length (1 byte) | key id | iv (12) | tag (16) | ciphertext.
@@ -98,6 +98,22 @@ function createR2Store({ client, bucket, keys }) {
   };
 }
 
+/**
+ * R2 settings: PROCTORING_R2_* when set, otherwise the LMS's own private bucket (R2_ACCOUNT_ID,
+ * R2_PRIVATE_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY), so a shared account needs no copies.
+ * The key pair is taken as a pair, never one half from each. The public bucket is never used.
+ */
+function r2Settings(env = process.env) {
+  const ownKeys = Boolean(env.PROCTORING_R2_ACCESS_KEY_ID || env.PROCTORING_R2_SECRET_ACCESS_KEY);
+  return {
+    endpoint: env.PROCTORING_R2_ENDPOINT || (env.R2_ACCOUNT_ID ? `https://${env.R2_ACCOUNT_ID.trim().toLowerCase()}.r2.cloudflarestorage.com` : undefined),
+    bucket: env.PROCTORING_R2_BUCKET || env.R2_PRIVATE_BUCKET,
+    credentials: ownKeys
+      ? { accessKeyId: env.PROCTORING_R2_ACCESS_KEY_ID, secretAccessKey: env.PROCTORING_R2_SECRET_ACCESS_KEY }
+      : { accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY },
+  };
+}
+
 /** The store the settings name. Throws when they are incomplete, so an exam cannot begin without one. */
 function createConfiguredStore(env = process.env) {
   const keys = parseKeys(env.PROCTORING_EVIDENCE_KEYS);
@@ -107,14 +123,17 @@ function createConfiguredStore(env = process.env) {
     return createLocalStore({ dir: env.PROCTORING_LOCAL_STORE_DIR, keys });
   }
   if (driver === "r2") {
+    const settings = r2Settings(env);
     const client = new S3Client({
       region: "auto",
-      endpoint: env.PROCTORING_R2_ENDPOINT,
-      credentials: { accessKeyId: env.PROCTORING_R2_ACCESS_KEY_ID, secretAccessKey: env.PROCTORING_R2_SECRET_ACCESS_KEY },
+      endpoint: settings.endpoint,
+      // <host>/<bucket>/<key>, as the LMS's own R2 client (src/utils/r2Storage.js) does.
+      forcePathStyle: true,
+      credentials: settings.credentials,
     });
-    return createR2Store({ client, bucket: env.PROCTORING_R2_BUCKET, keys });
+    return createR2Store({ client, bucket: settings.bucket, keys });
   }
   throw new Error("PROCTORING_STORAGE_DRIVER must be r2 or local.");
 }
 
-module.exports = { createConfiguredStore, createLocalStore, createR2Store, decrypt, encrypt, parseKeys };
+module.exports = { createConfiguredStore, createLocalStore, createR2Store, decrypt, encrypt, parseKeys, r2Settings };

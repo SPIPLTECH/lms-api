@@ -13,7 +13,7 @@ const path = require("path");
 
 const { captureIntervalSeconds } = require("../src/config/proctoring");
 const { AnalysisQueue, intervalFor } = require("../src/modules/proctoring/aiQueue");
-const { createLocalStore, createR2Store, decrypt, encrypt, parseKeys } = require("../src/modules/proctoring/evidenceStore");
+const { createLocalStore, createR2Store, decrypt, encrypt, parseKeys, r2Settings } = require("../src/modules/proctoring/evidenceStore");
 const { AiProcessManager, resolveAiLaunch, startManagedAi } = require("../src/modules/proctoring/ai/processManager");
 
 const later = () => new Promise((resolve) => setImmediate(resolve));
@@ -203,6 +203,20 @@ describe("evidence stores", () => {
 
   test("R2 driver refuses to run without its own bucket", () => {
     assert.throws(() => createR2Store({ client: {}, bucket: "", keys }));
+  });
+
+  test("R2 settings fall back to the LMS's private bucket, never the public one", () => {
+    const shared = { R2_ACCOUNT_ID: "ABC123", R2_PRIVATE_BUCKET: "lms-private", R2_PUBLIC_BUCKET: "lms-public", R2_ACCESS_KEY_ID: "shared-id", R2_SECRET_ACCESS_KEY: "shared-secret" };
+    assert.deepStrictEqual(r2Settings(shared), {
+      endpoint: "https://abc123.r2.cloudflarestorage.com",
+      bucket: "lms-private",
+      credentials: { accessKeyId: "shared-id", secretAccessKey: "shared-secret" },
+    });
+    const own = r2Settings({ ...shared, PROCTORING_R2_ENDPOINT: "https://own.example", PROCTORING_R2_BUCKET: "evidence", PROCTORING_R2_ACCESS_KEY_ID: "own-id", PROCTORING_R2_SECRET_ACCESS_KEY: "own-secret" });
+    assert.deepStrictEqual(own, { endpoint: "https://own.example", bucket: "evidence", credentials: { accessKeyId: "own-id", secretAccessKey: "own-secret" } });
+    // Half a key pair is never completed from the other pair.
+    assert.deepStrictEqual(r2Settings({ ...shared, PROCTORING_R2_ACCESS_KEY_ID: "own-id" }).credentials, { accessKeyId: "own-id", secretAccessKey: undefined });
+    assert.strictEqual(r2Settings({}).bucket, undefined);
   });
 });
 
