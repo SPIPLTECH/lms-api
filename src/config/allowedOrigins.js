@@ -31,6 +31,8 @@
 const PRODUCTION_DEFAULT_ORIGINS = [
   "https://lms-web-demo.vercel.app",
   "https://otree-yzdp.onrender.com",
+  "https://www.orangetreelms.com",
+  "https://orangetreelms.com",
 ];
 
 const defaultAllowedOrigins = () =>

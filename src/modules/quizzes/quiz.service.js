@@ -21,6 +21,7 @@ const quizLock = require("../proctoring/quizLock.service");
 const { proctoredResultLabel, resultStanding, wasEverProctored } = require("../proctoring/attemptStanding");
 const ApiError = require("../../utils/ApiError");
 const { authError } = require("../../utils/authErrors");
+const { buildQuizWeakAreas, getCourseTestReview, notifyTestReviewUnlocked } = require("./testReview.service");
 
 
 // Tracks classifyAndApply() calls dispatched below fire-and-forget (never
@@ -576,6 +577,29 @@ const getQuizzes = async (
   }));
 };
 
+// What a student's quiz start screen names as the quiz's place in the course.
+const QUIZ_PLACE_INCLUDE = {
+  course: { select: { title: true } },
+  module: { select: { title: true } },
+  lesson: { select: { title: true } },
+  topic: { select: { lesson: { select: { title: true } } } },
+  subTopic: { select: { topic: { select: { lesson: { select: { title: true } } } } } },
+  concept: { select: { subTopic: { select: { topic: { select: { lesson: { select: { title: true } } } } } } } },
+};
+
+/** The lesson a quiz sits in, or the module or course for one placed above a lesson. */
+const quizPlace = (quiz) => {
+  const lesson =
+    quiz.lesson ||
+    quiz.topic?.lesson ||
+    quiz.subTopic?.topic?.lesson ||
+    quiz.concept?.subTopic?.topic?.lesson;
+  if (lesson?.title) return { level: "Lesson", title: lesson.title };
+  if (quiz.module?.title) return { level: "Module", title: quiz.module.title };
+  if (quiz.course?.title) return { level: "Course", title: quiz.course.title };
+  return null;
+};
+
 const getQuizById = async (
   quizId,
   role,
@@ -591,7 +615,8 @@ const getQuizById = async (
       quizQuestions: {
         orderBy: { order: "asc" },
         include: { question: true }
-      }
+      },
+      ...(role === "STUDENT" || role === "GUEST" ? QUIZ_PLACE_INCLUDE : {})
     }
   });
 
@@ -676,7 +701,7 @@ const getQuizById = async (
   // No student-facing code reads it: the attempt UI uses `questions`, and the
   // instructor views that do read it (the composer, the course sidebar) are
   // unaffected and already prefer `questions` anyway.
-  const { quizQuestions, ...quizFields } = quiz;
+  const { quizQuestions, course, module, lesson, topic, subTopic, concept, ...quizFields } = quiz;
   const isStudentOrGuest = role === "STUDENT" || role === "GUEST";
 
   return {
@@ -685,6 +710,7 @@ const getQuizById = async (
     ...(!isStudentOrGuest && quiz.proctoringEnabled && { proctoringLocked: await quizLock.isQuizLocked(quizId) }),
     // A proctored quiz's questions reach a student only through a valid attempt.
     questions: isStudentOrGuest && quiz.proctoringEnabled && !proctoredExam ? [] : allQuestions,
+    ...(isStudentOrGuest && { place: quizPlace(quiz) }),
     // Tells the attempt UI the answer key above is there to be checked
     // against, so it offers "Check Answer" — decided here, like hints.
     ...(isStudentOrGuest && { revealAnswers }),
@@ -1689,6 +1715,13 @@ const submitQuiz = async (
     } catch (error) {
       console.error("Error creating quiz submission notification:", error.message);
     }
+
+    // Test-series courses: tell the student once their review unlocks.
+    try {
+      await notifyTestReviewUnlocked(studentId, quiz.courseId, notificationService);
+    } catch (error) {
+      console.error("Error creating test review notification:", error.message);
+    }
   })()
     .catch((error) => {
       console.error(
@@ -1786,8 +1819,9 @@ const getQuizResult = async (studentId, quizId, attemptId = null) => {
     prisma.quiz.findUnique({
       where: { id: quizId },
       include: {
-        // Titles for the result page header.
-        course: { select: { id: true, title: true } },
+        // Titles for the result page header; testReview switches on the
+        // weak-area feedback (testReview.service.js).
+        course: { select: { id: true, title: true, testReview: true } },
         module: { select: { id: true, title: true } },
         quizQuestions: {
           orderBy: { order: "asc" },
@@ -1852,11 +1886,18 @@ const getQuizResult = async (studentId, quizId, attemptId = null) => {
           )
         : [];
 
+  // Test-series courses only: this attempt's weak areas, and — once every
+  // Final quiz in the course is submitted — the whole-course review.
+  const testReview = quiz ? buildQuizWeakAreas(quiz, questionAttempts) : null;
+  const courseReview = testReview ? await getCourseTestReview(studentId, quiz.courseId) : null;
+
   return {
     id: selected.id,
     quizId,
     studentId,
     answers: selected.answers,
+    testReview,
+    courseReview: courseReview?.isComplete ? courseReview : null,
     score: selected.score,
     totalMarks: selected.totalMarks,
     percentage: selected.percentage,

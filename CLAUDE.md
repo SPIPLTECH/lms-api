@@ -53,6 +53,8 @@ Only Admin can:
 - Publish or unpublish any course
 - Review submitted courses
 
+Admin can also publish/unpublish any course.
+
 ### INSTRUCTOR
 Instructor can:
 - Create courses and edit owned course content

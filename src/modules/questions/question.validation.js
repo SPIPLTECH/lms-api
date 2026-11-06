@@ -100,7 +100,7 @@ const bulkCreateQuestionsSchema = Joi.object({
   // only `options` is pinned to a validated shape, so a misconceptionTag
   // gets the same taxonomy check here as the single-question path.
   questions: Joi.array()
-    .items(Joi.object({ options: Joi.array().items(optionSchema).optional() }).unknown(true))
+    .items(Joi.object({ options: optionsValueSchema.optional() }).unknown(true))
     .min(1)
     .required()
 });

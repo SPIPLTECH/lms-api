@@ -224,8 +224,62 @@ const VALID_QUESTION_TYPES = [
     "TRUE_FALSE",
     "FILL_BLANK",
     "SHORT_ANSWER",
-    "LONG_ANSWER"
+    "LONG_ANSWER",
+    "ARRANGE_TOKENS",
+    "MATCH_PAIRS"
 ];
+
+// =====================================
+// Arrange Tokens and Match Pairs
+// =====================================
+
+// The option cells in file order: a list, one "|"-separated cell, or optionA /
+// option1 columns. Never split on a comma, which a token or a pair may hold.
+const optionCells = (row) => {
+    if (Array.isArray(row.options)) return row.options.map(optionDisplayText).map((c) => String(c).trim()).filter(Boolean);
+    if (typeof row.options === "string") return row.options.split("|").map((c) => c.trim()).filter(Boolean);
+    return normalizeOptions({ ...row, options: undefined }).map(optionDisplayText);
+};
+
+// The tokens in their correct order, which is also the key unless the row
+// names another order (a saved question may hold them in any order). Same
+// shape as QuestionForm and QuestionUploadParser.
+const normalizeArrangeTokens = (row) => {
+    const options = optionCells(row);
+    const key = Array.isArray(row.correctAnswer) && row.correctAnswer.length > 0 ? row.correctAnswer.map((t) => String(t).trim()) : options;
+    return { options, correctAnswer: key };
+};
+
+const isPlainObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+// { left: [], right: [] } with a left -> right key: from those two columns,
+// paired by position, or from cells written "left => right". A key the row
+// already holds is kept, because a saved right column may be in any order.
+const normalizeMatchPairs = (row) => {
+    let pairs = [];
+    if (isPlainObject(row.options) && Array.isArray(row.options.left) && Array.isArray(row.options.right)) {
+        pairs = row.options.left.map((left, i) => [String(left ?? "").trim(), String(row.options.right[i] ?? "").trim()]);
+    } else {
+        pairs = optionCells(row).map((cell) => {
+            const parts = cell.split(/=>|->/);
+            return parts.length === 2 ? [parts[0].trim(), parts[1].trim()] : [cell, ""];
+        });
+    }
+    const complete = pairs.filter(([left, right]) => left && right);
+    return {
+        options: { left: complete.map(([left]) => left), right: complete.map(([, right]) => right) },
+        correctAnswer:
+            isPlainObject(row.correctAnswer) && Object.keys(row.correctAnswer).length > 0
+                ? row.correctAnswer
+                : Object.fromEntries(complete),
+    };
+};
+
+// A type as a file may spell it ("match pairs", "Arrange-Tokens").
+const readQuestionType = (row) => {
+    const raw = row.questionType ?? row.type;
+    return raw ? String(raw).trim().toUpperCase().replace(/[\s-]+/g, "_") : undefined;
+};
 
 const VALID_DIFFICULTIES = ["EASY", "MEDIUM", "HARD"];
 
@@ -239,10 +293,18 @@ const VALID_DIFFICULTIES = ["EASY", "MEDIUM", "HARD"];
 const normalizeQuestion = (row, { answerByPosition = false } = {}) => {
     if (!row) row = {};
 
-    const options = normalizeOptions(row);
-    const correctAnswer = normalizeCorrectAnswer(row, options, { byPosition: answerByPosition });
+    let questionType = readQuestionType(row);
+    const structured =
+        questionType === "ARRANGE_TOKENS"
+            ? normalizeArrangeTokens(row)
+            : questionType === "MATCH_PAIRS"
+              ? normalizeMatchPairs(row)
+              : null;
+    const options = structured ? structured.options : normalizeOptions(row);
+    const correctAnswer = structured
+        ? structured.correctAnswer
+        : normalizeCorrectAnswer(row, options, { byPosition: answerByPosition });
 
-    let questionType = row.questionType ? String(row.questionType).trim().toUpperCase() : undefined;
     if (!questionType || !VALID_QUESTION_TYPES.includes(questionType)) {
         if (Array.isArray(correctAnswer) && correctAnswer.length > 1) {
             questionType = "MULTIPLE_CORRECT";
