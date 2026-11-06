@@ -1,9 +1,13 @@
 /**
  * QuestionUploadParser.js
- * Parsers and validators for Excel (.xlsx, .xls), CSV (.csv), and JSON (.json) bulk question uploads.
+ * Parsers and validators for Excel (.xlsx), CSV/TSV (.csv, .tsv), and JSON (.json) bulk question uploads.
  */
 
-const XLSX = require("xlsx");
+const path = require("path");
+const {
+  parseXlsxBuffer,
+  parseDelimitedBuffer,
+} = require("../../../utils/parsers/spreadsheetRows");
 const prisma = require("../../../config/database");
 const { findChoiceIndex } = require("../../../utils/choiceAnswer");
 
@@ -206,11 +210,11 @@ class QuestionUploadParser {
    * @param {string} filename 
    * @returns {Array<Object>} Raw rows
    */
-  static extractRawRows(buffer, filename) {
-    const ext = filename.toLowerCase();
+  static async extractRawRows(buffer, filename) {
+    const ext = path.extname(String(filename || "")).toLowerCase();
 
-    if (ext.endsWith(".json")) {
-      const text = buffer.toString("utf-8");
+    if (ext === ".json") {
+      const text = buffer.toString("utf-8").replace(/^\uFEFF/, "");
       try {
         const parsed = JSON.parse(text);
         return Array.isArray(parsed) ? parsed : [parsed];
@@ -219,14 +223,29 @@ class QuestionUploadParser {
       }
     }
 
-    // Excel or CSV
+    if (ext === ".xls" || ext === ".ods") {
+      const error = new Error(
+        `Legacy ${ext} spreadsheets are no longer supported for security reasons. Please save the file as .xlsx or .csv and re-upload.`
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
     try {
-      const workbook = XLSX.read(buffer, { type: "buffer" });
-      const firstSheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[firstSheetName];
-      const rows = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
-      return rows;
+      if (ext === ".csv") {
+        return parseDelimitedBuffer(buffer, ",");
+      }
+      if (ext === ".tsv") {
+        return parseDelimitedBuffer(buffer, "\t");
+      }
+      if (ext === ".xlsx") {
+        return await parseXlsxBuffer(buffer);
+      }
+      throw new Error(
+        `Unsupported question upload format "${ext || "unknown"}". Upload .xlsx, .csv, .tsv, or .json.`
+      );
     } catch (err) {
+      if (err.statusCode) throw err;
       throw new Error(`Failed to parse file: ${err.message}`);
     }
   }
@@ -240,7 +259,7 @@ class QuestionUploadParser {
    * @returns {Promise<Object>} Summary report + validQuestions list
    */
   static async parseAndValidate(buffer, filename, userId, user = null) {
-    const rawRows = this.extractRawRows(buffer, filename);
+    const rawRows = await this.extractRawRows(buffer, filename);
 
     // Optional per-row course/module binding — the bulk counterpart of the
     // Course and Module dropdowns on the single-question form.

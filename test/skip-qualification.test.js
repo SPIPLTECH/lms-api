@@ -24,8 +24,9 @@ const prisma = require("../src/config/database");
 //  2. Passing is the existing deterministic decision (QuizAttempt.passed,
 //     against the quiz's own passingScore) — never a fresh judgement here,
 //     and never an LLM's.
-//  3. A pass makes the target skippable-past WITHOUT making it "completed":
-//     progression treats them alike, reporting keeps them apart.
+//  3. A pass completes the target's whole subtree (the roll-up does that; see
+//     qualified-subtree-completion.test.js), and `qualified` still records that
+//     it was a skip, not study.
 //  4. A fail unlocks nothing and sends the student back to real content.
 //  5. Locking is positional: everything after the first unfinished node is
 //     locked, and finished/qualified material stays open for review.
@@ -48,6 +49,30 @@ const node = (id, title, overrides = {}) => ({
   ...overrides
 });
 
+/**
+ * A leaf node holding one item, as the roll-up reports it. The path reads its
+ * locks off the learning sequence, which is built from `items`. An item is
+ * complete with its node, and under a qualified parent whatever the node says:
+ * the roll-up completes a skipped subtree. A node with nothing to track has no
+ * items.
+ */
+const leaf = (leafNode, parentQualified = false) => ({
+  ...leafNode,
+  items:
+    leafNode.applicable === false
+      ? []
+      : [
+          {
+            contentId: `${leafNode.id}-item`,
+            kind: "CONTENT",
+            type: "VIDEO",
+            title: leafNode.title,
+            order: 1,
+            completed: parentQualified || leafNode.satisfied === true || leafNode.completed === true
+          }
+        ]
+});
+
 /** Module 1 { Lesson 1 [Topic 1, Topic 2], Lesson 2 }, Module 2 { Lesson 3 }. */
 const buildHierarchy = (overrides = {}) => ({
   id: "course-1",
@@ -59,18 +84,18 @@ const buildHierarchy = (overrides = {}) => ({
         {
           ...node("l1", "Lesson 1"),
           topics: [
-            { ...node("t1", "Variables"), ...(overrides.t1 || {}) },
-            { ...node("t2", "Data Types"), ...(overrides.t2 || {}) }
+            leaf({ ...node("t1", "Variables"), ...(overrides.t1 || {}) }, overrides.l1?.qualified),
+            leaf({ ...node("t2", "Data Types"), ...(overrides.t2 || {}) }, overrides.l1?.qualified)
           ],
           ...(overrides.l1 || {})
         },
-        { ...node("l2", "Lesson 2"), topics: [], ...(overrides.l2 || {}) }
+        leaf({ ...node("l2", "Lesson 2"), topics: [], ...(overrides.l2 || {}) })
       ],
       ...(overrides.m1 || {})
     },
     {
       ...node("m2", "Module 2"),
-      lessons: [{ ...node("l3", "Lesson 3"), topics: [], ...(overrides.l3 || {}) }],
+      lessons: [leaf({ ...node("l3", "Lesson 3"), topics: [], ...(overrides.l3 || {}) })],
       ...(overrides.m2 || {})
     }
   ]
@@ -286,10 +311,9 @@ test("learning path — qualifying out of a topic unlocks what follows it, and o
 });
 
 test("learning path — a skipped lesson's own topics stop blocking what follows it", () => {
-  // The point of skipping Lesson 1 is not having to do its topics. Those
-  // topics therefore stay incomplete forever — and if they still counted as
-  // outstanding work they would block Lesson 2, and the skip would have
-  // bought the student nothing at all.
+  // The point of skipping Lesson 1 is not having to do its topics. If their
+  // items still counted as outstanding work they would block Lesson 2, and
+  // the skip would have bought the student nothing at all.
   const path = buildLearningPath(
     buildHierarchy({
       m1: { completed: true, satisfied: true },
@@ -367,7 +391,13 @@ test("summarizeWeakConcepts — an untagged question is not invented into a conc
   assert.deepStrictEqual(weak, [], "no placeholder concepts in a student-facing report");
 });
 
-test("buildQualificationOutcome — a pass qualifies and recommends nothing", async () => {
+test("buildQualificationOutcome — a pass qualifies and recommends nothing", async (t) => {
+  const originals = { topicFindUnique: prisma.topic.findUnique };
+  t.after(() => {
+    prisma.topic.findUnique = originals.topicFindUnique;
+  });
+  prisma.topic.findUnique = async () => ({ title: "Variables" });
+
   const outcome = await buildQualificationOutcome(
     { quizTag: QUALIFYING_TAG, topicId: "t1", passingScore: 70 },
     {

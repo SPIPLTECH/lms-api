@@ -11,6 +11,30 @@ const optionCompareText = (opt) => {
     return String(opt);
 };
 
+const sameTokens = (a, b) => JSON.stringify([...a].map(String).sort()) === JSON.stringify([...b].map(String).sort());
+
+const arrangeTokensErrors = ({ options, correctAnswer }) => {
+    if (!Array.isArray(options) || options.length < 2) {
+        return ["Arrange Tokens questions need at least 2 tokens, given in their correct order."];
+    }
+    return Array.isArray(correctAnswer) && sameTokens(options, correctAnswer)
+        ? []
+        : ["The answer order must use each token exactly once."];
+};
+
+const matchPairsErrors = ({ options, correctAnswer }) => {
+    const left = options && !Array.isArray(options) ? options.left : null;
+    const right = options && !Array.isArray(options) ? options.right : null;
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length < 2 || left.length !== right.length) {
+        return ['Match Pairs questions need at least 2 complete pairs, as options { "left": [...], "right": [...] } or "left => right".'];
+    }
+    if (new Set(left).size !== left.length) {
+        return ["Each left-hand item must be different, or the pairs can't be told apart."];
+    }
+    const key = correctAnswer && typeof correctAnswer === "object" ? correctAnswer : {};
+    return left.every((item) => right.includes(key[item])) ? [] : ["Every left-hand item must be paired with a right-hand item."];
+};
+
 const validateQuestion = (question) => {
     const errors = [];
 
@@ -28,9 +52,12 @@ const validateQuestion = (question) => {
 
     const qType = question.questionType ? String(question.questionType).toUpperCase() : "MCQ";
     const isChoiceType = CHOICE_QUESTION_TYPES.includes(qType) || (!question.questionType && Array.isArray(question.options) && question.options.length > 0);
+    const structuredErrors = qType === "ARRANGE_TOKENS" ? arrangeTokensErrors : qType === "MATCH_PAIRS" ? matchPairsErrors : null;
 
     // Options
-    if (question.options !== undefined && question.options !== null && !Array.isArray(question.options)) {
+    if (structuredErrors) {
+        errors.push(...structuredErrors(question));
+    } else if (question.options !== undefined && question.options !== null && !Array.isArray(question.options)) {
         errors.push("Options must be an array.");
     } else if (isChoiceType) {
         if (!Array.isArray(question.options)) {
@@ -50,8 +77,10 @@ const validateQuestion = (question) => {
         }
     }
 
-    // Correct Answer
-    if (
+    // Correct Answer (the check above covers the two structured types)
+    if (structuredErrors) {
+        // Nothing more to check.
+    } else if (
         question.correctAnswer === undefined ||
         question.correctAnswer === null ||
         (typeof question.correctAnswer === "string" && !question.correctAnswer.trim()) ||

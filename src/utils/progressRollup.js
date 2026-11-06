@@ -196,8 +196,10 @@ async function loadPublishedHierarchy(client, courseId) {
     client.course.findUnique({ where: { id: courseId }, select: { id: true, title: true, status: true, language: true, sequentialLearning: true } }),
     client.module.findMany({ ...published('module'), select: CONTAINER_SELECT }),
     client.lesson.findMany({ ...published('lesson'), select: { ...CONTAINER_SELECT, moduleId: true } }),
-    client.topic.findMany({ ...published('topic'), select: { ...CONTAINER_SELECT, lessonId: true } }),
-    client.subTopic.findMany({ ...published('subTopic'), select: { ...CONTAINER_SELECT, topicId: true } }),
+    // description: shown as the Topic's "About" in the player's topic picker (board-paper courses).
+    client.topic.findMany({ ...published('topic'), select: { ...CONTAINER_SELECT, description: true, lessonId: true } }),
+    // description: a SubTopic's question-type tag in board-paper courses (utils/questionTypes.js).
+    client.subTopic.findMany({ ...published('subTopic'), select: { ...CONTAINER_SELECT, description: true, topicId: true } }),
     client.concept.findMany({ ...published('concept'), select: { ...CONTAINER_SELECT, subTopicId: true } }),
     client.content.findMany({
       where: {
@@ -565,21 +567,26 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
   // counted as completed, so the skipped node, its items and every percentage
   // above it read "done" rather than "0 of N". Derived here on every roll-up
   // rather than written to ContentProgress, so no item-level activity is
-  // fabricated; `qualified` still records that it was a skip.
-  const completeSubtree = (entity) => {
-    entity.contents.forEach((c) => completedContentSet.add(c.id));
+  // fabricated; `qualified` still records that it was a skip. qualifiedOutAt is
+  // that record per item: the skipped items, with when the student qualified.
+  const qualifiedOutAt = new Map();
+  const completeSubtree = (entity, qualifiedAt) => {
+    entity.contents.forEach((c) => {
+      completedContentSet.add(c.id);
+      qualifiedOutAt.set(c.id, qualifiedAt);
+    });
     for (const child of entity.topics || entity.subTopics || entity.concepts || []) {
-      completeSubtree(child);
+      completeSubtree(child, qualifiedAt);
     }
   };
   for (const mod of course.modules) {
     for (const lesson of mod.lessons) {
       if (qualifiedLessonIds.has(lesson.id)) {
-        completeSubtree(lesson);
+        completeSubtree(lesson, qualifiedLessonIds.get(lesson.id));
         continue;
       }
       for (const topic of lesson.topics) {
-        if (qualifiedTopicIds.has(topic.id)) completeSubtree(topic);
+        if (qualifiedTopicIds.has(topic.id)) completeSubtree(topic, qualifiedTopicIds.get(topic.id));
       }
     }
   }
@@ -802,7 +809,10 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       visited: visitedContentSet.has(content.id),
       visitedAt: state?.visitedAt ?? null,
       completed: completedContentSet.has(content.id),
-      completedAt: state?.completedAt ?? null
+      // Work the student really did keeps its own date; a skipped item
+      // completed when they qualified.
+      completedAt: state?.completedAt ?? qualifiedOutAt.get(content.id) ?? null,
+      qualifiedOut: qualifiedOutAt.has(content.id)
     };
 
     if (content.type === 'QUIZ') {
@@ -876,6 +886,8 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       id: entity.id,
       title: entity.title,
       order: entity.order,
+      // Only Topics and SubTopics load a description (the learning sequence reads it).
+      ...(entity.description !== undefined ? { description: entity.description } : {}),
       ...direct,
       ...(childrenKey ? { [childrenKey]: childrenTree } : {}),
       totalItems,

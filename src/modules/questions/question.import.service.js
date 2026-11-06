@@ -53,24 +53,24 @@ const parseFile = async (file) => {
 const PREVIEW_MAX_FILE_BYTES = 5 * 1024 * 1024;
 const PREVIEW_MAX_QUESTIONS = 200;
 
-// The composer's quiz editor authors single- and multiple-choice questions
-// (see lms_web_demo lib/questionType.js). A True/False question is a
-// single-choice question with "True" and "False" options; every other type
-// has no editor there yet, so it is reported rather than imported.
+// The types the composer's quiz editor authors (see lms_web_demo
+// lib/questionType.js). A True/False question is a single-choice question with
+// "True" and "False" options; every other type has no editor there yet, so it
+// is reported rather than imported.
 const COMPOSER_TYPES = {
     MCQ: "MCQ_SINGLE",
     MCQ_SINGLE: "MCQ_SINGLE",
     TRUE_FALSE: "MCQ_SINGLE",
     MULTIPLE_CORRECT: "MCQ_MULTI",
     MCQ_MULTI: "MCQ_MULTI",
+    ARRANGE_TOKENS: "ARRANGE_TOKENS",
+    MATCH_PAIRS: "MATCH_PAIRS",
 };
 
 const TYPE_NAMES = {
     SHORT_ANSWER: "Short-answer",
     LONG_ANSWER: "Long-answer",
     FILL_BLANK: "Fill-in-the-blank",
-    ARRANGE_TOKENS: "Arrange-tokens",
-    MATCH_PAIRS: "Match-pairs",
     SELF_ASSESSMENT: "Self-assessment",
 };
 
@@ -99,7 +99,7 @@ const toPreviewItem = (row, index) => {
     const questionType = COMPOSER_TYPES[q.questionType] || null;
     if (!questionType) {
         const name = TYPE_NAMES[q.questionType] || q.questionType;
-        problems.push(`${name} questions can't be imported here yet. Only single- and multiple-choice questions can.`);
+        problems.push(`${name} questions can't be imported here yet. Single choice, multiple choice, Arrange Tokens and Match Pairs can.`);
     }
 
     let correctAnswer = q.correctAnswer;
@@ -115,8 +115,9 @@ const toPreviewItem = (row, index) => {
         row: index + 1,
         question: q.question,
         questionType: questionType || q.questionType,
-        options: (q.options || []).map(optionText),
-        optionExplanations: (q.options || []).map(optionExplanation),
+        // Match Pairs keeps its { left, right } columns.
+        options: Array.isArray(q.options) ? q.options.map(optionText) : q.options || [],
+        optionExplanations: Array.isArray(q.options) ? q.options.map(optionExplanation) : [],
         correctAnswer,
         explanation: q.explanation || "",
         marks: q.marks || 1,

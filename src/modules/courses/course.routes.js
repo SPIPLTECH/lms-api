@@ -121,10 +121,8 @@ router.patch(
   "/:courseId/status",
   verifyToken,
   checkRole([
-    "ADMIN",
-    "INSTRUCTOR"
+    "ADMIN"
   ]),
-  verifyCourseOwnership,
   validate(updateCourseStatusSchema),
   controller.updateStatus
 );

@@ -3,6 +3,9 @@ dns.setDefaultResultOrder("ipv4first");
 
 require("dotenv").config();
 
+const { validateJwtSecrets } = require("./src/config/jwtSecrets");
+validateJwtSecrets();
+
 const http = require("http");
 const os = require("os");
 

@@ -41,7 +41,23 @@ router.get(
   controller.getMyQuizSubmissions
 );
 
-router.get("/:quizId/result", verifyToken, requireContentAccess, controller.getQuizResult);
+// The signed-in student's test-series review for one course (null data when
+// the course has none). Before GET /:quizId for the same reason as above.
+router.get(
+  "/test-review/:courseId",
+  verifyToken,
+  checkRole(["STUDENT"]),
+  requireContentAccess,
+  controller.getCourseTestReview
+);
+
+router.get(
+  "/:quizId/result",
+  verifyToken,
+  checkRole(["STUDENT"]),
+  requireContentAccess,
+  controller.getQuizResult
+);
 
 router.get(
   "/:quizId",
@@ -80,6 +96,7 @@ router.delete(
 router.post(
   "/:quizId/submit",
   verifyToken,
+  checkRole(["STUDENT"]),
   requireContentAccess,
   validate(submitQuizSchema),
   controller.submitQuiz

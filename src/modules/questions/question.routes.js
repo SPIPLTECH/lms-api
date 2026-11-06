@@ -6,7 +6,7 @@ const controller = require("./question.controller");
 const verifyToken = require("../../middleware/auth.middleware");
 const checkRole = require("../../middleware/role.middleware");
 const validate = require("../../middleware/joiValidation.middleware");
-const { importUpload } = require("../../middleware/upload.middleware");
+const { importUpload, questionBufferUpload, validateUploadedFileSignature } = require("../../middleware/upload.middleware");
 const requireContentAccess = require("../../middleware/contentAccess.middleware");
 const {
   createQuestionSchema,
@@ -14,14 +14,8 @@ const {
   bulkCreateQuestionsSchema
 } = require("./question.validation");
 
-// Multer memory storage for handling Excel, CSV, JSON file upload buffers
-const storage = multer.memoryStorage();
-const upload = multer({
-  storage,
-  limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB
-  },
-});
+// Question repository uploads use the strict allow-list & 20MB buffer cap
+const upload = questionBufferUpload;
 
 // =========================
 // Question Repository Routes
@@ -42,6 +36,7 @@ router.post(
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
   upload.single("file"),
+  validateUploadedFileSignature,
   controller.uploadQuestions
 );
 
@@ -72,6 +67,7 @@ router.post(
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
   importUpload.single("file"),
+  validateUploadedFileSignature,
   controller.importQuestionsFile
 );
 
@@ -83,6 +79,7 @@ router.post(
   verifyToken,
   checkRole(["ADMIN", "INSTRUCTOR"]),
   importUpload.single("file"),
+  validateUploadedFileSignature,
   controller.previewImportFile
 );
 
