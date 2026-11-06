@@ -199,8 +199,10 @@ async function loadPublishedHierarchy(client, courseId) {
     client.course.findUnique({ where: { id: courseId }, select: { id: true, title: true, status: true, language: true, sequentialLearning: true, certificatesEnabled: true, courseMemo: true, certificateTitle: true, certificateTemplate: true } }),
     client.module.findMany({ ...published('module'), select: CONTAINER_SELECT }),
     client.lesson.findMany({ ...published('lesson'), select: { ...CONTAINER_SELECT, moduleId: true } }),
-    client.topic.findMany({ ...published('topic'), select: { ...CONTAINER_SELECT, lessonId: true } }),
-    client.subTopic.findMany({ ...published('subTopic'), select: { ...CONTAINER_SELECT, topicId: true } }),
+    // description: shown as the Topic's "About" in the player's topic picker (board-paper courses).
+    client.topic.findMany({ ...published('topic'), select: { ...CONTAINER_SELECT, description: true, lessonId: true } }),
+    // description: a SubTopic's question-type tag in board-paper courses (utils/questionTypes.js).
+    client.subTopic.findMany({ ...published('subTopic'), select: { ...CONTAINER_SELECT, description: true, topicId: true } }),
     client.concept.findMany({ ...published('concept'), select: { ...CONTAINER_SELECT, subTopicId: true } }),
     client.content.findMany({
       where: {
@@ -935,6 +937,8 @@ async function computeCourseProgress(studentId, courseId, tx = null, options = {
       id: entity.id,
       title: entity.title,
       order: entity.order,
+      // Only Topics and SubTopics load a description (the learning sequence reads it).
+      ...(entity.description !== undefined ? { description: entity.description } : {}),
       ...direct,
       ...(childrenKey ? { [childrenKey]: childrenTree } : {}),
       totalItems,

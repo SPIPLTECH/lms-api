@@ -357,6 +357,10 @@ test("D: a qualifying retry is never confused with an ordinary quiz retry", asyn
   assert.ok(!actions.includes(NEXT_ACTION.RETRY_QUIZ), "the generic retry never applies to a qualifying test");
 });
 
+// The path reads its locks off the learning sequence, which is built from the
+// roll-up's `items`: a fixture with none has no steps, so nothing can lock.
+const videoItem = (contentId, completed) => ({ contentId, kind: "CONTENT", type: "VIDEO", title: contentId, order: 1, completed });
+
 test("D: content stays locked while the qualifying test is unpassed", async (t) => {
   const hierarchy = {
     modules: [
@@ -364,10 +368,10 @@ test("D: content stays locked while the qualifying test is unpassed", async (t) 
         id: "m1", title: "Module 1", completed: false, satisfied: false,
         lessons: [
           { id: "l1", title: "Lesson 1", completed: false, satisfied: false, qualified: false, topics: [
-            { id: "t1", title: "Topic 1", completed: false, satisfied: false, qualified: false }
+            { id: "t1", title: "Topic 1", completed: false, satisfied: false, qualified: false, items: [videoItem("t1-video", false)] }
           ] },
           { id: "l2", title: "Lesson 2", completed: false, satisfied: false, qualified: false, topics: [
-            { id: "t2", title: "Topic 2", completed: false, satisfied: false, qualified: false }
+            { id: "t2", title: "Topic 2", completed: false, satisfied: false, qualified: false, items: [videoItem("t2-video", false)] }
           ] }
         ]
       }
@@ -851,11 +855,11 @@ test("sequential: completion unlocks the next item, and only the next", async ()
         id: "m1", title: "M1", completed: false, satisfied: false,
         lessons: [
           { id: "l1", title: "L1", completed: true, satisfied: true, qualified: false, topics: [
-            { id: "t1", title: "T1", completed: true, satisfied: true, qualified: false }
+            { id: "t1", title: "T1", completed: true, satisfied: true, qualified: false, items: [videoItem("t1-video", true)] }
           ] },
           { id: "l2", title: "L2", completed: false, satisfied: false, qualified: false, topics: [
-            { id: "t2", title: "T2", completed: false, satisfied: false, qualified: false },
-            { id: "t3", title: "T3", completed: false, satisfied: false, qualified: false }
+            { id: "t2", title: "T2", completed: false, satisfied: false, qualified: false, items: [videoItem("t2-video", false)] },
+            { id: "t3", title: "T3", completed: false, satisfied: false, qualified: false, items: [videoItem("t3-video", false)] }
           ] }
         ]
       }

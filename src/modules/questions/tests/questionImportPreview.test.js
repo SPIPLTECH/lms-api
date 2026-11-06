@@ -126,3 +126,67 @@ test("files over 5 MB are refused before parsing", async () => {
   await assert.rejects(previewFile(file), /larger than 5 MB/);
   assert.equal(fs.existsSync(file.path), false);
 });
+
+test("JSON preview: Arrange Tokens and Match Pairs arrive whole and ready", async () => {
+  const json = JSON.stringify([
+    { question: "Order the tokens", type: "ARRANGE_TOKENS", options: ["print", "(", "x", ")"], marks: 2 },
+    { question: "Match capitals", type: "MATCH_PAIRS", options: { left: ["India", "Japan"], right: ["New Delhi", "Tokyo"] }, marks: 3, difficulty: "EASY" },
+    { question: "One token", type: "ARRANGE_TOKENS", options: ["only"] },
+    { question: "One pair", type: "MATCH_PAIRS", options: { left: ["a"], right: ["b"] } },
+    { question: "Repeated left", type: "MATCH_PAIRS", options: { left: ["a", "a"], right: ["b", "c"] } },
+    { question: "Pairs as a list", type: "MATCH_PAIRS", options: ["a => 1", "b -> 2"] },
+    { question: "Wrong order key", type: "ARRANGE_TOKENS", options: ["a", "b"], correctAnswer: ["a", "z"] },
+  ]);
+
+  const { questions, summary } = await previewFile(upload("mixed.json", json));
+  const [tokens, pairs, oneToken, onePair, repeated, listed, wrongKey] = questions;
+
+  assert.deepEqual(summary, { total: 7, ready: 3, withProblems: 4 });
+  assert.deepEqual(
+    [tokens.questionType, tokens.options, tokens.correctAnswer, tokens.marks, tokens.problems],
+    ["ARRANGE_TOKENS", ["print", "(", "x", ")"], ["print", "(", "x", ")"], 2, []]
+  );
+  assert.deepEqual(
+    [pairs.questionType, pairs.options, pairs.correctAnswer, pairs.marks, pairs.problems],
+    ["MATCH_PAIRS", { left: ["India", "Japan"], right: ["New Delhi", "Tokyo"] }, { India: "New Delhi", Japan: "Tokyo" }, 3, []]
+  );
+  assert.match(oneToken.problems.join(" "), /at least 2 tokens/);
+  assert.match(onePair.problems.join(" "), /at least 2 complete pairs/);
+  assert.match(repeated.problems.join(" "), /must be different/);
+  assert.deepEqual([listed.options, listed.correctAnswer, listed.problems], [{ left: ["a", "b"], right: ["1", "2"] }, { a: "1", b: "2" }, []]);
+  assert.match(wrongKey.problems.join(" "), /each token exactly once/);
+});
+
+test("CSV preview: a type column brings Arrange Tokens and Match Pairs in from option columns", async () => {
+  const csv = [
+    "question,type,option1,option2,option3,marks",
+    '"Order steps",ARRANGE_TOKENS,"DNS, then TCP",Request,Response,2',
+    '"Match codes",match pairs,200 => OK,404 => Not Found,,2',
+    '"Plain choice",,One,Two,,1',
+  ].join("\n");
+
+  const { questions } = await previewFile(upload("mixed.csv", csv));
+  const [tokens, pairs, plain] = questions;
+
+  assert.deepEqual([tokens.questionType, tokens.options, tokens.problems], ["ARRANGE_TOKENS", ["DNS, then TCP", "Request", "Response"], []]);
+  assert.deepEqual([pairs.questionType, pairs.correctAnswer, pairs.problems], ["MATCH_PAIRS", { 200: "OK", 404: "Not Found" }, []]);
+  assert.equal(plain.questionType, "MCQ_SINGLE");
+});
+
+test("saving keeps the types and shapes: normalizing twice changes nothing, and a saved key survives", () => {
+  const saved = { question: "Q", questionType: "MATCH_PAIRS", options: { left: ["a", "b"], right: ["2", "1"] }, correctAnswer: { a: "1", b: "2" } };
+  const once = normalizeQuestion(saved);
+  assert.deepEqual([once.questionType, once.options, once.correctAnswer], ["MATCH_PAIRS", saved.options, saved.correctAnswer]);
+  assert.deepEqual(normalizeQuestion(once).correctAnswer, saved.correctAnswer);
+
+  const tokens = normalizeQuestion({ question: "T", questionType: "ARRANGE_TOKENS", options: ["b", "a"], correctAnswer: ["a", "b"] });
+  assert.deepEqual([tokens.questionType, tokens.options, tokens.correctAnswer], ["ARRANGE_TOKENS", ["b", "a"], ["a", "b"]]);
+});
+
+test("the bulk save route accepts Match Pairs' columns", () => {
+  const { bulkCreateQuestionsSchema } = require("../question.validation");
+  const { error } = bulkCreateQuestionsSchema.validate({
+    questions: [{ question: "Q", questionType: "MATCH_PAIRS", options: { left: ["a", "b"], right: ["1", "2"] }, correctAnswer: { a: "1", b: "2" } }],
+  });
+  assert.equal(error, undefined);
+});

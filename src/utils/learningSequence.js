@@ -39,6 +39,7 @@
  */
 
 const { completionHint } = require("./itemCompletion");
+const { parseQuestionType } = require("./questionTypes");
 
 const CHILD_KEY = { COURSE: "modules", MODULE: "lessons", LESSON: "topics", TOPIC: "subTopics", SUBTOPIC: "concepts", CONCEPT: null };
 const CHILD_KIND = { COURSE: "MODULE", MODULE: "LESSON", LESSON: "TOPIC", TOPIC: "SUBTOPIC", SUBTOPIC: "CONCEPT" };
@@ -182,6 +183,11 @@ function buildLearningSequence(hierarchy, { bodies = null, unlockAll = false } =
       id: node?.id ?? null,
       title: node?.title ?? null,
       order: node?.order ?? null,
+      // Board-paper courses: the SubTopic's question type, which the player's
+      // topic quiz picker groups by. Null everywhere else.
+      questionType: kind === "SUBTOPIC" ? parseQuestionType(node?.description) : null,
+      // A Topic's description, shown as its "About" in the player's topic picker.
+      about: kind === "TOPIC" ? node?.description || null : null,
       path: kind === "COURSE" ? { ...EMPTY_PATH } : { ...path },
       ...nodeStatus(node),
       entries,
