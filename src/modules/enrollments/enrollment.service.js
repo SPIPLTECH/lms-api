@@ -45,6 +45,9 @@ const getEnrollments = async (
           description: true,
           thumbnailUrl: true,
           accessDurationDays: true,
+          // "SSC Class 10": a student enrolled only in such courses gets no
+          // Submissions or Certificates in the web app.
+          category: true,
           // false: the course keeps no progress, so the card shows none.
           sequentialLearning: true,
           creator: { select: { name: true } },
